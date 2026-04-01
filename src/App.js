@@ -1,25 +1,2526 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useState, useEffect, useRef } from 'react';
 
-function App() {
-  return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
-  );
+/*
+  =============================================================================
+  [최종 무결성 코드 - 완벽 버그 해결 및 모든 추가 요청사항 반영]
+  - 1. 한글 입력 버그 해결: 준비물 입력 시 IME 조합 중복 엔터 버그 완벽 차단.
+  - 2. 준비물 UI 개선: 세로 목록 대신 태그(Pill) 형식으로 쭈르륵 배치 및 클릭 색상 변경.
+  - 3. 지도 필터링 및 컬러화: 지도 상단에 Day 필터 버튼 추가, 버튼과 핀 색상 완벽 매칭.
+  - 4. (이전 반영) 항공권 대쉬보드 반반 고정, 핀 추가 콤보박스 최적화 등 기존 기능 유지.
+  =============================================================================
+*/
+const SUPABASE_URL = "https://xpvzziofihamhavulwbz.supabase.co"; 
+const SUPABASE_ANON_KEY = "sb_publishable_nWReXsVlfI4QM0bOuw1A2g_uikm8CVl";
+
+const CURRENCIES = [
+  { code: 'KRW', label: 'KRW', sym: '₩', unit: 1 },
+  { code: 'USD', label: 'USD', sym: '$', unit: 1 },
+  { code: 'JPY', label: 'JPY(100)', sym: '¥', unit: 100 },
+  { code: 'EUR', label: 'EUR', sym: '€', unit: 1 },
+  { code: 'CNY', label: 'CNY', sym: '元', unit: 1 }
+];
+
+const COUNTRY_LIST = ["전체보기", "한국", "일본", "프랑스", "미국", "대만", "이탈리아", "태국", "베트남", "중국", "영국", "스페인", "독일", "호주"];
+
+const REGIONS_BY_COUNTRY = {
+  "한국": ["서울", "부산", "제주", "인천", "경주"],
+  "일본": ["도쿄", "오사카", "후쿠오카", "교토", "삿포로"],
+  "프랑스": ["파리", "니스", "마르세유", "리옹"],
+  "미국": ["뉴욕", "로스앤젤레스", "시카고", "하와이", "샌프란시스코"],
+  "대만": ["타이베이", "가오슝", "타이중"],
+  "이탈리아": ["로마", "밀라노", "베네치아", "피렌체"],
+  "태국": ["방콕", "치앙마이", "푸껫", "파타야"],
+  "베트남": ["다낭", "하노이", "호찌민", "나트랑"],
+  "중국": ["베이징", "상하이", "칭다오", "청두", "대련"],
+  "영국": ["런던", "에든버러", "맨체스터"],
+  "스페인": ["바르셀로나", "마드리드", "세비야"],
+  "독일": ["베를린", "뮌헨", "프랑크푸르트"],
+  "호주": ["시드니", "멜버른", "브리즈번"]
+};
+
+function S(val) {
+  try {
+    if (val === null || val === undefined) return "";
+    if (typeof val === 'object') {
+      if (val.text && val.icon) return `${val.icon} ${val.text}`; 
+      return ""; 
+    }
+    return String(val);
+  } catch (e) {
+    return "";
+  }
 }
 
-export default App;
+function getWeatherInfo(code) {
+  if (code === 0) return ["맑음", "☀️"];
+  if ([1, 2, 3].includes(code)) return ["흐림", "🌤️"];
+  if ([45, 48].includes(code)) return ["안개", "🌫️"];
+  if (code >= 51 && code <= 67) return ["비", "☔"];
+  if (code >= 71 && code <= 77) return ["눈", "❄️"];
+  if (code >= 80 && code <= 99) return ["폭우/뇌우", "⛈️"];
+  return ["평온", "☁️"];
+}
+
+function compressImage(file, callback) {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = (e) => {
+    const img = new Image();
+    img.src = e.target.result;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const scaleSize = 500 / img.width;
+      canvas.width = 500;
+      canvas.height = img.height * scaleSize;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      callback(canvas.toDataURL('image/jpeg', 0.6));
+    }
+  };
+}
+
+const SelectOrInput = ({ value, manualValue, onChangeSelect, onChangeManual, onCancelManual, options, placeholder, isDarkMode, appTheme, inputId }) => {
+  let textColorClass = "text-slate-900";
+  let placeholderClass = "placeholder-slate-400";
+  
+  if (appTheme === 'dark') { textColorClass = "text-white"; placeholderClass = "placeholder-slate-500"; }
+  else if (appTheme === 'pastel') { textColorClass = "text-pink-900"; placeholderClass = "placeholder-pink-300"; }
+  else if (appTheme === 'clean') { textColorClass = "text-zinc-900"; placeholderClass = "placeholder-zinc-400"; }
+
+  const handleSelect = (e) => {
+    onChangeSelect(e);
+    if (e.target.value === '수동입력') {
+      setTimeout(() => {
+        const el = document.getElementById(inputId);
+        if (el) el.focus();
+      }, 50);
+    }
+  };
+
+  if (value === '수동입력') {
+    return (
+      <div className="relative w-full h-full flex items-center">
+        <input 
+          id={inputId}
+          type="text" 
+          value={S(manualValue)} 
+          onChange={e => onChangeManual(e.target.value)} 
+          placeholder={placeholder || "직접입력"} 
+          className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} ${placeholderClass} pr-5`}
+        />
+        <button onClick={onCancelManual} className={`absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-center h-full px-2 text-xs ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>✕</button>
+      </div>
+    );
+  }
+  return (
+    <select 
+      value={S(value)} 
+      onChange={handleSelect} 
+      disabled={options === null}
+      className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} cursor-pointer appearance-none pr-3`}
+    >
+      <option value="">선택</option>
+      {options && Array.isArray(options) && options.map(o => <option key={S(o)} value={S(o)}>{S(o)}</option>)}
+      <option value="수동입력">수동입력</option>
+    </select>
+  );
+};
+
+const MainApp = () => {
+  const [supabaseClient, setSupabaseClient] = useState(null);
+  const [isDbLoaded, setIsDbLoaded] = useState(false);
+  const [appUserId, setAppUserId] = useState(null);
+  
+  const [showIdSetup, setShowIdSetup] = useState(true);
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [idInput, setIdInput] = useState("");
+  const [pwInput, setPwInput] = useState("");
+  const [idError, setIdError] = useState("");
+  const [saveCredentials, setSaveCredentials] = useState(false);
+  const [autoLogin, setAutoLogin] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+
+  const [trips, setTrips] = useState([{ id: 'default', name: '🛫 나의 첫 번째 여행' }]);
+  const [activeTripId, setActiveTripId] = useState('default');
+  const [sharedTripId, setSharedTripId] = useState(null);
+  const [pendingInvite, setPendingInvite] = useState(null);
+  const [inviteIdInput, setInviteIdInput] = useState("");
+
+  const [weather, setWeather] = useState(null);
+  const [forecast, setForecast] = useState([]);
+  const [isWeatherModalOpen, setIsWeatherModalOpen] = useState(false);
+
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [appTheme, setAppTheme] = useState('light');
+  const [appScale, setAppScale] = useState(1);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [tripModal, setTripModal] = useState({ isOpen: false, mode: 'add', name: '' });
+
+  const [rates, setRates] = useState({ USD: 1, KRW: 1350, JPY: 150, EUR: 0.92, CNY: 7.2 });
+  const [loadingRates, setLoadingRates] = useState(false);
+  const [errorRates, setErrorRates] = useState(null);
+  const [focusedCurrency, setFocusedCurrency] = useState(null);
+  const [activeCurrency, setActiveCurrency] = useState('KRW'); 
+  const [amount, setAmount] = useState('');
+
+  const [planTimeline, setPlanTimeline] = useState([]);
+  const [currentRestaurants, setCurrentRestaurants] = useState([]);
+  const currentRestaurantsRef = useRef(currentRestaurants); 
+  const [displayCityName, setDisplayCityName] = useState("선택된 지역 없음");
+  const [travelStartDate, setTravelStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [maxDay, setMaxDay] = useState(4);
+  const [dashboardDay, setDashboardDay] = useState(1);
+  
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [showCountrySuggestions, setShowCountrySuggestions] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+
+  const [globalPlanCountry, setGlobalPlanCountry] = useState("");
+  const [globalPlanRegion, setGlobalPlanRegion] = useState("");
+  const [globalManualCountry, setGlobalManualCountry] = useState("");
+  const [globalManualRegion, setGlobalManualRegion] = useState("");
+
+  const [newDay, setNewDay] = useState(1);
+  const [newTime, setNewTime] = useState("");
+  const [newPlace, setNewPlace] = useState("");
+  const [newLocalName, setNewLocalName] = useState("");
+  const [newFeatures, setNewFeatures] = useState("");
+  const [newPhoto, setNewPhoto] = useState("");
+  const [newIsAccommodation, setNewIsAccommodation] = useState(false);
+  const [planCountry, setPlanCountry] = useState("");
+  const [planRegion, setPlanRegion] = useState("");
+  const [manualCountry, setManualCountry] = useState("");
+  const [manualRegion, setManualRegion] = useState("");
+  const planFileInputRef = useRef(null);
+
+  const [editingPlan, setEditingPlan] = useState(null);
+  const editFileInputRef = useRef(null);
+
+  const [isLeafletLoaded, setIsLeafletLoaded] = useState(false);
+  const mapContainerRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markersRef = useRef([]);
+  const [isPinMode, setIsPinMode] = useState(false);
+  const isPinModeRef = useRef(isPinMode);
+  
+  const [movingPinId, setMovingPinId] = useState(null);
+  const movingPinIdRef = useRef(movingPinId);
+  const [pendingMove, setPendingMove] = useState(null);
+
+  const [markerSearchQuery, setMarkerSearchQuery] = useState("");
+  const [showMapLabels, setShowMapLabels] = useState(false); 
+  const [showMapPhotos, setShowMapPhotos] = useState(false); 
+  const [mapActiveDay, setMapActiveDay] = useState('all'); // 지도 Day 필터 상태
+
+  const [isAddPlaceModalOpen, setIsAddPlaceModalOpen] = useState(false);
+  const [isMyPinsModalOpen, setIsMyPinsModalOpen] = useState(false);
+  const [clickedLocation, setClickedLocation] = useState(null);
+  const [newManualPlaceName, setNewManualPlaceName] = useState("");
+  const [newManualLocalName, setNewManualLocalName] = useState("");
+  const [newManualFeature, setNewManualFeature] = useState("");
+  const [newManualPhoto, setNewManualPhoto] = useState("");
+  const [newManualTime, setNewManualTime] = useState(""); 
+  const [newManualIsAccommodation, setNewManualIsAccommodation] = useState(false);
+  const [pinLinkDay, setPinLinkDay] = useState("");
+  const [pinLinkPlanId, setPinLinkPlanId] = useState("");
+  const manualFileInputRef = useRef(null);
+
+  const [viewPhoto, setViewPhoto] = useState(null);
+  const [isTranslatorOpen, setIsTranslatorOpen] = useState(false);
+  const [translateText, setTranslateText] = useState("");
+  
+  const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
+  const [selectedPinInfo, setSelectedPinInfo] = useState(null); 
+
+  const [flights, setFlights] = useState({ outbound: null, inbound: null });
+  const [packingList, setPackingList] = useState([]);
+  const [isPackingModalOpen, setIsPackingModalOpen] = useState(false);
+  
+  const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
+  const [transType, setTransType] = useState('flight'); 
+  const [transDir, setTransDir] = useState('outbound'); 
+  const [transData, setTransData] = useState({ airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 });
+
+  const isDarkMode = appTheme === 'dark';
+
+  // 동적 마커 및 버튼 색상을 위한 배열
+  const DAY_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#a855f7', '#ec4899', '#06b6d4', '#f97316', '#8b5cf6'];
+  const getDayColor = (day) => DAY_COLORS[(parseInt(day) - 1) % DAY_COLORS.length];
+
+  /* ===================== 2. 함수 호이스팅 및 로직 ===================== */
+
+  useEffect(() => {
+    currentRestaurantsRef.current = currentRestaurants;
+  }, [currentRestaurants]);
+  
+  function getDateStringForDay(dayIndex) {
+    if (!travelStartDate) return "";
+    const targetDate = new Date(travelStartDate);
+    targetDate.setDate(targetDate.getDate() + (parseInt(dayIndex) - 1));
+    const year = targetDate.getFullYear();
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const day = String(targetDate.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function getWeatherForDay(dayIndex) {
+    if (!travelStartDate || !Array.isArray(forecast) || forecast.length === 0) return null;
+    const targetDateStr = getDateStringForDay(dayIndex);
+    const found = forecast.find(f => f && f.date === targetDateStr);
+    return found ? getWeatherInfo(found.code) : null;
+  }
+
+  function showToast(msg) {
+    setToastMsg(S(msg));
+    setTimeout(() => setToastMsg(""), 3000);
+  }
+
+  function getDayDateString(dayNum) {
+    if (!travelStartDate) return "";
+    const date = new Date(travelStartDate);
+    date.setDate(date.getDate() + (parseInt(dayNum) - 1));
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    return `${date.getMonth() + 1}/${date.getDate()}(${dayNames[date.getDay()]})`;
+  }
+
+  function handleCopyLocalName(e, text) {
+    if (e) e.stopPropagation();
+    if (!text) {
+      showToast("복사할 현지어가 없습니다.");
+      return;
+    }
+    const safeText = S(text);
+    const textArea = document.createElement("textarea");
+    textArea.value = safeText;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-999999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      showToast(`'${safeText}' 현지어가 복사되었습니다! 📋`);
+    } catch (err) {
+      showToast("복사에 실패했습니다.");
+    }
+    textArea.remove();
+  }
+
+  function openEditPinModal(pin) {
+    if (!pin) return;
+    setClickedLocation({ lat: pin.lat, lng: pin.lng, id: pin.id });
+    setNewManualPlaceName(S(pin.name));
+    setNewManualLocalName(S(pin.localName));
+    setNewManualFeature(pin.signature === "직접 추가한 장소" ? "" : S(pin.signature));
+    setNewManualPhoto(pin.img && !S(pin.img).includes("unsplash") ? S(pin.img) : "");
+    setNewManualIsAccommodation(Boolean(pin.isAccommodation));
+    
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(pin.name));
+    
+    if (linkedPlan) {
+      setPinLinkDay(S(linkedPlan.day));
+      setPinLinkPlanId(S(linkedPlan.id));
+      setNewManualTime(S(linkedPlan.time));
+    } else {
+      setPinLinkDay("");
+      setPinLinkPlanId("");
+      setNewManualTime("");
+    }
+
+    setIsMyPinsModalOpen(false);
+    setIsAddPlaceModalOpen(true);
+  }
+
+  async function fetchRealTimeRates() {
+    try {
+      setLoadingRates(true);
+      const res = await fetch('https://open.er-api.com/v6/latest/USD');
+      if (!res.ok) throw new Error('Data fetch failed');
+      const data = await res.json();
+      setRates({ USD: 1, KRW: data.rates.KRW, JPY: data.rates.JPY, EUR: data.rates.EUR, CNY: data.rates.CNY });
+      setErrorRates(null);
+    } catch (e) {
+      setErrorRates("환율 서버 연결 실패");
+    } finally {
+      setLoadingRates(false);
+    }
+  }
+
+  async function fetchWeatherData(cityName) {
+    if (!cityName || cityName === "선택된 지역 없음" || cityName === "글로벌") {
+      setWeather(null); setForecast([]); return;
+    }
+    try {
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(S(cityName))}&limit=1`);
+      const geoData = await geoRes.json();
+      if (!geoData.length) return;
+      const { lat, lon } = geoData[0];
+
+      const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=16`);
+      const wData = await wRes.json();
+      
+      if (wData.current) setWeather({ temp: Math.round(wData.current.temperature_2m), code: wData.current.weather_code });
+      if (wData.daily && Array.isArray(wData.daily.time)) {
+        setForecast(wData.daily.time.map((t, i) => ({
+          date: S(t), code: wData.daily.weather_code[i], max: Math.round(wData.daily.temperature_2m_max[i]), min: Math.round(wData.daily.temperature_2m_min[i])
+        })));
+      }
+    } catch (e) { console.error("Weather error", e); }
+  }
+
+  async function saveToDb(updates) {
+    const targetId = sharedTripId || activeTripId;
+    try {
+      const allStr = localStorage.getItem('my_travel_states') || '{}';
+      const all = JSON.parse(allStr);
+      all[targetId] = { ...(all[targetId] || {}), ...updates };
+      localStorage.setItem('my_travel_states', JSON.stringify(all));
+    } catch (e) {
+      console.error("Local save error", e);
+    }
+
+    if (supabaseClient && appUserId && appUserId !== "Guest") {
+      try {
+        await supabaseClient.from('travel_state').upsert({ id: targetId, ...updates });
+      } catch (err) { console.error(err); }
+    }
+  }
+
+  async function fetchCityRestaurants(shortName) {
+    if (!shortName) return;
+    const cleanName = S(shortName).split(',')[0].trim();
+    setDisplayCityName(cleanName);
+    saveToDb({ display_city_name: cleanName });
+    setShowCountrySuggestions(false);
+    setGlobalSearchQuery("");
+    
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cleanName)}&limit=1`);
+      const data = await res.json();
+      if (data && data.length > 0 && mapInstanceRef.current) { 
+         mapInstanceRef.current.flyTo([parseFloat(data[0].lat), parseFloat(data[0].lon)], 13);
+      }
+    } catch (err) {
+      console.error("City selection error", err);
+    }
+  }
+
+  function handleGlobalSearchEnter(e) {
+    if (e.key === 'Enter') {
+      if (!globalSearchQuery.trim() || globalSearchQuery === "전체보기") {
+        setDisplayCityName("선택된 지역 없음");
+        saveToDb({ display_city_name: "선택된 지역 없음" });
+      } else {
+        const shortName = S(globalSearchQuery).split(',')[0].trim();
+        setDisplayCityName(shortName);
+        saveToDb({ display_city_name: shortName });
+        
+        (async () => {
+          try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(shortName)}&limit=1`);
+            const data = await res.json();
+            if (data && data.length > 0 && mapInstanceRef.current) { 
+               mapInstanceRef.current.flyTo([parseFloat(data[0].lat), parseFloat(data[0].lon)], 13);
+            }
+          } catch (err) {}
+        })();
+      }
+    }
+  }
+
+  function openAddTripModal() {
+    if (!supabaseClient || appUserId === "Guest") { showToast("로그인이 필요한 기능입니다."); return; }
+    setTripModal({ isOpen: true, mode: 'add', name: '' });
+    setIsMobileMenuOpen(false);
+  }
+
+  function openRenameTripModal() {
+    if (!supabaseClient || appUserId === "Guest") return;
+    const safeTrips = Array.isArray(trips) ? trips : [];
+    const currentTrip = safeTrips.find(t => t && S(t.id) === S(activeTripId));
+    setTripModal({ isOpen: true, mode: 'rename', name: S(currentTrip?.name) });
+    setIsMobileMenuOpen(false);
+  }
+
+  async function submitTripModal() {
+    if (!supabaseClient) return;
+    if (!tripModal.name.trim()) { showToast("이름을 입력해주세요."); return; }
+    
+    const safeTrips = Array.isArray(trips) ? trips.filter(Boolean) : [];
+
+    if (tripModal.mode === 'add') {
+      const newId = `trip_${appUserId}_${Date.now()}`;
+      const updatedTrips = [...safeTrips, { id: newId, name: S(tripModal.name) }];
+      setTrips(updatedTrips);
+      
+      await supabaseClient.from('travel_state').insert({
+        id: newId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0],
+        current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: []
+      });
+
+      await supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: newId }).eq('app_user_id', appUserId);
+
+      setActiveTripId(newId);
+      setSharedTripId(null);
+      showToast(`'${tripModal.name}' 일정을 시작합니다.`);
+    } else {
+      const updatedTrips = safeTrips.map(t => t && S(t.id) === S(activeTripId) ? { ...t, name: S(tripModal.name) } : t);
+      setTrips(updatedTrips);
+      await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
+      showToast("여행 이름이 변경되었습니다.");
+    }
+    setTripModal({ isOpen: false, mode: 'add', name: '' });
+  }
+
+  async function handleSwitchTrip(tripId) {
+    if (!supabaseClient || appUserId === "Guest") return;
+    await supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId);
+    setActiveTripId(S(tripId));
+    setSharedTripId(null);
+    setIsMobileMenuOpen(false);
+    showToast("여행 일정을 불러왔습니다.");
+  }
+
+  function handleScaleChange(e) {
+    const scale = parseFloat(e.target.value);
+    setAppScale(scale);
+    try { localStorage.setItem('my_travel_scale', scale.toString()); } catch(e){}
+  }
+
+  function handleThemeChange(themeName) {
+    setAppTheme(S(themeName));
+    try { localStorage.setItem('my_travel_theme', S(themeName)); } catch(e){}
+  }
+
+  function handleLoginSuccess(id, pw) {
+    setAppUserId(id);
+    setShowIdSetup(false);
+    setIdError("");
+    
+    try {
+      const authPrefs = { id: id, pw: pw, saveIdPw: saveCredentials, autoLogin: autoLogin };
+      if (autoLogin) { localStorage.setItem('my_travel_auth', JSON.stringify(authPrefs)); } 
+      else if (saveCredentials) { localStorage.setItem('my_travel_auth', JSON.stringify({...authPrefs, autoLogin: false})); } 
+      else { localStorage.removeItem('my_travel_auth'); }
+    } catch(e){}
+  }
+
+  async function handleSignUp() {
+    if (idInput.trim().length < 3) { setIdError("아이디는 3자 이상 입력하세요."); return; }
+    if (pwInput.trim().length < 4) { setIdError("비밀번호는 4자 이상 입력하세요."); return; }
+    const cleanId = S(idInput).trim().toLowerCase();
+    
+    if (!supabaseClient) { setIdError("서버에 연결할 수 없습니다. 키를 확인해주세요."); return; }
+
+    try {
+      const { data, error } = await supabaseClient.from('profiles').select('app_user_id').eq('app_user_id', cleanId).single();
+      if (error && error.code === '42P01') {
+        setIdError("테이블이 없습니다. Supabase SQL Editor에서 생성 쿼리를 실행해주세요!");
+        return;
+      }
+      
+      if (data) { 
+        setIdError("이미 사용 중인 아이디입니다."); 
+      } else {
+        const defaultTripId = `trip_${cleanId}_${Date.now()}`;
+        const initialTrips = [{ id: defaultTripId, name: '🛫 나의 첫 번째 여행' }];
+        
+        await supabaseClient.from('profiles').insert({ app_user_id: cleanId, password: S(pwInput), trips: initialTrips, activeTripId: defaultTripId });
+        await supabaseClient.from('travel_state').insert({ 
+          id: defaultTripId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0], 
+          current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [] 
+        });
+        handleLoginSuccess(cleanId, S(pwInput));
+      }
+    } catch (e) { setIdError("서버 오류가 발생했습니다."); }
+  }
+
+  async function handleLogin(overrideId = null, overridePw = null) {
+    const currentId = S(overrideId || idInput).trim().toLowerCase();
+    const currentPw = S(overridePw || pwInput);
+
+    if (!currentId || !currentPw) { setIdError("아이디와 비밀번호를 입력해주세요."); return; }
+    if (!supabaseClient) { setIdError("서버에 연결할 수 없습니다. 키를 확인해주세요."); return; }
+
+    try {
+      const { data, error } = await supabaseClient.from('profiles').select('*').eq('app_user_id', currentId).single();
+      if (error && error.code === '42P01') {
+        setIdError("테이블이 없습니다. Supabase SQL Editor에서 생성 쿼리를 실행해주세요!");
+        return;
+      }
+
+      if (data && data.password === currentPw) {
+        handleLoginSuccess(currentId, currentPw);
+      } else {
+        setIdError("아이디 또는 비밀번호가 일치하지 않습니다.");
+      }
+    } catch (e) { setIdError("서버 오류가 발생했습니다."); }
+  }
+
+  function handleSkipIdSetup() { 
+    setAppUserId("Guest"); 
+    setShowIdSetup(false); 
+    showToast("로컬 모드로 진입했습니다. 브라우저에 임시 저장됩니다.");
+  }
+
+  function handleLogout() {
+    setAppUserId(null);
+    setTrips([{ id: 'default', name: '🛫 나의 첫 번째 여행' }]);
+    setActiveTripId('default');
+    setSharedTripId(null);
+    setShowIdSetup(true);
+    setIsSettingsOpen(false);
+    setAutoLogin(false);
+    try { localStorage.removeItem('my_travel_auth'); } catch(e){}
+    showToast("로그아웃 되었습니다.");
+  }
+
+  async function handleSendInvite() {
+    if (!inviteIdInput.trim() || !supabaseClient) return;
+    const targetId = S(inviteIdInput).trim().toLowerCase();
+    if (targetId === appUserId) { showToast("본인은 초대할 수 없습니다."); return; }
+    
+    const { data } = await supabaseClient.from('profiles').select('app_user_id').eq('app_user_id', targetId).single();
+    if (!data) { showToast("존재하지 않는 사용자입니다."); return; }
+    
+    await supabaseClient.from('invites').upsert({ target_id: targetId, from_id: appUserId, trip_id: activeTripId, timestamp: Date.now() });
+    showToast(`초대장을 보냈습니다.`); setInviteIdInput(""); setIsSettingsOpen(false);
+  }
+
+  async function handleAcceptInvite() {
+    if (pendingInvite) {
+      setSharedTripId(S(pendingInvite.trip_id));
+      await supabaseClient.from('invites').delete().eq('target_id', appUserId);
+      setPendingInvite(null); showToast(`일정에 접속했습니다.`);
+    }
+  }
+
+  async function handleRejectInvite() {
+    await supabaseClient.from('invites').delete().eq('target_id', appUserId);
+    setPendingInvite(null);
+  }
+
+  function handleExitShare() { 
+    setSharedTripId(null); 
+    showToast("개인 일정으로 복귀했습니다."); 
+  }
+
+  function handleOpenGoogleTranslate() { window.open(`https://translate.google.com/?sl=auto&tl=ko`, '_blank'); }
+  function handleOpenGoogleLens() { window.open(`https://translate.google.com/?sl=auto&tl=ko&op=images`, '_blank'); }
+
+  function handleManualPlaceAdd() {
+    if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
+    
+    let pLat = clickedLocation?.lat || null;
+    let pLng = clickedLocation?.lng || null;
+
+    const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+
+    if (clickedLocation?.id) { 
+      const existing = safeCurrentRestaurants.find(r => r && S(r.id) === S(clickedLocation.id));
+      pLat = existing?.lat || null;
+      pLng = existing?.lng || null;
+    }
+
+    const placeId = clickedLocation?.id || `manual-${Date.now()}`;
+    const newPlace = {
+      id: S(placeId), lat: pLat, lng: pLng, country: S(displayCityName), city: S(displayCityName),
+      name: S(newManualPlaceName), localName: S(newManualLocalName), signature: newManualFeature ? S(newManualFeature) : "직접 추가한 장소",
+      img: newManualPhoto ? S(newManualPhoto) : "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
+      rating: 5.0, isAccommodation: Boolean(newManualIsAccommodation)
+    };
+
+    let updatedRests;
+    if (clickedLocation?.id) {
+      updatedRests = safeCurrentRestaurants.map(r => r && S(r.id) === S(clickedLocation.id) ? newPlace : r);
+    } else {
+      updatedRests = [newPlace, ...safeCurrentRestaurants];
+    }
+    setCurrentRestaurants(updatedRests);
+
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    let updatedTimeline = [...safePlanTimeline];
+    
+    if (pinLinkDay) {
+      if (pinLinkPlanId && pinLinkPlanId !== 'manual') {
+        updatedTimeline = updatedTimeline.map(p => p && String(p.id) === String(pinLinkPlanId) ? {
+          ...p, day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
+          localName: S(newManualLocalName), features: S(newManualFeature), photo: S(newManualPhoto),
+          isAccommodation: Boolean(newManualIsAccommodation)
+        } : p).sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
+      } else {
+        const newPlan = {
+          id: Date.now().toString() + "_plan",
+          day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
+          localName: S(newManualLocalName), features: S(newManualFeature), photo: S(newManualPhoto),
+          country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: Boolean(newManualIsAccommodation)
+        };
+        updatedTimeline = [...updatedTimeline, newPlan].sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
+      }
+      setPlanTimeline(updatedTimeline);
+    }
+
+    saveToDb({ current_restaurants: updatedRests, plan_timeline: updatedTimeline });
+
+    if (pLat && pLng && mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo([pLat, pLng], 16);
+      showToast("지도에 핀이 등록/수정 되었습니다.");
+    } else {
+      showToast("핀 목록에 저장되었습니다. 나중에 위치를 지정해주세요."); 
+    }
+    
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualTime(""); setNewManualIsAccommodation(false);
+    setPinLinkDay(""); setPinLinkPlanId(""); setClickedLocation(null); setIsAddPlaceModalOpen(false); 
+  }
+
+  function handleManualPhotoUpload(e) {
+    const file = e.target.files?.[0]; if (!file) return;
+    compressImage(file, (compressed) => setNewManualPhoto(S(compressed)));
+  }
+
+  function handleFindMyLocation() {
+    if (!navigator.geolocation) { showToast("위치 기능을 지원하지 않습니다."); return; }
+    showToast("현재 위치를 확인 중입니다...");
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const { latitude, longitude } = pos.coords;
+      if (mapInstanceRef.current && window.L) {
+        mapInstanceRef.current.flyTo([latitude, longitude], 15);
+        const myLocIcon = window.L.divIcon({ html: `<div style="background-color:#ef4444;width:18px;height:18px;border-radius:50%;border:3px solid white;box-shadow:0 0 8px rgba(0,0,0,0.6);"></div>`, className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
+        window.L.marker([latitude, longitude], { icon: myLocIcon }).addTo(mapInstanceRef.current).bindPopup(`<b>현재 내 위치</b>`).openPopup();
+      }
+    }, () => showToast("위치 접근 권한이 필요합니다."));
+  }
+
+  function handlePlaceClick(rest) {
+    setActiveTab('map');
+    setTimeout(() => { if (mapInstanceRef.current && rest && rest.lat) mapInstanceRef.current.flyTo([rest.lat, rest.lng], 17); }, 100);
+  }
+
+  function handleMarkerSearchSelect(marker) {
+    if (mapInstanceRef.current && marker && marker.lat) mapInstanceRef.current.flyTo([marker.lat, marker.lng], 17);
+    setMarkerSearchQuery("");
+  }
+
+  function handleSavePlan() {
+    if (!newTime.trim() || !newPlace.trim()) { showToast("시간과 장소를 적어주세요."); return; }
+    
+    const finalCountry = planCountry === "수동입력" ? manualCountry : planCountry;
+    const finalRegion = planRegion === "수동입력" ? manualRegion : planRegion;
+
+    const planData = { 
+      id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: newPhoto ? S(newPhoto) : "", 
+      country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation)
+    };
+    
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    let updatedTimeline = [...safePlanTimeline, planData];
+    updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
+    setPlanTimeline(updatedTimeline); saveToDb({ plan_timeline: updatedTimeline }); resetPlanForm();
+    
+    if (finalRegion && finalRegion !== displayCityName) {
+      setDisplayCityName(S(finalRegion));
+      saveToDb({ display_city_name: S(finalRegion) });
+    }
+    showToast("스케줄에 등록 성공! ✨");
+  }
+  
+  function handlePlanPhotoUpload(e, isEdit = false) {
+    const file = e.target.files?.[0]; if (!file) return;
+    compressImage(file, (compressedBase64) => { 
+      if(isEdit && editingPlan) setEditingPlan({...editingPlan, photo: S(compressedBase64)});
+      else setNewPhoto(S(compressedBase64)); 
+    });
+  }
+  
+  function handleEditPlanClick(p) { 
+    if (!p) return;
+    const c = S(p.country || "");
+    const r = S(p.region || "");
+    const isStandardCountry = Object.keys(REGIONS_BY_COUNTRY).includes(c) || c === "";
+    const isStandardRegion = (isStandardCountry && c && REGIONS_BY_COUNTRY[c]?.includes(r)) || r === "";
+    
+    setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || "") });
+  }
+  
+  function handleDeletePlan(id) {
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    const updated = safePlanTimeline.filter(p => p && S(p.id) !== S(id)); 
+    setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+  }
+  
+  function resetPlanForm() { 
+    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewIsAccommodation(false);
+    setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion); 
+    setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : ""); setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
+  }
+
+  function handleTimeInput(e, setter) {
+    let val = S(e.target.value).replace(/\D/g, '');
+    if (val.length > 4) val = val.slice(0, 4);
+    if (val.length >= 3) { val = val.slice(0, 2) + ':' + val.slice(2); }
+    setter(val);
+  }
+
+  function changeTab(tabId) {
+    setActiveTab(S(tabId));
+    setIsMobileMenuOpen(false);
+  }
+
+  function handleInputChange(code, rawValue) {
+    const numericValue = S(rawValue).replace(/,/g, '').replace(/[^\d.]/g, '');
+    setActiveCurrency(S(code));
+    setAmount(numericValue);
+  }
+
+  function formatForDisplay(val) {
+    if (!val) return '';
+    const parts = S(val).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.join('.');
+  }
+
+  function formatCalculated(val, curCode) {
+    const num = parseFloat(val);
+    if (isNaN(num)) return '';
+    const maxDecimals = (curCode === 'KRW' || curCode === 'JPY') ? 0 : 2;
+    return num.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
+  }
+
+  function getInputValue(curCode) {
+    if (amount) {
+      if (activeCurrency === curCode) return formatForDisplay(amount);
+      const numAmount = parseFloat(amount);
+      if (isNaN(numAmount)) return '';
+      const usdAmount = numAmount / rates[activeCurrency];
+      const targetAmount = usdAmount * rates[curCode];
+      return formatCalculated(targetAmount, curCode);
+    }
+    if (focusedCurrency === curCode) return '';
+    if (curCode === 'KRW') return '-';
+    const unit = CURRENCIES.find(c => c.code === curCode).unit;
+    const krwPerUnit = (rates.KRW / rates[curCode]) * unit;
+    return Math.round(krwPerUnit).toLocaleString();
+  }
+
+  function getPlaceholder(curCode) {
+    if (loadingRates) return '...';
+    if (curCode === 'KRW') return '0';
+    const unit = CURRENCIES.find(c => c.code === curCode).unit;
+    const krwPerUnit = (rates.KRW / rates[curCode]) * unit;
+    return Math.round(krwPerUnit).toLocaleString();
+  }
+
+  function addDay() { setMaxDay(d => d + 1); }
+  function removeDay() { if (maxDay > 1) setMaxDay(d => d - 1); }
+
+  function handleSaveTransport() {
+    if (!transData.dep || !transData.arr) { showToast("출발지/도착지를 입력해주세요."); return; }
+    
+    if (transType === 'flight') {
+       const newFlights = { ...flights, [transDir]: { ...transData } };
+       setFlights(newFlights);
+       saveToDb({ flights: newFlights });
+       showToast("항공권이 성공적으로 고정되었습니다! ✈️");
+    } else {
+       const emoji = transType === 'train' ? '🚆' : '🚌';
+       const label = transType === 'train' ? '기차' : '버스';
+       const planData = { 
+         id: Date.now().toString(), day: parseInt(transData.day), time: S(transData.depTime), 
+         place: `${emoji} ${transData.dep} -> ${transData.arr}`, localName: S(transData.airline), 
+         features: `${label} 번호: ${transData.flightNum} (도착예정: ${transData.arrTime})`, photo: "", 
+         country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false
+       };
+       const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+       let updatedTimeline = [...safePlanTimeline, planData];
+       updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
+       setPlanTimeline(updatedTimeline); saveToDb({ plan_timeline: updatedTimeline });
+       showToast(`${label} 일정이 추가되었습니다! ${emoji}`);
+    }
+    setIsTransportModalOpen(false);
+    setTransData({ airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 });
+  }
+  
+  function handleEditFlight(dir) {
+    setTransType('flight');
+    setTransDir(dir);
+    setTransData(flights[dir] || { airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 });
+    setIsTransportModalOpen(true);
+  }
+
+  // --- 준비물 등록 함수 수정 (한글 조합 중복 입력 방지 추가) ---
+  function handleAddPackingItem(e) {
+    if (e.nativeEvent.isComposing) return; // 한글 IME 조합 중 이벤트 중복 발생 방지
+    if (e.key === 'Enter' && e.target.value.trim()) {
+      const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false };
+      const newList = [...packingList, newItem];
+      setPackingList(newList);
+      saveToDb({ packing_list: newList });
+      e.target.value = '';
+    }
+  }
+  function togglePackingItem(id) {
+    const newList = packingList.map(item => item.id === id ? { ...item, isChecked: !item.isChecked } : item);
+    setPackingList(newList);
+    saveToDb({ packing_list: newList });
+  }
+  function deletePackingItem(id) {
+    const newList = packingList.filter(item => item.id !== id);
+    setPackingList(newList);
+    saveToDb({ packing_list: newList });
+  }
+
+  /* ===================== 3. UseEffect 파트 ===================== */
+  
+  useEffect(() => {
+    if (appUserId === "Guest") {
+      try {
+        const targetId = S(activeTripId);
+        const allStatesStr = localStorage.getItem('my_travel_states');
+        if (allStatesStr) {
+          const allStates = JSON.parse(allStatesStr);
+          if (allStates && typeof allStates === 'object' && allStates[targetId]) {
+            const data = allStates[targetId];
+            if (data && typeof data === 'object') {
+              if (data.display_city_name) setDisplayCityName(S(data.display_city_name));
+              if (data.travel_start_date) setTravelStartDate(S(data.travel_start_date));
+              if (data.flights) setFlights(data.flights);
+              if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
+              
+              if (Array.isArray(data.current_restaurants)) {
+                const cleanRests = data.current_restaurants.map(r => {
+                  if (!r || typeof r !== 'object') return null;
+                  return { id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) };
+                }).filter(Boolean);
+                setCurrentRestaurants(cleanRests);
+              }
+              if (Array.isArray(data.plan_timeline)) {
+                const cleanPlans = data.plan_timeline.map(p => {
+                  if (!p || typeof p !== 'object') return null;
+                  return { id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation) };
+                }).filter(Boolean);
+                setPlanTimeline(cleanPlans);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Local data load error", e);
+        try { localStorage.removeItem('my_travel_states'); } catch(err){}
+        setCurrentRestaurants([]);
+        setPlanTimeline([]);
+      }
+    }
+  }, [appUserId, activeTripId]);
+
+  useEffect(() => {
+    movingPinIdRef.current = movingPinId;
+  }, [movingPinId]);
+
+  useEffect(() => {
+    if (pendingMove) {
+      const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+      const updated = safeCurrentRestaurants.map(r => r && S(r.id) === S(pendingMove.id) ? { ...r, lat: pendingMove.lat, lng: pendingMove.lng } : r);
+      setCurrentRestaurants(updated);
+      saveToDb({ current_restaurants: updated });
+      setMovingPinId(null);
+      setIsPinMode(false);
+      setPendingMove(null);
+      showToast("📍 핀 위치가 성공적으로 지정되었습니다!");
+    }
+  }, [pendingMove]);
+
+  useEffect(() => {
+    const handlePinClick = (e) => {
+      const pinId = S(e.detail);
+      const safeCurrentRestaurants = Array.isArray(currentRestaurantsRef.current) ? currentRestaurantsRef.current.filter(Boolean) : [];
+      const pin = safeCurrentRestaurants.find(r => r && S(r.id) === pinId);
+      if (pin) setSelectedPinInfo(pin);
+    };
+    window.addEventListener('onPinClick', handlePinClick);
+    return () => window.removeEventListener('onPinClick', handlePinClick);
+  }, []);
+
+  useEffect(() => {
+    window.openPinDetails = (id) => {
+      window.dispatchEvent(new CustomEvent('onPinClick', { detail: S(id) }));
+    };
+    return () => { delete window.openPinDetails; };
+  }, []);
+
+  useEffect(() => {
+    if (window.L) {
+      setIsLeafletLoaded(true);
+      return;
+    }
+    const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
+    const script = document.createElement('script'); script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.async = true; 
+    script.onload = () => setIsLeafletLoaded(true);
+    document.head.appendChild(script);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'map' && mapInstanceRef.current) {
+      setTimeout(() => { mapInstanceRef.current.invalidateSize(); }, 200);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!travelStartDate) return;
+    const todayDate = new Date();
+    const start = new Date(travelStartDate);
+    todayDate.setHours(0, 0, 0, 0);
+    start.setHours(0, 0, 0, 0);
+    const diffTime = todayDate.getTime() - start.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    
+    const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
+    if (diffDays >= 1 && diffDays <= safeMax) {
+      setDashboardDay(diffDays);
+    }
+  }, [travelStartDate, maxDay]);
+
+  useEffect(() => {
+    if (!editingPlan) {
+      setPlanCountry(globalPlanCountry);
+      setPlanRegion(globalPlanRegion);
+      setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : "");
+      setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
+    }
+  }, [globalPlanCountry, globalPlanRegion, globalManualCountry, globalManualRegion, editingPlan]);
+
+  useEffect(() => { fetchWeatherData(displayCityName); }, [displayCityName]);
+
+  useEffect(() => {
+    fetchRealTimeRates();
+    const interval = setInterval(fetchRealTimeRates, 300000); 
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+    script.async = true;
+    
+    script.onload = async () => {
+      try {
+        if (window.supabase) {
+          const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+          setSupabaseClient(client);
+
+          const savedAuthStr = localStorage.getItem('my_travel_auth');
+          if (savedAuthStr) {
+            const savedAuth = JSON.parse(savedAuthStr);
+            const { id, pw, autoLogin, saveIdPw } = savedAuth;
+            
+            if (saveIdPw) { setIdInput(S(id)); setPwInput(S(pw)); setSaveCredentials(true); }
+            if (autoLogin) {
+              try {
+                const { data } = await client.from('profiles').select('*').eq('app_user_id', S(id)).single();
+                if (data && data.password === S(pw)) {
+                  setAppUserId(S(id));
+                  if (data.trips && Array.isArray(data.trips)) setTrips(data.trips);
+                  if (data.activeTripId) setActiveTripId(S(data.activeTripId));
+                  setAutoLogin(true);
+                  setShowIdSetup(false);
+                }
+              } catch(e) { console.error("Auto login check failed", e); }
+            }
+          }
+          setIsDbLoaded(true);
+        }
+      } catch (err) {
+        console.error("Supabase init error:", err);
+        setIsDbLoaded(true);
+      }
+    };
+    
+    script.onerror = () => setIsDbLoaded(true);
+    document.head.appendChild(script);
+
+    try {
+      const savedScale = localStorage.getItem('my_travel_scale');
+      let parsedScale = parseFloat(savedScale);
+      if (isNaN(parsedScale) || parsedScale < 0.3 || parsedScale > 3) parsedScale = 1;
+      setAppScale(parsedScale);
+
+      const savedTheme = localStorage.getItem('my_travel_theme');
+      if (savedTheme) setAppTheme(S(savedTheme));
+    } catch(e){}
+  }, []);
+
+  useEffect(() => {
+    if (!supabaseClient || !appUserId || appUserId === "Guest") return;
+    
+    const profileChannel = supabaseClient.channel(`profiles_${appUserId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `app_user_id=eq.${appUserId}` }, (payload) => {
+        if (payload.new) {
+          if (payload.new.trips && Array.isArray(payload.new.trips)) setTrips(payload.new.trips);
+          if (payload.new.activeTripId && !sharedTripId) setActiveTripId(S(payload.new.activeTripId));
+        }
+      }).subscribe();
+
+    const targetId = sharedTripId || activeTripId;
+    const fetchTrip = async () => {
+      try {
+        const { data } = await supabaseClient.from('travel_state').select('*').eq('id', targetId).single();
+        if (data) {
+          setDisplayCityName(data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음");
+          setTravelStartDate(data.travel_start_date ? S(data.travel_start_date) : new Date().toISOString().split('T')[0]);
+          if (data.flights) setFlights(data.flights);
+          if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
+          
+          if (Array.isArray(data.current_restaurants)) {
+            const cleanRests = data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) }));
+            setCurrentRestaurants(cleanRests);
+          }
+          if (Array.isArray(data.plan_timeline)) {
+            const cleanPlans = data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation) }));
+            setPlanTimeline(cleanPlans);
+          }
+        }
+      } catch(e) { console.error(e); }
+    };
+    fetchTrip();
+
+    const tripChannel = supabaseClient.channel(`trip_${targetId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_state', filter: `id=eq.${targetId}` }, (payload) => {
+        if (payload.new) {
+          if (payload.new.display_city_name) setDisplayCityName(S(payload.new.display_city_name));
+          if (payload.new.travel_start_date) setTravelStartDate(S(payload.new.travel_start_date));
+          if (payload.new.flights) setFlights(payload.new.flights);
+          if (payload.new.packing_list && Array.isArray(payload.new.packing_list)) setPackingList(payload.new.packing_list);
+          
+          if (Array.isArray(payload.new.current_restaurants)) {
+            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) }));
+            setCurrentRestaurants(cleanRests);
+          }
+          if (Array.isArray(payload.new.plan_timeline)) {
+            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation) }));
+            setPlanTimeline(cleanPlans);
+          }
+        }
+      }).subscribe();
+
+    const fetchInvites = async () => {
+      try {
+        const { data } = await supabaseClient.from('invites').select('*').eq('target_id', appUserId).single();
+        if (data) setPendingInvite(data);
+      } catch(e) { console.error(e); }
+    };
+    fetchInvites();
+    
+    const inviteChannel = supabaseClient.channel(`invites_${appUserId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invites', filter: `target_id=eq.${appUserId}` }, (payload) => {
+        if (payload.eventType === 'DELETE') setPendingInvite(null);
+        else setPendingInvite(payload.new);
+      }).subscribe();
+
+    return () => {
+      supabaseClient.removeChannel(profileChannel);
+      supabaseClient.removeChannel(tripChannel);
+      supabaseClient.removeChannel(inviteChannel);
+    };
+  }, [supabaseClient, appUserId, activeTripId, sharedTripId]);
+
+  // --- 지도 마커 렌더링 및 Day별 색상, 필터링 로직 ---
+  useEffect(() => {
+    isPinModeRef.current = isPinMode; 
+    
+    if (!isLeafletLoaded || !mapContainerRef.current || !window.L) return;
+
+    if (!mapInstanceRef.current) {
+      if (mapContainerRef.current._leaflet_id) mapContainerRef.current._leaflet_id = null; 
+      
+      let initialLat = 37.5665;
+      let initialLng = 126.9780;
+      
+      const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+      if (safeCurrentRestaurants.length > 0 && safeCurrentRestaurants[0] && safeCurrentRestaurants[0].lat) {
+        initialLat = safeCurrentRestaurants[0].lat;
+        initialLng = safeCurrentRestaurants[0].lng;
+      }
+
+      try {
+        const map = window.L.map(mapContainerRef.current, { zoomControl: false }).setView([initialLat || 37.5665, initialLng || 126.9780], 13);
+        window.L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}').addTo(map);
+
+        map.on('click', (e) => {
+          if (movingPinIdRef.current) {
+            setPendingMove({ id: movingPinIdRef.current, lat: e.latlng.lat, lng: e.latlng.lng });
+            return;
+          }
+          if (!isPinModeRef.current) {
+            return; 
+          }
+          setClickedLocation(e.latlng);
+          setNewManualPlaceName("");
+          setNewManualLocalName("");
+          setNewManualFeature("");
+          setNewManualPhoto("");
+          setNewManualIsAccommodation(false);
+          setPinLinkDay("");
+          setPinLinkPlanId("");
+          setNewManualTime("");
+          setIsAddPlaceModalOpen(true);
+        });
+
+        mapInstanceRef.current = map;
+      } catch (err) {
+        console.error("Leaflet initialization failed", err);
+      }
+    }
+
+    if (!mapInstanceRef.current) return;
+    const map = mapInstanceRef.current;
+    
+    markersRef.current.forEach(m => m.remove());
+    markersRef.current = [];
+
+    const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+
+    // Day별 필터링 적용
+    const filteredRestaurants = safeCurrentRestaurants.filter(rest => {
+      if (mapActiveDay === 'all') return true;
+      const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(rest.name));
+      if (mapActiveDay === 'unlinked') return !linkedPlan;
+      return linkedPlan && linkedPlan.day === mapActiveDay;
+    });
+
+    filteredRestaurants.forEach((rest) => {
+      if (!rest || !rest.lat || !rest.lng) return;
+      const linkedPlans = safePlanTimeline.filter(p => p && S(p.place) === S(rest.name));
+      const primaryPlan = linkedPlans[0];
+      const isAcc = Boolean(rest.isAccommodation) || linkedPlans.some(p => Boolean(p.isAccommodation));
+      
+      // Day별 색상 적용 (미지정 핀은 회색)
+      const pinColor = primaryPlan ? getDayColor(primaryPlan.day) : '#94a3b8'; 
+      
+      let html = `<div style="background-color:${pinColor};width:${isAcc?'24px':'18px'};height:${isAcc?'24px':'18px'};border-radius:50%;border:2px solid white;box-shadow:0 0 6px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;transition:transform 0.2s;">${isAcc?'<span style="font-size:12px;">🏠</span>':(primaryPlan?`<span style="color:white;font-size:10px;font-weight:bold;">${primaryPlan.day}</span>`:'')}</div>`;
+      if (showMapPhotos && rest.img && !S(rest.img).includes("unsplash")) {
+        html = `<div style="width:34px;height:34px;border-radius:50%;border:3px solid ${pinColor};background-image:url(${S(rest.img)});background-size:cover;background-position:center;position:relative;box-shadow:0 0 6px rgba(0,0,0,0.5);">${isAcc?'<div style="position:absolute;bottom:-6px;right:-6px;background:white;border-radius:50%;font-size:12px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center;">🏠</div>':(primaryPlan?`<div style="position:absolute;top:-6px;left:-6px;background:${pinColor};color:white;border-radius:50%;font-size:8px;font-weight:bold;width:14px;height:14px;display:flex;align-items:center;justify-content:center;border:1px solid white;">${primaryPlan.day}</div>`:'')}</div>`;
+      }
+      try {
+        const icon = window.L.divIcon({ html, className: '', iconSize: [24,24], iconAnchor: [12,12] });
+        const marker = window.L.marker([rest.lat, rest.lng], { icon }).addTo(map);
+        if (showMapLabels) marker.bindTooltip(S(rest.name), { permanent: true, direction: 'bottom', className: 'text-[9px] font-bold bg-white/90 px-1 py-0.5 border rounded shadow-sm', offset: [0, 10] });
+        
+        let popup = `
+          <div style="text-align:center; cursor:pointer; padding: 2px; width: 110px;" onclick="window.openPinDetails('${S(rest.id)}')">
+            ${rest.img && !S(rest.img).includes("unsplash") ? `<img src="${S(rest.img)}" style="width:100%; height:60px; object-fit:cover; border-radius:6px; margin-bottom:4px;"/>` : ''}
+            <b style="font-size:11px; display:block; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${S(rest.name)}</b>
+            ${rest.localName ? `<span style="font-size:9px; color:#6b7280; display:block; margin-bottom:4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">(${S(rest.localName)})</span>` : ''}
+            <span style="font-size:9px; color:#4f46e5; font-weight:bold; background:#eef2ff; padding:2px 6px; border-radius:4px; display:inline-block;">상세보기 👆</span>
+          </div>
+        `;
+        marker.bindPopup(popup);
+        markersRef.current.push(marker);
+      } catch (err) {}
+    });
+  }, [isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, isPinMode, movingPinId, mapActiveDay]);
+
+  const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+  const filteredMarkers = markerSearchQuery 
+    ? safeCurrentRestaurants.filter(r => r && S(r.name).toLowerCase().includes(S(markerSearchQuery).toLowerCase())) : [];
+
+  let appBg = "bg-slate-50", textMain = "text-slate-900", textMuted = "text-slate-500", cardBg = "bg-white border-slate-200 shadow-sm", inputBg = "bg-white text-slate-900 border-slate-200";
+  if (appTheme === 'dark') { appBg = "bg-slate-900"; textMain = "text-slate-100"; textMuted = "text-slate-400"; cardBg = "bg-slate-800 border-slate-700"; inputBg = "bg-slate-700 text-white border-slate-600"; }
+  else if (appTheme === 'pastel') { appBg = "bg-orange-50"; textMain = "text-orange-950"; textMuted = "text-orange-600"; cardBg = "bg-white/80 border-orange-200 shadow-md backdrop-blur-md"; inputBg = "bg-white text-orange-900 border-orange-200"; }
+  else if (appTheme === 'clean') { appBg = "bg-zinc-100"; textMain = "text-zinc-900"; textMuted = "text-zinc-500"; cardBg = "bg-white border-2 border-zinc-200 rounded-none"; inputBg = "bg-zinc-50 text-zinc-900 border-2 border-zinc-200 rounded-none"; }
+
+  const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+  const safeDashboardDay = (typeof dashboardDay === 'number' && dashboardDay > 0) ? dashboardDay : 1;
+  const todayPlans = safePlanTimeline.filter(p => p && parseInt(p.day || 1) === safeDashboardDay).sort((a,b) => S(a?.time).localeCompare(S(b?.time)));
+  
+  const safeMaxDay = (typeof maxDay === 'number' && maxDay > 0 && maxDay < 100) ? maxDay : 4;
+  const tripDays = Array.from({length: safeMaxDay}, (_, i) => i + 1);
+
+  // 헤더 우측에 띄워줄 현재 선택된 일차(Day) 기준 날씨 동기화
+  const dWeatherInfo = getWeatherForDay(dashboardDay);
+  const dForecast = forecast.find(fc => fc && fc.date === getDateStringForDay(dashboardDay));
+
+  /* ===================== 4. 메인 렌더링 블록 ===================== */
+
+  if (!isDbLoaded) return <div className="h-screen w-full flex items-center justify-center bg-slate-50"><span className="text-2xl animate-spin inline-block">🔄</span></div>;
+
+  if (showIdSetup) {
+    return (
+      <div className="flex h-screen w-full bg-slate-100 items-center justify-center font-sans select-none p-4">
+        <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-sm flex flex-col items-center">
+          <div className="text-4xl mb-4 bg-indigo-50 w-20 h-20 rounded-full flex items-center justify-center">🐱</div>
+          <h2 className="text-xl font-black text-slate-900 mb-2">{isLoginMode ? "로그인" : "계정 생성"}</h2>
+          <p className="text-xs text-slate-500 text-center mb-6">{isLoginMode ? "여행 일정을 다시 확인해보세요!" : "아이디를 만들어 일정을 공유하세요!"}</p>
+          
+          <input type="text" placeholder="아이디 (영문/숫자 3자 이상)" value={S(idInput)} onChange={(e) => {setIdInput(e.target.value.replace(/[^a-zA-Z0-9]/g, '')); setIdError("");}} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 mb-3" />
+          <input type="password" placeholder="비밀번호 (4자 이상)" value={S(pwInput)} onChange={(e) => {setPwInput(e.target.value); setIdError("");}} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 mb-3" />
+
+          <div className="flex w-full justify-between items-center mb-5 px-1">
+            <label className="flex items-center space-x-2 cursor-pointer text-xs font-bold text-slate-600"><input type="checkbox" checked={saveCredentials} onChange={e => setSaveCredentials(e.target.checked)} className="accent-indigo-600 w-3.5 h-3.5" /><span>ID/PW 저장</span></label>
+            <label className="flex items-center space-x-2 cursor-pointer text-xs font-bold text-slate-600"><input type="checkbox" checked={autoLogin} onChange={e => {setAutoLogin(e.target.checked); if(e.target.checked) setSaveCredentials(true);}} className="accent-indigo-600 w-3.5 h-3.5" /><span>자동 로그인</span></label>
+          </div>
+
+          {idError && <p className="text-[10px] text-rose-500 font-bold mb-3 text-center">{S(idError)}</p>}
+          
+          <div className="flex w-full space-x-2">
+            <button onClick={() => setIsLoginMode(!isLoginMode)} className="flex-1 bg-slate-100 text-slate-600 rounded-xl py-3 text-xs font-bold hover:bg-slate-200">{isLoginMode ? "회원가입" : "로그인으로"}</button>
+            <button onClick={() => isLoginMode ? handleLogin() : handleSignUp()} className="flex-[2] bg-indigo-600 text-white rounded-xl py-3 text-sm font-bold hover:bg-indigo-700 shadow-md">{isLoginMode ? "로그인" : "아이디 생성"}</button>
+          </div>
+          <button onClick={handleSkipIdSetup} className="mt-5 text-[10px] text-slate-400 font-bold underline">건너뛰기 (로컬 테스트)</button>
+        </div>
+      </div>
+    );
+  }
+
+  const finalAppScale = (typeof appScale === 'number' && !isNaN(appScale) && appScale > 0.3) ? appScale : 1;
+
+  return (
+    <div style={{ zoom: finalAppScale }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden font-sans select-none relative transition-colors duration-300`}>
+      {/* 사이드바 영역 */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[9500] flex">
+          <div className={`w-64 h-full shadow-2xl flex flex-col animate-in slide-in-from-left ${isDarkMode ? 'bg-slate-900 border-r border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+            <div className={`p-5 border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} flex items-center justify-between`}>
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-xl">🐱</div>
+                <div className="flex flex-col">
+                  <span className={`text-sm font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{appUserId === 'Guest' ? '게스트' : appUserId}</span>
+                  <span className="text-[10px] text-slate-500 font-bold">환영합니다!</span>
+                </div>
+              </div>
+              <button onClick={() => setIsMobileMenuOpen(false)} className={`text-xl ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>✕</button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+              <div>
+                <h3 className={`text-xs font-bold mb-3 px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>내 여행 목록 ✈️</h3>
+                <div className="space-y-1">
+                  {trips.map(t => (
+                    <button 
+                      key={t.id} 
+                      onClick={() => handleSwitchTrip(t.id)} 
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all truncate ${activeTripId === t.id && !sharedTripId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
+                    >
+                      {S(t.name)}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                   <button onClick={openAddTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>+ 새 여행</button>
+                   <button onClick={openRenameTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>✏️ 이름 변경</button>
+                </div>
+              </div>
+
+              {sharedTripId && (
+                <div className="p-3 bg-rose-50 rounded-xl border border-rose-100">
+                  <h3 className="text-[10px] font-black text-rose-600 mb-1">🤝 공유 일정 참여 중</h3>
+                  <p className="text-[9px] text-rose-500 mb-2 leading-tight">현재 친구의 일정을 함께 보고 있습니다.</p>
+                  <button onClick={handleExitShare} className="w-full bg-white text-rose-600 py-1.5 rounded text-[10px] font-bold shadow-sm border border-rose-100">내 일정으로 복귀</button>
+                </div>
+              )}
+
+              {pendingInvite && (
+                <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+                  <h3 className="text-[10px] font-black text-indigo-600 mb-1">💌 새 초대장 도착!</h3>
+                  <p className="text-[9px] text-indigo-500 mb-2 truncate">From: {S(pendingInvite.from_id)}</p>
+                  <div className="flex space-x-1.5">
+                    <button onClick={handleAcceptInvite} className="flex-1 bg-indigo-600 text-white py-1.5 rounded text-[10px] font-bold shadow-sm">수락</button>
+                    <button onClick={handleRejectInvite} className="flex-1 bg-white text-slate-600 py-1.5 rounded text-[10px] font-bold shadow-sm border">거절</button>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className={`p-4 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} space-y-2`}>
+              <button onClick={() => { setIsSettingsOpen(true); setIsMobileMenuOpen(false); }} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                <span>⚙️ 환경 설정</span>
+              </button>
+              <button onClick={handleLogout} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all border border-dashed ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>
+                <span>🚪 로그아웃</span>
+              </button>
+            </div>
+          </div>
+          <div className="flex-1" onClick={() => setIsMobileMenuOpen(false)}></div>
+        </div>
+      )}
+
+      {viewPhoto && (
+        <div className="fixed inset-0 bg-black/90 z-[5000] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewPhoto(null)}>
+          <img src={viewPhoto} className="max-w-full max-h-full object-contain rounded-md shadow-2xl" alt="Preview" />
+          <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1 rounded-full hover:bg-black/80 transition-colors" onClick={() => setViewPhoto(null)}>✕</button>
+        </div>
+      )}
+
+      {/* --- 태그형 준비물 체크리스트 팝업 모달 --- */}
+      {isPackingModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsPackingModalOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
+             <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                <h3 className={`text-sm font-black flex items-center ${textMain}`}><span className="mr-2">🎒</span> 준비물 챙기기</h3>
+                <button onClick={() => setIsPackingModalOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
+             </div>
+             <div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
+                <div className="flex space-x-2 shrink-0">
+                  <input type="text" placeholder="챙길 물건 입력 후 엔터키" onKeyDown={handleAddPackingItem} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none rounded-lg shadow-sm`} />
+                </div>
+
+                {packingList.some(item => item.isChecked) && (
+                  <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 p-2.5 rounded-lg text-[11px] font-bold text-center animate-in fade-in shrink-0 border border-emerald-100 dark:border-emerald-800/50">
+                     ✨ 앗! 준비물을 하나씩 채우고 계시군요. 완벽한 여행이 될 거예요!
+                  </div>
+                )}
+
+                {/* 태그형 쭈르륵(flex-wrap) 배치 */}
+                <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
+                  {packingList.map(item => (
+                     <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`group cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-700')}`}>
+                       <span className={`text-[11px] font-bold truncate max-w-[200px]`}>{item.text}</span>
+                       <button onClick={(e) => { e.stopPropagation(); deletePackingItem(item.id); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-indigo-400 hover:text-indigo-600'}`}>✕</button>
+                     </div>
+                  ))}
+                  {packingList.length === 0 && (
+                    <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">아직 등록된 준비물이 없습니다.</p>
+                  )}
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {selectedPlanInfo && (
+        <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setSelectedPlanInfo(null)}>
+          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+            {selectedPlanInfo.photo && (
+              <div className="w-full h-48 relative">
+                <img src={selectedPlanInfo.photo} className="w-full h-full object-cover" />
+                <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md">
+                  {S(selectedPlanInfo.time)}
+                </div>
+              </div>
+            )}
+            <div className="p-5 flex flex-col">
+              <div className="flex justify-between items-start mb-2">
+                <h3 className="text-lg font-black text-slate-900">{S(selectedPlanInfo.place)} {selectedPlanInfo.isAccommodation ? '🏠' : ''}</h3>
+                {!selectedPlanInfo.photo && <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-1 rounded shadow-sm">{S(selectedPlanInfo.time)}</span>}
+              </div>
+              
+              {selectedPlanInfo.localName && (
+                <div className="flex items-center text-sm font-bold text-indigo-500 mb-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, selectedPlanInfo.localName)}>
+                  <span className="mr-2">📍 {S(selectedPlanInfo.localName)}</span>
+                  <span className="text-[10px] bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">복사</span>
+                </div>
+              )}
+              
+              {selectedPlanInfo.features ? (
+                <p className="text-sm text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">{S(selectedPlanInfo.features)}</p>
+              ) : (
+                <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
+              )}
+              
+              <button onClick={() => setSelectedPlanInfo(null)} className="mt-5 w-full bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedPinInfo && (
+        <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setSelectedPinInfo(null)}>
+          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+            {selectedPinInfo.img && !S(selectedPinInfo.img).includes("unsplash") && (
+              <div className="w-full h-48 relative">
+                <img src={selectedPinInfo.img} className="w-full h-full object-cover" />
+                {selectedPinInfo.isAccommodation && <div className="absolute top-3 left-3 bg-yellow-400 text-white text-xs font-bold px-2 py-1 rounded shadow-md">숙소</div>}
+              </div>
+            )}
+            <div className="p-5 flex flex-col">
+              <h3 className="text-lg font-black text-slate-900 mb-2">{S(selectedPinInfo.name)} {selectedPinInfo.isAccommodation && !selectedPinInfo.img ? '🏠' : ''}</h3>
+              
+              {selectedPinInfo.localName && (
+                <div className="flex items-center text-sm font-bold text-indigo-500 mb-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, selectedPinInfo.localName)}>
+                  <span className="mr-2">📍 {S(selectedPinInfo.localName)}</span>
+                  <span className="text-[10px] bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">복사</span>
+                </div>
+              )}
+              
+              {selectedPinInfo.signature && S(selectedPinInfo.signature) !== "직접 추가한 장소" ? (
+                <p className="text-sm text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">{S(selectedPinInfo.signature)}</p>
+              ) : (
+                <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
+              )}
+              
+              <div className="flex space-x-2 mt-5">
+                <button onClick={() => {
+                  openEditPinModal(selectedPinInfo);
+                  setSelectedPinInfo(null);
+                }} className="flex-1 bg-indigo-100 text-indigo-600 py-3 rounded-xl font-bold text-sm hover:bg-indigo-200 transition-colors">정보 수정</button>
+                <button onClick={() => setSelectedPinInfo(null)} className="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">닫기</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tripModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 z-[7000] backdrop-blur-sm flex items-center justify-center p-4">
+          <div className={`${cardBg} w-full max-w-xs p-5 flex flex-col animate-in zoom-in-95 z-[7001]`}>
+            <div className={`flex items-center justify-between pb-3 border-b mb-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h2 className="text-sm font-black text-indigo-500">{tripModal.mode === 'add' ? '새 여행 만들기 ✈️' : '여행 이름 변경 ✏️'}</h2>
+              <button onClick={() => setTripModal({ ...tripModal, isOpen: false })}>✕</button>
+            </div>
+            <input 
+              type="text" 
+              value={S(tripModal.name)} 
+              onChange={e => setTripModal({ ...tripModal, name: e.target.value })} 
+              placeholder="여행 이름을 입력하세요" 
+              className={`w-full ${inputBg} p-3 text-xs font-bold outline-none mb-4`}
+              autoFocus
+              onKeyDown={e => e.key === 'Enter' && submitTripModal()}
+            />
+            <button onClick={submitTripModal} className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-bold text-xs shadow-md">확인</button>
+          </div>
+        </div>
+      )}
+
+      {isTransportModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4">
+          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`}>
+            <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
+              <div className="flex items-center space-x-2">
+                <span className="text-indigo-500 text-sm">✈️</span>
+                <h3 className="text-xs font-bold">교통권 등록</h3>
+              </div>
+              <button onClick={() => setIsTransportModalOpen(false)} className={`p-1 rounded ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}>✕</button>
+            </div>
+            
+            <div className="p-4 space-y-3">
+              <div className={`grid grid-cols-3 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-1 rounded-lg`}>
+                 <button onClick={() => setTransType('flight')} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'flight' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>✈️ 항공권</button>
+                 <button onClick={() => setTransType('train')} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'train' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>🚆 기차</button>
+                 <button onClick={() => setTransType('bus')} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'bus' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>🚌 버스</button>
+              </div>
+
+              {transType === 'flight' && (
+                <div className="flex space-x-2">
+                   <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400'}`}>가는 편 (Outbound)</button>
+                   <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 ${transDir === 'inbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400'}`}>오는 편 (Inbound)</button>
+                </div>
+              )}
+
+              {transType !== 'flight' && (
+                <div className="flex flex-col space-y-1">
+                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택 (Day)</label>
+                   <select value={transData.day} onChange={e => setTransData({...transData, day: parseInt(e.target.value)})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer`}>
+                      {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
+                   </select>
+                </div>
+              )}
+
+              <div className="flex space-x-2">
+                <div className="flex flex-col space-y-1 w-1/2">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>{transType === 'flight' ? '항공사' : (transType === 'train' ? '기차 종류' : '버스 회사')}</label>
+                  <input type="text" placeholder={transType === 'flight' ? '대한항공' : 'KTX, 고속버스'} value={transData.airline} onChange={e => setTransData({...transData, airline: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                </div>
+                <div className="flex flex-col space-y-1 w-1/2">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>{transType === 'flight' ? '항공편명' : '편명/번호'}</label>
+                  <input type="text" placeholder={transType === 'flight' ? 'KE001' : '102호'} value={transData.flightNum} onChange={e => setTransData({...transData, flightNum: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                </div>
+              </div>
+
+              <div className="flex space-x-2 items-center">
+                <div className="flex flex-col space-y-1 w-[45%]">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>출발지</label>
+                  <input type="text" placeholder={transType === 'flight' ? 'ICN' : '서울역'} value={transData.dep} onChange={e => setTransData({...transData, dep: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                  <input type="text" maxLength="5" placeholder="10:00" value={transData.depTime} onChange={e => handleTimeInput(e, val => setTransData({...transData, depTime: val}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1`} />
+                </div>
+                <div className="flex flex-col items-center justify-center text-slate-400 font-bold w-[10%]">➔</div>
+                <div className="flex flex-col space-y-1 w-[45%]">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>도착지</label>
+                  <input type="text" placeholder={transType === 'flight' ? 'NRT' : '부산역'} value={transData.arr} onChange={e => setTransData({...transData, arr: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                  <input type="text" maxLength="5" placeholder="12:00" value={transData.arrTime} onChange={e => handleTimeInput(e, val => setTransData({...transData, arrTime: val}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1`} />
+                </div>
+              </div>
+
+              <button onClick={handleSaveTransport} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all mt-2">
+                {transType === 'flight' ? '항공권 상단에 고정하기 ✈️' : '일정에 등록하기 📝'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingPlan && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[6000] flex items-center justify-center p-4">
+          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`}>
+            <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
+              <div className="flex items-center space-x-2">
+                <span className="text-orange-500 text-sm">✏️</span>
+                <h3 className="text-xs font-bold">일정 수정하기</h3>
+              </div>
+              <button onClick={() => setEditingPlan(null)} className={`p-1 rounded ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}>✕</button>
+            </div>
+            
+            <div className="p-4 space-y-3">
+              <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm`}>
+                {tripDays.map(d => (
+                  <button key={d} onClick={() => setEditingPlan({...editingPlan, day: d})} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all ${editingPlan.day === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100'}`}>D{d}</button>
+                ))}
+              </div>
+
+              <div className="flex space-x-2">
+                <div className="flex flex-col space-y-1 w-1/2">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>국가 🌍</label>
+                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center`}>
+                    <SelectOrInput 
+                      inputId="edit-country-input"
+                      value={editingPlan.countrySelect} manualValue={editingPlan.manualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
+                      options={Object.keys(REGIONS_BY_COUNTRY)}
+                      onChangeSelect={e => setEditingPlan({...editingPlan, countrySelect: e.target.value, regionSelect: "", manualCountry: "", manualRegion: ""})}
+                      onChangeManual={val => setEditingPlan({...editingPlan, manualCountry: val})}
+                      onCancelManual={() => setEditingPlan({...editingPlan, countrySelect: "", manualCountry: ""})}
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-col space-y-1 w-1/2">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>지역 📍</label>
+                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center`}>
+                    <SelectOrInput 
+                      inputId="edit-region-input"
+                      value={editingPlan.regionSelect} manualValue={editingPlan.manualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
+                      options={(!editingPlan.countrySelect || editingPlan.countrySelect === '수동입력') ? null : REGIONS_BY_COUNTRY[editingPlan.countrySelect]}
+                      onChangeSelect={e => setEditingPlan({...editingPlan, regionSelect: e.target.value, manualRegion: ""})}
+                      onChangeManual={val => setEditingPlan({...editingPlan, manualRegion: val})}
+                      onCancelManual={() => setEditingPlan({...editingPlan, regionSelect: "", manualRegion: ""})}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex space-x-2 items-end">
+                <div className="flex flex-col space-y-1 w-1/3">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>시간 ⏰</label>
+                  <input type="text" maxLength="5" value={S(editingPlan.time)} onChange={(e) => handleTimeInput(e, (val) => setEditingPlan({...editingPlan, time: val}))} placeholder="09:00" className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm`} />
+                </div>
+                <div className="flex flex-col space-y-1 flex-1 relative">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 📍</label>
+                  <input type="text" placeholder="장소 이름 입력" value={S(editingPlan.place)} onChange={(e) => setEditingPlan({...editingPlan, place: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6`} />
+                </div>
+              </div>
+
+              <div className="flex space-x-2 items-end">
+                <div className="flex flex-col space-y-1 flex-1">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어(복사용)</label>
+                  <input type="text" placeholder="현지어 입력" value={S(editingPlan.localName)} onChange={(e) => setEditingPlan({...editingPlan, localName: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm`} />
+                </div>
+                <div className="flex flex-col space-y-1 flex-1">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모</label>
+                  <input type="text" placeholder="간단한 메모" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm`} />
+                </div>
+              </div>
+
+              <div className="flex flex-col space-y-1 w-full">
+                <input type="file" accept="image/*" ref={editFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, true)} className="hidden" />
+                <button type="button" onClick={() => editFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold border transition-all flex items-center justify-center ${editingPlan.photo ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
+                  <span className="flex items-center">{editingPlan.photo ? "📸 첨부 완료" : "📸 사진 선택 (옵션)"}</span>
+                </button>
+              </div>
+
+              <div className="flex items-center space-x-2 my-1.5 px-1">
+                <input type="checkbox" id="editPlanIsAcc" checked={Boolean(editingPlan.isAccommodation)} onChange={e => setEditingPlan({...editingPlan, isAccommodation: e.target.checked})} className="accent-indigo-600 w-3.5 h-3.5 rounded" />
+                <label htmlFor="editPlanIsAcc" className={`text-[10px] font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+              </div>
+
+              <div className="pt-2 flex space-x-2">
+                <button onClick={() => {
+                  const finalCountry = editingPlan.countrySelect === "수동입력" ? editingPlan.manualCountry : editingPlan.countrySelect;
+                  const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
+                  const planData = { ...editingPlan, country: finalCountry, region: finalRegion };
+                  
+                  const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+                  let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
+                  setPlanTimeline(updatedTimeline); saveToDb({ plan_timeline: updatedTimeline });
+                  setEditingPlan(null); showToast("일정이 예쁘게 수정됐어요! 📝");
+                  
+                  if (finalRegion && finalRegion !== displayCityName) {
+                    setDisplayCityName(S(finalRegion));
+                    saveToDb({ display_city_name: S(finalRegion) });
+                  }
+                }} className="w-full bg-orange-500 text-white rounded-md py-2 text-[11px] font-bold shadow-sm hover:bg-orange-600 active:scale-95 transition-all">
+                  수정 내용 저장
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAddPlaceModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[9000] backdrop-blur-sm flex items-center justify-center p-4">
+          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+            <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
+              <h3 className="text-sm font-black flex items-center">
+                <span className="mr-2 text-indigo-500 text-lg">📍</span> 
+                {clickedLocation?.id ? '핀 정보 수정' : '새 지도 핀 등록'}
+              </h3>
+              <button onClick={() => setIsAddPlaceModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+            </div>
+            
+            <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh] custom-scrollbar">
+              <div className="flex flex-col space-y-1">
+                <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 이름 (필수)</label>
+                <input type="text" placeholder="예: 에펠탑" value={newManualPlaceName} onChange={e => setNewManualPlaceName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg`} />
+              </div>
+
+              <div className="flex flex-col space-y-1">
+                <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어 이름 (복사용)</label>
+                <input type="text" placeholder="예: Tour Eiffel" value={newManualLocalName} onChange={e => setNewManualLocalName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg`} />
+              </div>
+
+              <div className="flex flex-col space-y-1">
+                <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모 / 특징</label>
+                <input type="text" placeholder="간단한 메모 입력" value={newManualFeature} onChange={e => setNewManualFeature(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg`} />
+              </div>
+
+              {/* --- 핀 추가 시 한 줄로 배치된 일정 연동 콤보박스 --- */}
+              <div className="flex flex-col space-y-2 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg border border-slate-100 dark:border-slate-700">
+                <div className="flex space-x-2 items-end">
+                  <div className={`flex flex-col space-y-1 ${pinLinkDay ? 'w-1/3' : 'w-full'}`}>
+                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>일정 동기화</label>
+                    <select value={pinLinkDay} onChange={e => {
+                       setPinLinkDay(e.target.value); 
+                       setPinLinkPlanId(""); 
+                       setNewManualTime(""); 
+                    }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[11px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg cursor-pointer`}>
+                      <option value="">-- 연동 안 함 --</option>
+                      {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
+                    </select>
+                  </div>
+                  {pinLinkDay && (
+                     <div className="flex flex-col space-y-1 w-2/3">
+                       <label className={`text-[9px] font-bold ${textMuted} px-1`}>기존 일정과 연결 (또는 수동입력)</label>
+                       <select value={pinLinkPlanId} onChange={e => {
+                          const val = e.target.value;
+                          setPinLinkPlanId(val);
+                          if (val !== 'manual' && val !== '') {
+                             const matched = planTimeline.find(p => String(p.id) === String(val));
+                             if (matched) setNewManualTime(matched.time);
+                          } else {
+                             setNewManualTime("");
+                          }
+                       }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg cursor-pointer`}>
+                          <option value="">-- 일정 선택 --</option>
+                          {planTimeline.filter(p => String(p.day) === String(pinLinkDay)).map(p => (
+                             <option key={p.id} value={p.id}>[{p.time}] {S(p.place)}</option>
+                          ))}
+                          <option value="manual">➕ 수동 입력 (새 일정 추가)</option>
+                       </select>
+                     </div>
+                  )}
+                </div>
+
+                {(!pinLinkDay || pinLinkPlanId === 'manual') && (
+                   <div className="flex flex-col space-y-1 w-1/2 pt-1">
+                     <label className={`text-[9px] font-bold ${textMuted} px-1`}>방문 시간</label>
+                     <input type="text" placeholder="09:00" maxLength="5" value={newManualTime} onChange={e => handleTimeInput(e, setNewManualTime)} disabled={!pinLinkDay} className={`w-full ${!pinLinkDay ? 'opacity-50 bg-slate-100 cursor-not-allowed' : inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg`} />
+                   </div>
+                )}
+              </div>
+
+              <div className="flex flex-col space-y-1 w-full pt-1">
+                <input type="file" accept="image/*" ref={manualFileInputRef} onChange={handleManualPhotoUpload} className="hidden" />
+                <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`w-full py-2.5 text-xs font-bold rounded-lg border transition-all flex items-center justify-center ${newManualPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
+                  {newManualPhoto ? <span className="flex items-center">📸 사진 첨부 완료 (변경)</span> : <span className="flex items-center">📸 장소 사진 첨부 (옵션)</span>}
+                </button>
+              </div>
+
+              <div className="flex items-center space-x-2 my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700">
+                <input type="checkbox" id="manualPlanIsAcc" checked={newManualIsAccommodation} onChange={e => setNewManualIsAccommodation(e.target.checked)} className="accent-indigo-600 w-4 h-4 cursor-pointer" />
+                <label htmlFor="manualPlanIsAcc" className={`text-xs font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+              </div>
+            </div>
+            
+            <div className="p-4 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+              <button onClick={handleManualPlaceAdd} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">
+                {clickedLocation?.id ? '핀 정보 저장하기' : '지도에 핀 꽂기 📍'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isMyPinsModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[3500] backdrop-blur-sm flex items-center justify-center p-4">
+          <div className={`${cardBg} w-full max-w-5xl flex flex-col animate-in zoom-in-95 max-h-[85vh] rounded-3xl overflow-hidden`}>
+            <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
+              <h3 className="text-sm font-black flex items-center"><span className="mr-2 text-indigo-500 text-lg">📍</span> 내 핀/장소 목록</h3>
+              <div className="flex items-center space-x-3">
+                <button onClick={() => {
+                  setIsMyPinsModalOpen(false);
+                  setClickedLocation(null);
+                  setNewManualPlaceName("");
+                  setNewManualLocalName("");
+                  setNewManualFeature("");
+                  setNewManualPhoto("");
+                  setNewManualIsAccommodation(false);
+                  setPinLinkDay("");
+                  setPinLinkPlanId("");
+                  setNewManualTime("");
+                  setIsAddPlaceModalOpen(true);
+                }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-indigo-700 active:scale-95 transition-transform">
+                  <span className="mr-1 text-sm">➕</span> 새 장소 추가
+                </button>
+                <button onClick={() => setIsMyPinsModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-50/50 dark:bg-slate-900/50">
+              {safeCurrentRestaurants.length === 0 ? (
+                <div className="text-center py-20 text-xs font-bold text-slate-400 flex flex-col items-center">
+                  <span className="text-4xl mb-3 opacity-20">📍</span>
+                  등록된 핀이 없습니다.<br/>우측 상단의 '새 장소 추가'를 눌러 장소를 기록해보세요!
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {safeCurrentRestaurants.map(pin => (
+                    <div key={pin.id} className={`flex flex-col p-2 border rounded-xl shadow-sm ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
+                      
+                      {pin.img && !S(pin.img).includes("unsplash") ? (
+                        <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0">
+                          <img src={pin.img} className="w-full h-full object-cover" />
+                          {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm">숙소</div>}
+                        </div>
+                      ) : (
+                        <div className={`w-full h-12 flex items-center justify-center rounded-lg mb-1.5 shrink-0 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
+                          {pin.isAccommodation ? '🏠 숙소' : '📍 장소'}
+                        </div>
+                      )}
+                      
+                      <div className="flex-1 min-w-0 flex flex-col justify-center">
+                        <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight mb-0.5">{S(pin.name)}</h4>
+                        {pin.localName && (
+                          <p className="text-[9px] font-bold text-indigo-500 truncate cursor-pointer hover:opacity-80 leading-tight mb-0.5" onClick={(e) => handleCopyLocalName(e, pin.localName)}>
+                            📋 {S(pin.localName)}
+                          </p>
+                        )}
+                      </div>
+                      
+                      <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-700">
+                        <button onClick={() => {
+                          setMovingPinId(pin.id);
+                          setIsPinMode(true);
+                          setIsMyPinsModalOpen(false);
+                          setActiveTab('map');
+                          showToast("🗺️ 지도에서 핀을 꽂을 위치를 클릭해주세요!");
+                        }} className="flex-1 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 py-1 rounded text-[9px] font-bold hover:bg-emerald-100">
+                          위치 지정
+                        </button>
+                        <button onClick={() => openEditPinModal(pin)} className="flex-1 bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 py-1 rounded text-[9px] font-bold hover:bg-slate-200">
+                          수정
+                        </button>
+                        <button onClick={() => {
+                           const updated = safeCurrentRestaurants.filter(r => r && S(r.id) !== S(pin.id));
+                           setCurrentRestaurants(updated);
+                           saveToDb({ current_restaurants: updated });
+                           showToast("핀이 삭제되었습니다.");
+                        }} className="w-6 flex items-center justify-center bg-rose-50 text-rose-500 dark:bg-rose-900/30 dark:text-rose-400 py-1 rounded hover:bg-rose-100">
+                           <span className="text-[10px]">🗑️</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-black/50 z-[6000] backdrop-blur-sm flex items-center justify-center p-4">
+          <div className={`${cardBg} w-full max-w-sm p-5 flex flex-col animate-in zoom-in-95 z-[6001]`}>
+            <div className={`flex items-center justify-between pb-3 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'} mb-4`}>
+              <h2 className="text-sm font-black flex items-center space-x-2"><span className="text-indigo-500 text-lg">⚙️</span> <span>앱 환경 설정 ⚙️</span></h2>
+              <button onClick={() => setIsSettingsOpen(false)} className={`p-1 rounded ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-600'}`}>✕</button>
+            </div>
+            
+            <div className="space-y-5">
+              <div>
+                <label className={`text-xs font-bold ${textMuted} mb-2 block`}>테마 모드</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button onClick={() => handleThemeChange('light')} className={`py-2 rounded-lg text-xs font-bold flex justify-center items-center transition-colors ${appTheme === 'light' ? 'bg-indigo-600 text-white shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-500')}`}>라이트</button>
+                  <button onClick={() => handleThemeChange('dark')} className={`py-2 rounded-lg text-xs font-bold flex justify-center items-center transition-colors ${appTheme === 'dark' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500'}`}>다크</button>
+                  <button onClick={() => handleThemeChange('pastel')} className={`py-2 rounded-lg text-xs font-bold flex justify-center items-center transition-colors ${appTheme === 'pastel' ? 'bg-indigo-600 text-white shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-500')}`}>파스텔</button>
+                  <button onClick={() => handleThemeChange('clean')} className={`py-2 rounded-lg text-xs font-bold flex justify-center items-center transition-colors ${appTheme === 'clean' ? 'bg-indigo-600 text-white shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-500')}`}>모던 클린</button>
+                </div>
+              </div>
+
+              <div>
+                <label className={`text-xs font-bold ${textMuted} mb-2 flex justify-between`}>
+                  <span>앱 화면 비율</span>
+                  <span className="text-indigo-500">{Math.round(appScale * 100)}%</span>
+                </label>
+                <input type="range" min="0.7" max="1.3" step="0.05" value={appScale} onChange={handleScaleChange} className="w-full accent-indigo-600" />
+                <div className="flex justify-between text-[9px] text-slate-400 mt-1 px-1"><span>작게</span><span>크게</span></div>
+              </div>
+
+              <div className={`pt-4 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                <label className={`text-xs font-bold ${textMuted} mb-2 block`}>일정 공유 기능</label>
+                <div className={`flex flex-col ${isDarkMode ? 'bg-slate-700' : 'bg-indigo-50'} p-3 rounded-lg border ${isDarkMode ? 'border-slate-600' : 'border-indigo-100'}`}>
+                  <span className={`text-[10px] font-bold ${isDarkMode ? 'text-slate-300' : 'text-indigo-900'} mb-1`}>내 아이디: {S(appUserId)}</span>
+                  <div className="flex space-x-2 mt-1">
+                    <input type="text" placeholder="친구 아이디 입력" value={S(inviteIdInput)} onChange={(e) => setInviteIdInput(e.target.value.replace(/[^a-zA-Z0-9]/g, ''))} className={`flex-1 ${inputBg} px-2 py-1.5 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none`} />
+                    <button onClick={handleSendInvite} className="bg-indigo-600 text-white text-[10px] font-bold px-3 rounded-md shadow-sm hover:bg-indigo-700 transition-colors">초대</button>
+                  </div>
+                </div>
+                {sharedTripId ? (
+                  <button onClick={handleExitShare} className="w-full mt-3 bg-rose-50 text-rose-600 text-xs font-bold py-2.5 rounded-lg border border-rose-200 hover:bg-rose-100 transition-colors">
+                    공유 중단 및 개인 일정으로 복귀
+                  </button>
+                ) : (
+                  <button onClick={handleLogout} className="w-full mt-3 bg-slate-100 text-slate-600 text-xs font-bold py-2.5 rounded-lg border hover:bg-slate-200 transition-colors">
+                    로그아웃 및 다른 계정으로 접속
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isTranslatorOpen && (
+        <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm z-[3000] flex items-center justify-center p-4">
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} w-full max-w-xs shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`}>
+            <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
+              <div className="flex items-center space-x-2">
+                <span className="text-indigo-500 text-lg">🌐</span>
+                <h3 className={`text-xs font-bold ${textMain}`}>스마트 번역기</h3>
+              </div>
+              <button onClick={() => setIsTranslatorOpen(false)} className={`p-1 rounded ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}>✕</button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="flex flex-col space-y-2">
+                <label className={`text-[9px] font-bold ${textMuted}`}>번역할 내용을 입력하세요</label>
+                <textarea 
+                  placeholder="내용을 입력하세요..."
+                  value={translateText}
+                  onChange={(e) => setTranslateText(e.target.value)}
+                  className={`w-full h-24 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} rounded-lg p-2 text-[11px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none resize-none custom-scrollbar`}
+                />
+                <button 
+                  onClick={handleOpenGoogleTranslate}
+                  className="w-full py-2 bg-indigo-600 text-white rounded-lg text-[10px] font-bold shadow-sm hover:bg-indigo-700 active:scale-95 transition-all flex items-center justify-center"
+                >
+                  <span className="mr-1.5 text-sm">↗️</span> 텍스트 번역 (구글 연동)
+                </button>
+              </div>
+
+              <div className="relative flex items-center justify-center py-1">
+                <div className="absolute inset-0 flex items-center"><div className={`w-full border-t ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`}></div></div>
+                <span className={`relative px-2 text-[9px] font-bold ${textMuted} ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>또는</span>
+              </div>
+
+              <div className="flex flex-col space-y-2">
+                <button 
+                  onClick={handleOpenGoogleLens}
+                  className="w-full py-2 bg-slate-800 text-white rounded-lg text-[10px] font-bold shadow-sm hover:bg-slate-900 active:scale-95 transition-all flex items-center justify-center"
+                >
+                  <span className="mr-1.5 text-sm">📸</span> 사진 스캔 번역 (구글 렌즈)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 헤더 및 탭 내용 렌더링 */}
+      <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-0">
+        <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors`}>
+          <div className="flex items-center flex-1 space-x-2 sm:space-x-4">
+            <button className={`p-1.5 rounded-lg ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'} transition-all`} onClick={() => setIsMobileMenuOpen(true)}>
+              <span className="text-xl leading-none">☰</span>
+            </button>
+            
+            <div className="flex-1 flex max-w-[250px] sm:max-w-md items-center space-x-2">
+              <div className="flex-1 relative">
+                <span className={`absolute left-3 top-1/2 -translate-y-1/2 ${textMuted} text-sm`}>🔍</span>
+                <input 
+                  type="text" 
+                  placeholder="검색 🔍" 
+                  value={S(globalSearchQuery)}
+                  onChange={(e) => setGlobalSearchQuery(e.target.value)}
+                  onKeyDown={handleGlobalSearchEnter}
+                  onFocus={() => {if (suggestions.length > 0) setShowCountrySuggestions(true)}}
+                  onBlur={() => setTimeout(() => setShowCountrySuggestions(false), 200)}
+                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-700' : 'border-slate-200'} rounded-lg py-1.5 pl-9 pr-8 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none transition-all shadow-sm`} 
+                />
+                {globalSearchQuery && (
+                  <button onClick={() => { setGlobalSearchQuery(""); setSuggestions([]); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">✕</button>
+                )}
+                
+                {showCountrySuggestions && suggestions.length > 0 && (
+                  <div className={`absolute top-full left-0 right-0 mt-1 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'} border rounded-md shadow-xl overflow-hidden z-50`}>
+                    <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                      {suggestions.map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          onMouseDown={() => fetchCityRestaurants(suggestion)}
+                          className={`w-full text-left px-4 py-2.5 text-[11px] font-bold flex items-center transition-colors ${isDarkMode ? 'text-slate-200 hover:bg-slate-600 hover:text-indigo-300' : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                        >
+                          <span className="mr-2 opacity-50 text-sm">📍</span><span>{S(suggestion)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 헤더 우측 날씨 표기 동기화 */}
+              <button 
+                onClick={() => setIsWeatherModalOpen(true)} 
+                className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border shadow-sm flex-shrink-0 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+              >
+                <span className="text-sm leading-none">{dWeatherInfo ? dWeatherInfo[1] : (weather ? getWeatherInfo(weather.code)[1] : '☁️')}</span>
+                <span className="text-[10px] sm:text-xs font-bold">{dForecast ? `${dForecast.max}°` : (weather ? `${weather.temp}°` : '-')}</span>
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-1 sm:space-x-2">
+            <button onClick={() => changeTab('dashboard')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
+              <span className="hidden sm:inline">대쉬보드 </span>🌍
+            </button>
+            <button onClick={() => changeTab('plan')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'plan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
+              <span className="hidden sm:inline">일정 </span>📆
+            </button>
+            <button onClick={() => changeTab('map')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'map' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
+              <span className="hidden sm:inline">지도 </span>🗺️
+            </button>
+          </div>
+        </header>
+
+        <div className="flex-1 p-2 sm:p-4 pt-3 sm:pt-4 pb-4 overflow-hidden relative w-full h-full z-0">
+          {/* --- Dashboard Tab --- */}
+          <div className={`absolute inset-0 p-2 sm:p-4 pt-3 sm:pt-4 pb-4 flex flex-col gap-3 overflow-hidden transition-opacity duration-300 ${activeTab === 'dashboard' ? 'opacity-100 z-10' : 'opacity-0 -z-10 pointer-events-none'}`}>
+            <div className="flex items-end justify-between px-1 flex-shrink-0">
+              <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight ${textMain}`}>
+                💸 실시간 동시 환율
+                <button onClick={fetchRealTimeRates} className={`ml-3 p-1.5 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-white'} shadow-sm text-indigo-500`}>
+                  <span className={`text-sm ${loadingRates ? 'animate-spin inline-block' : ''}`}>🔄</span>
+                </button>
+              </h2>
+              {errorRates && <span className="text-rose-500 text-[10px] font-bold ml-2">{errorRates}</span>}
+              <button onClick={() => setIsTranslatorOpen(true)} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all ml-auto ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
+                <span className="text-xs">🌐</span>
+                <span>AI 번역기</span>
+              </button>
+            </div>
+
+            <div className="flex w-full gap-2 sm:gap-3 flex-shrink-0 overflow-x-auto custom-scrollbar pb-1">
+              {CURRENCIES.map(cur => {
+                const isFocused = focusedCurrency === cur.code;
+                return (
+                  <div key={cur.code} className={`flex-1 min-w-[75px] rounded-xl p-2.5 sm:p-3 border ${cardBg} transition-all duration-200 flex flex-col items-center justify-center relative ${isFocused ? (isDarkMode ? 'border-indigo-400 bg-slate-800' : 'border-indigo-400 bg-indigo-50 shadow-sm') : 'shadow-sm'}`}>
+                    <span className={`text-[10px] font-bold mb-1 uppercase ${isFocused ? 'text-indigo-500' : textMuted}`}>{cur.label}</span>
+                    <input 
+                      type="text" inputMode="decimal" value={getInputValue(cur.code)} onChange={(e) => handleInputChange(cur.code, e.target.value)} onFocus={() => setFocusedCurrency(cur.code)} onBlur={() => setFocusedCurrency(null)} placeholder={getPlaceholder(cur.code)} 
+                      className={`w-full bg-transparent border-none outline-none text-center text-sm sm:text-base font-black p-0 focus:ring-0 transition-colors placeholder:font-medium placeholder:text-slate-400 ${isFocused ? 'text-indigo-600' : textMain}`} 
+                    />
+                    <span className={`text-[9px] font-bold mt-1 ${isFocused ? 'text-indigo-400' : (amount ? textMuted : 'opacity-30')}`}>{amount ? cur.sym : '₩'}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex-1 flex flex-col md:flex-row gap-2 sm:gap-4 overflow-hidden min-h-0 h-full">
+              <div className={`w-full md:w-[40%] ${cardBg} p-2 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-3xl`}>
+                <div className={`flex flex-col mb-2 sm:mb-3 flex-shrink-0 border-b pb-2 relative z-10 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                  <div className={`flex items-center justify-between space-x-1.5 mb-1 sm:mb-2 ${textMuted}`}>
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-xs flex-shrink-0">📅</span>
+                      <span className="text-[10px] font-bold tracking-tight truncate">{getDayDateString(dashboardDay)}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-1.5">
+                    <h3 className={`text-[11px] sm:text-xs font-bold tracking-tight ${textMain} leading-tight`}>🎒 오늘의 여행 계획</h3>
+                    <div className={`grid grid-cols-4 gap-0.5 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-0.5 rounded-md w-full xl:w-[120px] overflow-y-auto custom-scrollbar max-h-16`}>
+                      {tripDays.map(d => {
+                         const wInfo = getWeatherForDay(d);
+                         return (
+                           <button key={d} onClick={() => { setDashboardDay(d); saveToDb({dashboardDay: d}); }} className={`h-10 flex flex-col items-center justify-center rounded flex-shrink-0 transition-all ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200'}`}>
+                             <span className="text-[8px] font-bold">D{d}</span>
+                             {wInfo ? <span className="text-[8px] leading-none mt-0.5">{wInfo[1]}</span> : <div className="h-2"></div>}
+                           </button>
+                         );
+                      })}
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col space-y-1.5 sm:space-y-2 pr-1 relative z-10">
+                  {todayPlans.length === 0 ? (
+                     <div onClick={() => changeTab('plan')} className={`flex-1 flex flex-col items-center justify-center text-[9px] sm:text-[10px] ${textMuted} font-bold text-center ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 hover:border-indigo-400'} rounded-lg border border-dashed cursor-pointer transition-all active:scale-[0.99]`}>
+                       <span>오늘 등록된 일정이 없습니다. <br/>클릭하여 추가하세요!</span>
+                     </div>
+                  ) : (
+                    todayPlans.map((item) => (
+                      <div key={item.id} className={`flex items-center space-x-1.5 sm:space-x-2 p-1.5 sm:p-2 rounded-lg border cursor-pointer hover:border-indigo-400 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-100'} shadow-sm transition-all group`} onClick={(e) => { e.stopPropagation(); setSelectedPlanInfo(item); }}>
+                        <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[8px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0">{S(item.time)}</div>
+                        <div className="flex-1 min-w-0 flex flex-col px-0.5">
+                          <span className={`text-[9px] sm:text-[11px] font-bold truncate ${textMain}`}>
+                            {S(item.place)} {item.localName ? <span className="text-indigo-500 text-[9px]">({S(item.localName)})</span> : ''} {item.isAccommodation && '🏠'}
+                          </span>
+                          {item.features && <span className={`text-[7px] sm:text-[9px] truncate ${textMuted} mt-0.5`}>{S(item.features)}</span>}
+                        </div>
+                        {item.photo && <img src={item.photo} onClick={(e) => { e.stopPropagation(); handleEditPlanClick(item); }} className={`hidden sm:block w-7 h-7 sm:w-8 sm:h-8 rounded-md object-cover hover:opacity-80 transition-opacity shadow-sm flex-shrink-0 border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className={`w-full md:w-[60%] ${cardBg} p-2 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-3xl`}>
+                <div className="flex items-center justify-between mb-2 sm:mb-3 flex-shrink-0 relative z-30">
+                  <h3 className={`text-[11px] sm:text-sm font-bold tracking-tight flex items-center ${textMain}`}>
+                    <span className="truncate max-w-[140px] sm:max-w-none">✈️ 오늘의 여행 리스트({S(displayCityName)})</span>
+                  </h3>
+                  <div className="flex items-center space-x-2">
+                    <div className={`grid grid-cols-4 gap-0.5 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-0.5 rounded-md min-w-[100px] w-full max-w-[120px] overflow-y-auto custom-scrollbar max-h-16`}>
+                      {tripDays.map(d => (
+                         <button key={d} onClick={() => { setDashboardDay(d); saveToDb({dashboardDay: d}); }} className={`px-1.5 py-0.5 text-[8px] font-bold rounded flex-shrink-0 transition-all ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200'}`}>
+                           D{d}
+                         </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col min-h-0">
+                  {(flights.outbound || flights.inbound) && (
+                    <div className={`flex flex-row gap-2 mb-3 p-2 rounded-xl border ${isDarkMode ? 'bg-indigo-900/20 border-indigo-500/30' : 'bg-indigo-50 border-indigo-100'} shrink-0`}>
+                      {flights.outbound && (
+                         <div onClick={() => handleEditFlight('outbound')} className={`flex-1 w-1/2 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer hover:border-indigo-400 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                           <span className="absolute top-1.5 left-2 text-[8px] font-bold text-indigo-500 bg-indigo-100 px-1 rounded">가는 편 🛫</span>
+                           <div className="flex w-full items-center justify-between mt-3 px-1">
+                             <div className="flex flex-col w-[30%]"><span className="text-xs sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.dep}</span><span className="text-[8px] font-bold text-slate-400">{flights.outbound.depTime}</span></div>
+                             <div className="flex flex-col items-center flex-1 px-1">
+                               <span className="text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-1">✈️</span></span>
+                               <span className="text-[7px] sm:text-[8px] font-bold text-indigo-400 truncate w-full text-center">{flights.outbound.airline} {flights.outbound.flightNum}</span>
+                             </div>
+                             <div className="flex flex-col text-right w-[30%]"><span className="text-xs sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.arr}</span><span className="text-[8px] font-bold text-slate-400">{flights.outbound.arrTime}</span></div>
+                           </div>
+                         </div>
+                      )}
+                      {flights.inbound && (
+                         <div onClick={() => handleEditFlight('inbound')} className={`flex-1 w-1/2 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer hover:border-rose-400 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                           <span className="absolute top-1.5 left-2 text-[8px] font-bold text-rose-500 bg-rose-100 px-1 rounded">오는 편 🛬</span>
+                           <div className="flex w-full items-center justify-between mt-3 px-1">
+                             <div className="flex flex-col w-[30%]"><span className="text-xs sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.dep}</span><span className="text-[8px] font-bold text-slate-400">{flights.inbound.depTime}</span></div>
+                             <div className="flex flex-col items-center flex-1 px-1">
+                               <span className="text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-1">✈️</span></span>
+                               <span className="text-[7px] sm:text-[8px] font-bold text-rose-400 truncate w-full text-center">{flights.inbound.airline} {flights.inbound.flightNum}</span>
+                             </div>
+                             <div className="flex flex-col text-right w-[30%]"><span className="text-xs sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.arr}</span><span className="text-[8px] font-bold text-slate-400">{flights.inbound.arrTime}</span></div>
+                           </div>
+                         </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 content-start">
+                    {todayPlans.length === 0 ? (
+                       <div onClick={() => changeTab('plan')} className={`col-span-full flex flex-col items-center justify-center ${textMuted} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 hover:border-indigo-400'} rounded-xl border border-dashed h-24 cursor-pointer transition-all active:scale-[0.99]`}>
+                         <span className="text-[11px] font-bold">오늘 등록된 일정이 없습니다. 클릭하여 추가해 보세요!</span>
+                       </div>
+                    ) : (
+                      todayPlans.map((plan) => (
+                        <div 
+                          key={plan.id} 
+                          className={`${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-white border-slate-200 hover:border-indigo-400'} rounded-lg border shadow-sm overflow-hidden flex flex-col transition-all group`}
+                        >
+                          <div className="w-full h-16 sm:h-20 relative shrink-0 cursor-pointer" onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }}>
+                            <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt={S(plan.place)} />
+                            <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[8px] font-bold px-1.5 py-0.5 rounded shadow-sm">{S(plan.time)}</div>
+                            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><span className="text-white text-[10px] font-bold">✏️ 수정하기</span></div>
+                          </div>
+                          <div className="flex flex-col p-1.5 flex-1 cursor-pointer hover:bg-slate-50/50 dark:hover:bg-slate-700/50" onClick={(e) => { e.stopPropagation(); setSelectedPlanInfo(plan); }}>
+                            <h4 className={`font-black text-[10px] sm:text-[11px] ${textMain} truncate tracking-tight mb-0.5`}>
+                              {S(plan.place)} {plan.isAccommodation && '🏠'}
+                            </h4>
+                            {plan.localName && <p className="text-[8px] sm:text-[9px] text-indigo-500 font-bold truncate mb-1">{S(plan.localName)}</p>}
+                            {plan.features && <p className={`text-[8px] ${textMuted} line-clamp-2 leading-tight mt-auto`}>{S(plan.features)}</p>}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* --- Plan Tab --- */}
+          <div className={`absolute inset-0 p-2 sm:p-4 pt-3 pb-4 flex flex-col animate-in slide-in-from-bottom-4 transition-opacity duration-300 overflow-hidden ${activeTab === 'plan' ? 'visible opacity-100 z-10' : 'invisible opacity-0 -z-10 pointer-events-none'}`}>
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-3 px-1 gap-2 flex-shrink-0">
+              <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight ${textMain}`}>
+                📝 꼼꼼하게 채우는 여행 일기
+              </h2>
+              <div className="flex items-center space-x-2 flex-wrap sm:flex-nowrap gap-y-1">
+                <button onClick={() => {
+                  setTransType('flight'); setTransDir('outbound'); setTransData({ airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 });
+                  setIsTransportModalOpen(true);
+                }} className={`flex items-center border shadow-sm px-2 py-1 h-8 rounded-lg text-[9px] font-bold transition-all active:scale-95 ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300 border-indigo-500/50' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
+                   ✈️ 교통/항공권 등록
+                </button>
+                <div className={`flex items-center ${cardBg} px-2 py-1 h-8 rounded-lg`}>
+                  <span className={`text-[9px] font-bold mr-1.5 ${textMuted} flex-shrink-0`}>국가 🌍</span>
+                  <div className="flex-1 relative w-16 sm:w-20 h-full flex items-center">
+                    <SelectOrInput 
+                      inputId="global-country-input"
+                      value={globalPlanCountry} manualValue={globalManualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
+                      options={Object.keys(REGIONS_BY_COUNTRY)}
+                      onChangeSelect={e => {setGlobalPlanCountry(e.target.value); setGlobalPlanRegion(""); setGlobalManualCountry(""); setGlobalManualRegion("");}}
+                      onChangeManual={val => setGlobalManualCountry(val)}
+                      onCancelManual={() => { setGlobalPlanCountry(""); setGlobalManualCountry(""); }}
+                    />
+                  </div>
+                </div>
+                <div className={`flex items-center ${cardBg} px-2 py-1 h-8 rounded-lg`}>
+                  <span className={`text-[9px] font-bold mr-1.5 ${textMuted} flex-shrink-0`}>지역 📍</span>
+                  <div className="flex-1 relative w-16 sm:w-20 h-full flex items-center">
+                    <SelectOrInput 
+                      inputId="global-region-input"
+                      value={globalPlanRegion} manualValue={globalManualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
+                      options={(!globalPlanCountry || globalPlanCountry === '수동입력') ? null : REGIONS_BY_COUNTRY[globalPlanCountry]}
+                      onChangeSelect={e => {setGlobalPlanRegion(e.target.value); setGlobalManualRegion("");}}
+                      onChangeManual={val => setGlobalManualRegion(val)}
+                      onCancelManual={() => { setGlobalPlanRegion(""); setGlobalManualRegion(""); }}
+                    />
+                  </div>
+                </div>
+                <div className={`flex items-center ${cardBg} px-2 py-1 h-8 rounded-lg`}>
+                  <span className={`text-[9px] font-bold mr-1.5 ${textMuted}`}>시작일</span>
+                  <input 
+                    type="date" 
+                    value={travelStartDate} 
+                    onChange={(e) => { setTravelStartDate(e.target.value); saveToDb({ travelStartDate: e.target.value }); }}
+                    className={`text-[10px] font-bold outline-none bg-transparent ${textMain}`}
+                  />
+                </div>
+              </div>
+            </div>
+            
+            <div className={`flex-1 ${cardBg} flex flex-col sm:flex-row overflow-hidden h-full rounded-3xl`}>
+              <div className={`sm:w-56 p-3 sm:p-4 border-b sm:border-b-0 sm:border-r ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'} flex flex-col flex-shrink-0 overflow-hidden`}>
+                <div className="overflow-y-auto custom-scrollbar flex-1 space-y-2 pr-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택</label>
+                    <div className="flex space-x-1">
+                      <button onClick={addDay} className="bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-indigo-100">+ Day 추가</button>
+                      {maxDay > 4 && <button onClick={removeDay} className="bg-rose-50 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-rose-100">- 삭제</button>}
+                    </div>
+                  </div>
+                  <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm mb-2 max-h-24 overflow-y-auto custom-scrollbar`}>
+                    {tripDays.map(d => (
+                      <button key={d} onClick={() => setNewDay(d)} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all ${newDay === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100'}`}>D{d}</button>
+                    ))}
+                  </div>
+
+                  <div className="flex space-x-2">
+                    <div className="flex flex-col space-y-1 w-1/2">
+                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>국가 🌍</label>
+                      <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 h-8 flex items-center rounded`}>
+                        <SelectOrInput 
+                          inputId="form-country-input"
+                          value={planCountry} manualValue={manualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
+                          options={Object.keys(REGIONS_BY_COUNTRY)}
+                          onChangeSelect={e => {setPlanCountry(e.target.value); setPlanRegion(""); setManualCountry(""); setManualRegion("");}}
+                          onChangeManual={val => setManualCountry(val)}
+                          onCancelManual={() => { setPlanCountry(""); setManualCountry(""); }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-col space-y-1 w-1/2">
+                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>지역 📍</label>
+                      <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 h-8 flex items-center rounded`}>
+                        <SelectOrInput 
+                          inputId="form-region-input"
+                          value={planRegion} manualValue={manualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
+                          options={(!planCountry || planCountry === '수동입력') ? null : REGIONS_BY_COUNTRY[planCountry]}
+                          onChangeSelect={e => {setPlanRegion(e.target.value); setManualRegion("");}}
+                          onChangeManual={val => setManualRegion(val)}
+                          onCancelManual={() => { setPlanRegion(""); setManualRegion(""); }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex space-x-2 items-end">
+                    <div className="flex flex-col space-y-1 w-1/3">
+                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>시간 ⏰</label>
+                      <input 
+                        type="text" 
+                        maxLength="5" 
+                        value={newTime} 
+                        onChange={(e) => handleTimeInput(e, setNewTime)} 
+                        placeholder="09:00" 
+                        className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded`} 
+                      />
+                    </div>
+                    <div className="flex flex-col space-y-1 flex-1 relative">
+                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 📍</label>
+                      <input 
+                        type="text" 
+                        placeholder="장소 이름 입력" 
+                        value={newPlace} 
+                        onChange={(e) => setNewPlace(e.target.value)}
+                        className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6 rounded`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex space-x-2 items-end">
+                    <div className="flex flex-col space-y-1 flex-1">
+                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어(복사용)</label>
+                      <input type="text" placeholder="현지어 입력" value={newLocalName} onChange={e => setNewLocalName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded`} />
+                    </div>
+                    <div className="flex flex-col space-y-1 flex-1">
+                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모</label>
+                      <input type="text" placeholder="간단 메모" value={newFeatures} onChange={(e) => setNewFeatures(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSavePlan()} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded`} />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col space-y-1 w-full pt-1">
+                    <input type="file" accept="image/*" ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
+                    <button type="button" onClick={() => planFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold rounded border transition-all flex items-center justify-center ${newPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
+                      {newPhoto ? <span className="flex items-center">📸 사진 첨부 완료</span> : <span className="flex items-center">📸 사진 선택 (옵션)</span>}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center space-x-2 my-1.5 px-1 pb-1">
+                    <input type="checkbox" id="planIsAcc" checked={newIsAccommodation} onChange={e => setNewIsAccommodation(e.target.checked)} className="accent-indigo-600 w-3.5 h-3.5 cursor-pointer" />
+                    <label htmlFor="planIsAcc" className={`text-[10px] font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+                  </div>
+
+                  <div className="pt-1 flex space-x-2">
+                    <button onClick={handleSavePlan} className="w-full bg-indigo-600 text-white rounded py-2.5 text-[11px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">
+                      <span>스케줄에 등록! ✨</span>
+                    </button>
+                  </div>
+                  
+                  <div className={`mt-3 pt-3 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                     <button onClick={() => setIsPackingModalOpen(true)} className={`w-full flex items-center justify-center p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[11px] font-bold transition-all dark:bg-slate-800 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700`}>
+                        🎒 준비물 체크리스트 열기
+                     </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'} overflow-hidden w-full`}>
+                <div className="flex-1 grid grid-cols-4 gap-1 sm:gap-3 h-full pb-2 min-h-0">
+                  {[0, 1, 2, 3].map(colIndex => (
+                    <div key={colIndex} className="flex flex-col gap-2 sm:gap-3 h-full min-h-0 overflow-y-auto custom-scrollbar pr-1">
+                      {tripDays
+                        .filter(day => (day - 1) % 4 === colIndex)
+                        .map(day => (
+                          <div key={day} className={`flex-1 flex flex-col ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'} rounded-xl border min-h-[150px] overflow-hidden shadow-sm`}>
+                            <div className={`py-1.5 flex flex-col items-center border-b ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'} flex-shrink-0`}>
+                              <span className={`text-[10px] sm:text-[11px] font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} leading-tight`}>Day {day}</span>
+                              <span className={`text-[7px] sm:text-[8px] ${textMuted} mt-0.5`}>{getDayDateString(day)}</span>
+                            </div>
+                            <div className={`flex-1 overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+                              {planTimeline.filter(p => parseInt(p.day || 1) === day).length === 0 ? (
+                                 <div className={`flex flex-col items-center justify-center h-full text-[8px] sm:text-[9px] ${textMuted}`}>
+                                   <span>일정 없음</span>
+                                 </div>
+                              ) : (
+                                planTimeline.filter(p => parseInt(p.day || 1) === day).map((plan) => (
+                                  <div key={plan.id} className={`${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-100'} p-1.5 sm:p-2 rounded-lg border relative group hover:border-indigo-300 transition-all`}>
+                                    <div className="flex justify-between items-start mb-1">
+                                      <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none">{S(plan.time)}</span>
+                                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex space-x-1 bg-white/90 rounded border border-slate-200 absolute top-1 right-1 z-10 shadow-sm">
+                                        <button onClick={() => handleEditPlanClick(plan)} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                                        <button onClick={() => handleDeletePlan(plan.id)} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+                                      </div>
+                                    </div>
+                                    <div className="flex gap-1.5 items-start mt-1">
+                                      <div className="flex-1 min-w-0 flex flex-col cursor-pointer" onClick={(e) => { e.stopPropagation(); setSelectedPlanInfo(plan); }}>
+                                        <p className={`text-[9px] sm:text-[10px] font-bold ${textMain} leading-tight line-clamp-2`}>{S(plan.place)} {plan.isAccommodation && '🏠'}</p>
+                                        {plan.localName && (
+                                          <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70">
+                                            📋 {S(plan.localName)}
+                                          </p>
+                                        )}
+                                        {plan.features && <p className={`text-[7px] sm:text-[8px] ${textMuted} line-clamp-2 leading-tight mt-0.5`}>{S(plan.features)}</p>}
+                                      </div>
+                                      {plan.photo && (
+                                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0" onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }}>
+                                          <img src={plan.photo} className="w-full h-full object-cover hover:opacity-80 transition-opacity" />
+                                          <div className="absolute inset-0 bg-black/30 opacity-0 hover:opacity-100 flex items-center justify-center transition-opacity"><span className="text-white text-[7px] font-bold">수정</span></div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* --- Map Tab --- */}
+          <div className={`absolute inset-0 flex flex-col p-2 sm:p-4 pt-3 pb-4 overflow-hidden transition-opacity duration-300 ${activeTab === 'map' ? 'visible opacity-100 z-10' : 'invisible opacity-0 -z-10 pointer-events-none'}`}>
+            <div className="flex flex-col gap-2 mb-2 flex-shrink-0 relative z-20">
+              
+              {/* --- 필터 및 색상 동기화 패널 --- */}
+              <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 w-full max-w-full">
+                 <button onClick={() => setMapActiveDay('all')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all ${mapActiveDay === 'all' ? (isDarkMode ? 'bg-indigo-500 text-white border-indigo-500 shadow-md' : 'bg-slate-800 text-white shadow-md border-slate-800') : (isDarkMode ? 'bg-slate-800 text-slate-300 border border-slate-600' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50')}`}>전체보기</button>
+                 {tripDays.map(d => {
+                   const color = getDayColor(d);
+                   const isActive = mapActiveDay === d;
+                   return (
+                     <button key={d} onClick={() => setMapActiveDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all ${isActive ? 'shadow-md' : 'hover:opacity-80'}`}>Day {d}</button>
+                   )
+                 })}
+                 <button onClick={() => setMapActiveDay('unlinked')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all border ${mapActiveDay === 'unlinked' ? 'bg-slate-500 text-white shadow-md border-slate-500' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-600' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
+              </div>
+
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                <div className="relative w-full sm:w-64">
+                   <div className={`flex items-center shadow-sm rounded-lg overflow-hidden border ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-300 bg-white'}`}>
+                      <span className={`ml-3 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>🔍</span>
+                      <input 
+                        type="text" 
+                        value={S(markerSearchQuery)}
+                        onChange={e => setMarkerSearchQuery(e.target.value)}
+                        placeholder="내 지도 핀 검색..."
+                        className={`w-full pl-2 pr-8 py-2 bg-transparent text-[11px] font-bold ${isDarkMode ? 'text-white placeholder-slate-400' : 'text-slate-800'} focus:outline-none`}
+                      />
+                      {markerSearchQuery && (
+                        <button onClick={() => setMarkerSearchQuery("")} className="absolute right-3 text-slate-400 hover:text-slate-600">✕</button>
+                      )}
+                   </div>
+                   {markerSearchQuery && filteredMarkers.length > 0 && (
+                     <div className={`absolute top-full left-0 right-0 mt-1 ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'} border rounded-lg shadow-xl overflow-hidden max-h-40 overflow-y-auto custom-scrollbar`}>
+                        {filteredMarkers.map(marker => (
+                          <button 
+                            key={marker.id}
+                            onClick={() => handleMarkerSearchSelect(marker)}
+                            className={`w-full text-left px-3 py-2.5 text-[11px] font-bold border-b last:border-0 flex items-center transition-colors ${isDarkMode ? 'text-slate-200 border-slate-700 hover:bg-slate-700' : 'text-slate-700 border-slate-100 hover:bg-indigo-50'}`}
+                          >
+                            <div className={`w-2 h-2 rounded-full mr-2.5 ${planTimeline.some(p=>S(p.place)===S(marker.name))?'bg-orange-500':'bg-blue-500'} group-hover:scale-125 transition-transform`}></div>
+                            <span className="truncate flex-1">{S(marker.name)}</span>
+                            <span className={`text-[9px] ${textMuted} ml-2`}>{S(marker.city)}</span>
+                          </button>
+                        ))}
+                     </div>
+                   )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                   <button onClick={() => setIsMyPinsModalOpen(true)} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-colors shadow-sm active:scale-95 ${isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-700'}`}>
+                      <span className="text-xs mr-1">📍</span><span>내 핀 목록</span>
+                   </button>
+                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
+                      <input type="checkbox" checked={isPinMode} onChange={e => setIsPinMode(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
+                      <span>핀 설정 📍</span>
+                   </label>
+                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
+                      <input type="checkbox" checked={showMapPhotos} onChange={e => setShowMapPhotos(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
+                      <span>사진</span>
+                   </label>
+                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
+                      <input type="checkbox" checked={showMapLabels} onChange={e => setShowMapLabels(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
+                      <span>이름</span>
+                   </label>
+                   <button onClick={handleFindMyLocation} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-colors shadow-sm active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                      <span className="text-xs mr-1">🧭</span><span>현재 위치</span>
+                   </button>
+                </div>
+              </div>
+            </div>
+            
+            <div className={`flex-1 ${cardBg} relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl`}>
+              <div className="w-full h-full rounded-3xl overflow-hidden relative">
+                {!isLeafletLoaded && (
+                  <div className={`absolute inset-0 z-0 flex flex-col items-center justify-center ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-400'}`}>
+                    <span className="text-xl animate-spin inline-block mb-2">🔄</span>
+                    <span className="text-[10px] font-bold">지도 로딩 중...</span>
+                  </div>
+                )}
+                <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } 
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } 
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; }
+        input[type="text"], input[type="password"], input[type="date"], select { font-variant-numeric: tabular-nums; }
+        .leaflet-container { z-index: 10; font-family: inherit; background: transparent; border-radius: 1rem; }
+        .dark .leaflet-container { filter: brightness(0.8) contrast(1.2); }
+        .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); border: 1px solid #e2e8f0; }
+        .dark .leaflet-popup-content-wrapper { background: #1e293b; border-color: #334155; color: white; }
+        .leaflet-popup-content { margin: 12px; font-family: inherit; line-height: 1.4; }
+        .leaflet-popup-tip { background: #fff; border-top: 1px solid #e2e8f0; border-left: 1px solid #e2e8f0; }
+        .dark .leaflet-popup-tip { background: #1e293b; border-top-color: #334155; border-left-color: #334155; }
+      `}} />
+    </div>
+  );
+};
+
+class GlobalErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("Global Error Caught:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-50 p-5 text-center font-sans">
+          <div className="text-5xl mb-4">🚨</div>
+          <h1 className="text-xl font-black text-slate-900 mb-2">데이터 복구 필요</h1>
+          <p className="text-xs text-slate-500 mb-6 max-w-sm leading-relaxed">
+            과거에 저장된 데이터 형식이 손상되어 화면을 띄울 수 없습니다.<br/>
+            아래 <strong>초기화 버튼</strong>을 누르면 즉시 고쳐집니다.
+          </p>
+          <button 
+            onClick={() => { 
+              localStorage.clear(); 
+              window.location.reload(); 
+            }} 
+            className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all"
+          >
+            데이터 강제 초기화 및 복구하기
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App() {
+  return (
+    <GlobalErrorBoundary>
+      <MainApp />
+    </GlobalErrorBoundary>
+  );
+}
