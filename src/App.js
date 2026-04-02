@@ -154,8 +154,10 @@ const MainApp = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [appTheme, setAppTheme] = useState('light');
   const [appScale, setAppScale] = useState(1);
+  const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tripModal, setTripModal] = useState({ isOpen: false, mode: 'add', name: '' });
+  const [tripToDelete, setTripToDelete] = useState(null);
 
   const [rates, setRates] = useState({ USD: 1, KRW: 1350, JPY: 150, EUR: 0.92, CNY: 7.2 });
   const [loadingRates, setLoadingRates] = useState(false);
@@ -227,8 +229,6 @@ const MainApp = () => {
   const manualFileInputRef = useRef(null);
 
   const [viewPhoto, setViewPhoto] = useState(null);
-  const [isTranslatorOpen, setIsTranslatorOpen] = useState(false);
-  const [translateText, setTranslateText] = useState("");
   
   const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
   const [selectedPinInfo, setSelectedPinInfo] = useState(null); 
@@ -336,7 +336,7 @@ const MainApp = () => {
     setIsAddPlaceModalOpen(true);
   }
 
-  async function fetchRealTimeRates() {
+  async function fetchRealTimeRates(isManual = false) {
     try {
       setLoadingRates(true);
       const res = await fetch('https://open.er-api.com/v6/latest/USD');
@@ -344,8 +344,10 @@ const MainApp = () => {
       const data = await res.json();
       setRates({ USD: 1, KRW: data.rates.KRW, JPY: data.rates.JPY, EUR: data.rates.EUR, CNY: data.rates.CNY });
       setErrorRates(null);
+      if (isManual) showToast("💱 최신 환율로 동기화되었습니다.");
     } catch (e) {
       setErrorRates("환율 서버 연결 실패");
+      if (isManual) showToast("환율 동기화에 실패했습니다.");
     } finally {
       setLoadingRates(false);
     }
@@ -360,6 +362,11 @@ const MainApp = () => {
       const geoData = await geoRes.json();
       if (!geoData.length) return;
       const { lat, lon } = geoData[0];
+
+      // 지역 정보 가져왔을 때 지도 연동 자동화
+      if (mapInstanceRef.current) {
+          mapInstanceRef.current.flyTo([parseFloat(lat), parseFloat(lon)], 13);
+      }
 
       const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=16`);
       const wData = await wRes.json();
@@ -398,16 +405,6 @@ const MainApp = () => {
     saveToDb({ display_city_name: cleanName });
     setShowCountrySuggestions(false);
     setGlobalSearchQuery("");
-    
-    try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cleanName)}&limit=1`);
-      const data = await res.json();
-      if (data && data.length > 0 && mapInstanceRef.current) { 
-         mapInstanceRef.current.flyTo([parseFloat(data[0].lat), parseFloat(data[0].lon)], 13);
-      }
-    } catch (err) {
-      console.error("City selection error", err);
-    }
   }
 
   function handleGlobalSearchEnter(e) {
@@ -419,16 +416,6 @@ const MainApp = () => {
         const shortName = S(globalSearchQuery).split(',')[0].trim();
         setDisplayCityName(shortName);
         saveToDb({ display_city_name: shortName });
-        
-        (async () => {
-          try {
-            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(shortName)}&limit=1`);
-            const data = await res.json();
-            if (data && data.length > 0 && mapInstanceRef.current) { 
-               mapInstanceRef.current.flyTo([parseFloat(data[0].lat), parseFloat(data[0].lon)], 13);
-            }
-          } catch (err) {}
-        })();
       }
     }
   }
@@ -484,6 +471,32 @@ const MainApp = () => {
     setSharedTripId(null);
     setIsMobileMenuOpen(false);
     showToast("여행 일정을 불러왔습니다.");
+  }
+
+  async function confirmDeleteTrip() {
+    if (trips.length <= 1) {
+        showToast("최소 1개의 여행 일정은 남겨두어야 합니다.");
+        setTripToDelete(null);
+        return;
+    }
+    const updatedTrips = trips.filter(t => t.id !== tripToDelete);
+    setTrips(updatedTrips);
+    
+    if (supabaseClient && appUserId !== "Guest") {
+        await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
+        await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
+    }
+    
+    if (activeTripId === tripToDelete) {
+        setActiveTripId(updatedTrips[0].id);
+        if (supabaseClient && appUserId !== "Guest") {
+            await supabaseClient.from('profiles').update({ activeTripId: updatedTrips[0].id }).eq('app_user_id', appUserId);
+        }
+    }
+    
+    setTripToDelete(null);
+    setIsSettingsOpen(false);
+    showToast("여행이 정상적으로 삭제되었습니다.");
   }
 
   function handleScaleChange(e) {
@@ -611,7 +624,6 @@ const MainApp = () => {
   }
 
   function handleOpenGoogleTranslate() { window.open(`https://translate.google.com/?sl=auto&tl=ko`, '_blank'); }
-  function handleOpenGoogleLens() { window.open(`https://translate.google.com/?sl=auto&tl=ko&op=images`, '_blank'); }
 
   function handleManualPlaceAdd() {
     if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
@@ -828,7 +840,8 @@ const MainApp = () => {
          id: Date.now().toString(), day: parseInt(transData.day), time: S(transData.depTime), 
          place: `${emoji} ${transData.dep} -> ${transData.arr}`, localName: S(transData.airline), 
          features: `${label} 번호: ${transData.flightNum} (도착예정: ${transData.arrTime})`, photo: "", 
-         country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false
+         country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false,
+         isTransport: true // 사진 없이 출력하기 위한 플래그
        };
        const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
        let updatedTimeline = [...safePlanTimeline, planData];
@@ -921,7 +934,7 @@ const MainApp = () => {
               if (Array.isArray(data.plan_timeline)) {
                 const cleanPlans = data.plan_timeline.map(p => {
                   if (!p || typeof p !== 'object') return null;
-                  return { id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation) };
+                  return { id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) };
                 }).filter(Boolean);
                 setPlanTimeline(cleanPlans);
               }
@@ -1019,7 +1032,7 @@ const MainApp = () => {
 
   useEffect(() => {
     fetchRealTimeRates();
-    const interval = setInterval(fetchRealTimeRates, 300000); 
+    const interval = setInterval(() => fetchRealTimeRates(false), 300000); 
     return () => clearInterval(interval);
   }, []);
 
@@ -1072,6 +1085,9 @@ const MainApp = () => {
 
       const savedTheme = localStorage.getItem('my_travel_theme');
       if (savedTheme) setAppTheme(S(savedTheme));
+
+      const savedFont = localStorage.getItem('my_travel_font');
+      if (savedFont) setAppFont(savedFont);
     } catch(e){}
   }, []);
 
@@ -1101,7 +1117,7 @@ const MainApp = () => {
             setCurrentRestaurants(cleanRests);
           }
           if (Array.isArray(data.plan_timeline)) {
-            const cleanPlans = data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation) }));
+            const cleanPlans = data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) }));
             setPlanTimeline(cleanPlans);
           }
         }
@@ -1122,7 +1138,7 @@ const MainApp = () => {
             setCurrentRestaurants(cleanRests);
           }
           if (Array.isArray(payload.new.plan_timeline)) {
-            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation) }));
+            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) }));
             setPlanTimeline(cleanPlans);
           }
         }
@@ -1297,7 +1313,7 @@ const MainApp = () => {
   const finalAppScale = (typeof appScale === 'number' && !isNaN(appScale) && appScale > 0.3) ? appScale : 1;
 
   return (
-    <div style={{ zoom: finalAppScale }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden font-sans select-none relative transition-colors duration-300`}>
+    <div style={{ zoom: finalAppScale, fontFamily: appFont }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`}>
       
       {/* Toast 메시지 추가 */}
       {toastMsg && (
@@ -1328,9 +1344,10 @@ const MainApp = () => {
                     <button 
                       key={t.id} 
                       onClick={() => handleSwitchTrip(t.id)} 
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all truncate ${activeTripId === t.id && !sharedTripId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all truncate flex items-center justify-between group ${activeTripId === t.id && !sharedTripId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
                     >
-                      {S(t.name)}
+                      <span className="truncate">{S(t.name)}</span>
+                      <span onClick={(e) => { e.stopPropagation(); setTripToDelete(t.id); }} className={`text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] hover:scale-110 p-1`}>🗑️</span>
                     </button>
                   ))}
                 </div>
@@ -1377,6 +1394,23 @@ const MainApp = () => {
         <div className="fixed inset-0 bg-black/90 z-[5000] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewPhoto(null)}>
           <img src={viewPhoto} className="max-w-full max-h-full object-contain rounded-md shadow-2xl" alt="" />
           <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1 rounded-full hover:bg-black/80 transition-colors" onClick={() => setViewPhoto(null)}>✕</button>
+        </div>
+      )}
+
+      {/* 여행 삭제 확인 모달 */}
+      {tripToDelete && (
+        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm">
+           <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95`}>
+              <div className="text-3xl mb-3">🗑️</div>
+              <h3 className={`text-sm font-black mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>여행 삭제</h3>
+              <p className={`text-[11px] font-bold mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'} leading-relaxed`}>
+                 정말 이 여행을 삭제하시겠습니까?<br/>삭제된 데이터는 절대 복구할 수 없습니다.
+              </p>
+              <div className="flex space-x-2">
+                 <button className={`flex-1 py-2.5 rounded-xl font-bold text-xs ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'}`} onClick={() => setTripToDelete(null)}>취소</button>
+                 <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600" onClick={confirmDeleteTrip}>삭제하기</button>
+              </div>
+           </div>
         </div>
       )}
 
@@ -1902,7 +1936,7 @@ const MainApp = () => {
               <button onClick={() => setIsSettingsOpen(false)} className={`p-1 rounded ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-600'}`}>✕</button>
             </div>
             
-            <div className="space-y-5">
+            <div className="space-y-4">
               <div>
                 <label className={`text-xs font-bold ${textMuted} mb-2 block`}>테마 모드</label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1914,11 +1948,27 @@ const MainApp = () => {
               </div>
 
               <div>
+                <label className={`text-xs font-bold ${textMuted} mb-2 block`}>글꼴 선택 (Windows 환경 최적화)</label>
+                <select
+                  value={appFont}
+                  onChange={(e) => {
+                    setAppFont(e.target.value);
+                    try { localStorage.setItem('my_travel_font', e.target.value); } catch(err){}
+                  }}
+                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 rounded-lg text-xs font-bold outline-none cursor-pointer`}
+                >
+                  <option value="'Pretendard', -apple-system, sans-serif">Pretendard (기본/Mac 권장)</option>
+                  <option value="'Malgun Gothic', '맑은 고딕', sans-serif">맑은 고딕 (Windows 최적화)</option>
+                  <option value="'Noto Sans KR', sans-serif">Noto Sans (깔끔한 고딕)</option>
+                </select>
+              </div>
+
+              <div>
                 <label className={`text-xs font-bold ${textMuted} mb-2 flex justify-between`}>
-                  <span>앱 화면 비율</span>
+                  <span>화면 및 요소 크기 (확대/축소)</span>
                   <span className="text-indigo-500">{Math.round(appScale * 100)}%</span>
                 </label>
-                <input type="range" min="0.7" max="1.3" step="0.05" value={appScale} onChange={handleScaleChange} className="w-full accent-indigo-600" />
+                <input type="range" min="0.7" max="1.3" step="0.05" value={appScale} onChange={handleScaleChange} className="w-full accent-indigo-600 cursor-pointer" />
                 <div className="flex justify-between text-[9px] text-slate-400 mt-1 px-1"><span>작게</span><span>크게</span></div>
               </div>
 
@@ -2019,12 +2069,12 @@ const MainApp = () => {
             <div className="flex items-end justify-between px-1 flex-shrink-0">
               <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight ${textMain}`}>
                 💸 실시간 동시 환율
-                <button onClick={fetchRealTimeRates} className={`ml-3 p-1.5 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-white'} shadow-sm text-indigo-500`}>
+                <button onClick={() => fetchRealTimeRates(true)} className={`ml-3 p-1.5 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-white'} shadow-sm text-indigo-500 hover:bg-indigo-50 transition-colors`}>
                   <span className={`text-sm ${loadingRates ? 'animate-spin inline-block' : ''}`}>🔄</span>
                 </button>
               </h2>
               {errorRates && <span className="text-rose-500 text-[10px] font-bold ml-2">{errorRates}</span>}
-              <button onClick={() => setIsTranslatorOpen(true)} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all ml-auto ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
+              <button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all ml-auto ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
                 <span className="text-xs">🌐</span>
                 <span>AI 번역기</span>
               </button>
@@ -2046,6 +2096,38 @@ const MainApp = () => {
                 );
               })}
             </div>
+
+            {/* 모바일/PC 상관없이 항공권 정보를 대시보드 전체 최상단에 고정 출력 */}
+            {(flights.outbound || flights.inbound) && (
+              <div className={`flex flex-col sm:flex-row gap-1 sm:gap-2 mb-1 p-1.5 sm:p-2 rounded-xl border ${isDarkMode ? 'bg-indigo-900/20 border-indigo-500/30' : 'bg-indigo-50 border-indigo-100'} shrink-0`}>
+                {flights.outbound && (
+                   <div onClick={() => handleEditFlight('outbound')} className={`flex-1 flex flex-col justify-center p-1.5 sm:p-2 rounded-lg border shadow-sm relative cursor-pointer hover:border-indigo-400 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                     <span className="absolute top-1 left-1.5 text-[6px] sm:text-[8px] font-bold text-indigo-500 bg-indigo-100 px-1 rounded">가는 편 🛫</span>
+                     <div className="flex w-full items-center justify-between mt-2.5 sm:mt-3 px-1">
+                       <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.depTime}</span></div>
+                       <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
+                         <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
+                         <span className="text-[6px] sm:text-[8px] font-bold text-indigo-400 truncate w-full text-center">{flights.outbound.airline}</span>
+                       </div>
+                       <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.arrTime}</span></div>
+                     </div>
+                   </div>
+                )}
+                {flights.inbound && (
+                   <div onClick={() => handleEditFlight('inbound')} className={`flex-1 flex flex-col justify-center p-1.5 sm:p-2 rounded-lg border shadow-sm relative cursor-pointer hover:border-rose-400 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                     <span className="absolute top-1 left-1.5 text-[6px] sm:text-[8px] font-bold text-rose-500 bg-rose-100 px-1 rounded">오는 편 🛬</span>
+                     <div className="flex w-full items-center justify-between mt-2.5 sm:mt-3 px-1">
+                       <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.depTime}</span></div>
+                       <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
+                         <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
+                         <span className="text-[6px] sm:text-[8px] font-bold text-rose-400 truncate w-full text-center">{flights.inbound.airline}</span>
+                       </div>
+                       <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.arrTime}</span></div>
+                     </div>
+                   </div>
+                )}
+              </div>
+            )}
 
             {/* 모바일에서도 좌우 병렬 배치 (flex-row) 및 CSS 변수를 활용한 드래그 리사이징 */}
             <div className="flex-1 flex flex-row gap-1 sm:gap-4 overflow-hidden min-h-0 h-full w-full relative" style={{"--mob-left": `${panelRatio}%`}}>
@@ -2126,37 +2208,6 @@ const MainApp = () => {
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col min-h-0">
-                  {(flights.outbound || flights.inbound) && (
-                    <div className={`flex flex-col sm:flex-row gap-1 sm:gap-2 mb-2 sm:mb-3 p-1.5 sm:p-2 rounded-xl border ${isDarkMode ? 'bg-indigo-900/20 border-indigo-500/30' : 'bg-indigo-50 border-indigo-100'} shrink-0`}>
-                      {flights.outbound && (
-                         <div onClick={() => handleEditFlight('outbound')} className={`flex-1 flex flex-col justify-center p-1.5 sm:p-2 rounded-lg border shadow-sm relative cursor-pointer hover:border-indigo-400 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                           <span className="absolute top-1 left-1.5 text-[6px] sm:text-[8px] font-bold text-indigo-500 bg-indigo-100 px-1 rounded">가는 편 🛫</span>
-                           <div className="flex w-full items-center justify-between mt-2.5 sm:mt-3 px-1">
-                             <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.depTime}</span></div>
-                             <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
-                               <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
-                               <span className="text-[6px] sm:text-[8px] font-bold text-indigo-400 truncate w-full text-center">{flights.outbound.airline}</span>
-                             </div>
-                             <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.arrTime}</span></div>
-                           </div>
-                         </div>
-                      )}
-                      {flights.inbound && (
-                         <div onClick={() => handleEditFlight('inbound')} className={`flex-1 flex flex-col justify-center p-1.5 sm:p-2 rounded-lg border shadow-sm relative cursor-pointer hover:border-rose-400 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                           <span className="absolute top-1 left-1.5 text-[6px] sm:text-[8px] font-bold text-rose-500 bg-rose-100 px-1 rounded">오는 편 🛬</span>
-                           <div className="flex w-full items-center justify-between mt-2.5 sm:mt-3 px-1">
-                             <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.depTime}</span></div>
-                             <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
-                               <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
-                               <span className="text-[6px] sm:text-[8px] font-bold text-rose-400 truncate w-full text-center">{flights.inbound.airline}</span>
-                             </div>
-                             <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.arrTime}</span></div>
-                           </div>
-                         </div>
-                      )}
-                    </div>
-                  )}
-
                   {/* 여행 리스트 카드: 좁은 폭에 맞춰 1열/2열 그리드 자동 대응 */}
                   <div className="flex-1 grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-1.5 sm:gap-2 content-start">
                     {todayPlans.length === 0 ? (
@@ -2169,12 +2220,16 @@ const MainApp = () => {
                           key={plan.id} 
                           className={`${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-white border-slate-200 hover:border-indigo-400'} rounded-lg border shadow-sm overflow-hidden flex flex-row xs:flex-col transition-all group`}
                         >
-                          <div className="w-16 h-16 xs:w-full xs:h-20 relative shrink-0 cursor-pointer border-r xs:border-r-0 xs:border-b border-slate-200 dark:border-slate-700" onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }}>
-                            <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt="" />
-                            <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">{S(plan.time)}</div>
-                            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><span className="text-white text-[8px] sm:text-[10px] font-bold">✏️ 수정</span></div>
-                          </div>
+                          {/* 교통편의 경우 사진 영역 아예 생략 */}
+                          {!(plan.isTransport) && (
+                            <div className="w-16 h-16 xs:w-full xs:h-20 relative shrink-0 cursor-pointer border-r xs:border-r-0 xs:border-b border-slate-200 dark:border-slate-700" onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }}>
+                              <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt="" />
+                              <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">{S(plan.time)}</div>
+                              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><span className="text-white text-[8px] sm:text-[10px] font-bold">✏️ 수정</span></div>
+                            </div>
+                          )}
                           <div className="flex flex-col p-1.5 flex-1 cursor-pointer hover:bg-slate-50/50 dark:hover:bg-slate-700/50 justify-center xs:justify-start min-w-0" onClick={(e) => { e.stopPropagation(); setSelectedPlanInfo(plan); }}>
+                            {plan.isTransport && <span className="text-indigo-500 font-bold text-[7px] mb-0.5">{S(plan.time)}</span>}
                             <h4 className={`font-black text-[9px] sm:text-[11px] ${textMain} truncate tracking-tight mb-0.5`}>
                               {S(plan.place)} {plan.isAccommodation && '🏠'}
                             </h4>
@@ -2210,7 +2265,10 @@ const MainApp = () => {
                       inputId="global-country-input"
                       value={globalPlanCountry} manualValue={globalManualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
                       options={Object.keys(REGIONS_BY_COUNTRY)}
-                      onChangeSelect={e => {setGlobalPlanCountry(e.target.value); setGlobalPlanRegion(""); setGlobalManualCountry(""); setGlobalManualRegion("");}}
+                      onChangeSelect={e => {
+                         const val = e.target.value;
+                         setGlobalPlanCountry(val); setGlobalPlanRegion(""); setGlobalManualCountry(""); setGlobalManualRegion("");
+                      }}
                       onChangeManual={val => setGlobalManualCountry(val)}
                       onCancelManual={() => { setGlobalPlanCountry(""); setGlobalManualCountry(""); }}
                     />
@@ -2223,8 +2281,21 @@ const MainApp = () => {
                       inputId="global-region-input"
                       value={globalPlanRegion} manualValue={globalManualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
                       options={(!globalPlanCountry || globalPlanCountry === '수동입력') ? null : REGIONS_BY_COUNTRY[globalPlanCountry]}
-                      onChangeSelect={e => {setGlobalPlanRegion(e.target.value); setGlobalManualRegion("");}}
-                      onChangeManual={val => setGlobalManualRegion(val)}
+                      onChangeSelect={e => {
+                         const val = e.target.value;
+                         setGlobalPlanRegion(val); setGlobalManualRegion("");
+                         if (val && val !== '수동입력') {
+                            setDisplayCityName(val);
+                            saveToDb({ display_city_name: val });
+                         }
+                      }}
+                      onChangeManual={val => {
+                         setGlobalManualRegion(val);
+                         if (val) {
+                            setDisplayCityName(val);
+                            saveToDb({ display_city_name: val });
+                         }
+                      }}
                       onCancelManual={() => { setGlobalPlanRegion(""); setGlobalManualRegion(""); }}
                     />
                   </div>
@@ -2234,7 +2305,10 @@ const MainApp = () => {
                   <input 
                     type="date" 
                     value={travelStartDate} 
-                    onChange={(e) => { setTravelStartDate(e.target.value); saveToDb({ travelStartDate: e.target.value }); }}
+                    onChange={(e) => { 
+                      setTravelStartDate(e.target.value); 
+                      saveToDb({ travel_start_date: e.target.value }); // 날짜 정상적으로 저장되도록 DB 연동 수정
+                    }}
                     className={`text-[8px] sm:text-[10px] font-bold outline-none bg-transparent ${textMain}`}
                   />
                 </div>
@@ -2348,7 +2422,6 @@ const MainApp = () => {
                 </div>
               </div>
 
-              {/* 모바일에서는 h-auto 로 내부 요소가 모두 펼쳐지고 부모에서 스크롤, 데스크탑은 내부 스크롤 유지 */}
               <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'} w-full overflow-visible sm:overflow-hidden`}>
                 <div className="flex-1 grid grid-cols-4 gap-1 sm:gap-3 h-auto sm:h-full pb-2 min-h-max sm:min-h-0">
                   {[0, 1, 2, 3].map(colIndex => (
@@ -2378,6 +2451,7 @@ const MainApp = () => {
                                     </div>
                                     <div className="flex gap-1.5 items-start mt-1">
                                       <div className="flex-1 min-w-0 flex flex-col cursor-pointer" onClick={(e) => { e.stopPropagation(); setSelectedPlanInfo(plan); }}>
+                                        {/* 교통편의 경우 사진 생략으로 텍스트 확장 */}
                                         <p className={`text-[9px] sm:text-[10px] font-bold ${textMain} leading-tight line-clamp-2`}>{S(plan.place)} {plan.isAccommodation && '🏠'}</p>
                                         {plan.localName && (
                                           <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70">
@@ -2386,7 +2460,7 @@ const MainApp = () => {
                                         )}
                                         {plan.features && <p className={`text-[7px] sm:text-[8px] ${textMuted} line-clamp-2 leading-tight mt-0.5`}>{S(plan.features)}</p>}
                                       </div>
-                                      {plan.photo && (
+                                      {plan.photo && !plan.isTransport && (
                                         <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0" onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }}>
                                           <img src={plan.photo} className="w-full h-full object-cover hover:opacity-80 transition-opacity" alt="" />
                                           <div className="absolute inset-0 bg-black/30 opacity-0 hover:opacity-100 flex items-center justify-center transition-opacity"><span className="text-white text-[7px] font-bold">수정</span></div>
@@ -2497,7 +2571,7 @@ const MainApp = () => {
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         
         body {
-          font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
+          font-family: inherit; /* 상위 컴포넌트에서 선택한 폰트를 상속받도록 수정 */
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
         }
