@@ -8,6 +8,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 3. 모바일 일정(Plan) 탭 개별 스크롤 제거 -> 전체 화면 스크롤 통합
   - 4. 대시보드 전용 준비물 확인 모달 분리 및 퀵 버튼 추가
   - 5. 헤더 날씨 버튼 레이어(Z-index) 오류 수정 및 클릭 활성화
+  - 6. [NEW] 날씨 상세 정보 모달창 추가
+  - 7. [NEW] 요소/글자 개별 크기 조절 분리 및 슝/뽕 롤백 기능 추가
   =============================================================================
 */
 
@@ -153,7 +155,11 @@ const MainApp = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [appTheme, setAppTheme] = useState('light');
-  const [appScale, setAppScale] = useState(1);
+  
+  // 크기 조절 개별 분리
+  const [elementScale, setElementScale] = useState(1);
+  const [fontScale, setFontScale] = useState(1);
+  
   const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tripModal, setTripModal] = useState({ isOpen: false, mode: 'add', name: '' });
@@ -174,6 +180,12 @@ const MainApp = () => {
   const [maxDay, setMaxDay] = useState(4);
   const [dashboardDay, setDashboardDay] = useState(1);
   
+  // 롤백 (슝/뽕) 기록용 히스토리 기능
+  const [history, setHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const isUndoingRef = useRef(false);
+  const [isReadyToTrack, setIsReadyToTrack] = useState(false);
+
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [showCountrySuggestions, setShowCountrySuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
@@ -482,33 +494,93 @@ const MainApp = () => {
     const updatedTrips = trips.filter(t => t.id !== tripToDelete);
     setTrips(updatedTrips);
     
-    if (supabaseClient && appUserId !== "Guest") {
-        await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
-        await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
-    }
-    
-    if (activeTripId === tripToDelete) {
-        setActiveTripId(updatedTrips[0].id);
+    try {
         if (supabaseClient && appUserId !== "Guest") {
-            await supabaseClient.from('profiles').update({ activeTripId: updatedTrips[0].id }).eq('app_user_id', appUserId);
+            await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
+            await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
         }
+        
+        if (activeTripId === tripToDelete) {
+            setActiveTripId(updatedTrips[0].id);
+            if (supabaseClient && appUserId !== "Guest") {
+                await supabaseClient.from('profiles').update({ activeTripId: updatedTrips[0].id }).eq('app_user_id', appUserId);
+            }
+        }
+    } catch(err) {
+        console.error("여행 삭제 중 오류:", err);
     }
     
-    setTripToDelete(null);
+    setTripToDelete(null); // 삭제 확인 모달 닫기
     setIsSettingsOpen(false);
+    setIsMobileMenuOpen(false); // 메뉴 창도 닫아주어 깔끔하게 돌아감
     showToast("여행이 정상적으로 삭제되었습니다.");
   }
 
-  function handleScaleChange(e) {
+  function handleElementScaleChange(e) {
     const scale = parseFloat(e.target.value);
-    setAppScale(scale);
-    try { localStorage.setItem('my_travel_scale', scale.toString()); } catch(e){}
+    setElementScale(scale);
+    try { localStorage.setItem('my_travel_element_scale', scale.toString()); } catch(e){}
+  }
+
+  function handleFontScaleChange(e) {
+    const scale = parseFloat(e.target.value);
+    setFontScale(scale);
+    try { localStorage.setItem('my_travel_font_scale', scale.toString()); } catch(e){}
   }
 
   function handleThemeChange(themeName) {
     setAppTheme(S(themeName));
     try { localStorage.setItem('my_travel_theme', S(themeName)); } catch(e){}
   }
+
+  // --- 롤백(슝/뽕) 기능 ---
+  const handleUndo = () => {
+      if (historyIndex > 0) {
+          isUndoingRef.current = true;
+          const prevState = history[historyIndex - 1];
+          setHistoryIndex(historyIndex - 1);
+          
+          setPlanTimeline(prevState.planTimeline || []);
+          setCurrentRestaurants(prevState.currentRestaurants || []);
+          setPackingList(prevState.packingList || []);
+          setFlights(prevState.flights || { outbound: null, inbound: null });
+          
+          saveToDb({
+              plan_timeline: prevState.planTimeline,
+              current_restaurants: prevState.currentRestaurants,
+              packing_list: prevState.packingList,
+              flights: prevState.flights
+          });
+          showToast("⏪ 슝! 이전 상태로 되돌렸습니다.");
+          setIsMobileMenuOpen(false);
+      } else {
+          showToast("더 이상 되돌릴 수 없습니다.");
+      }
+  };
+
+  const handleRedo = () => {
+      if (historyIndex < history.length - 1) {
+          isUndoingRef.current = true;
+          const nextState = history[historyIndex + 1];
+          setHistoryIndex(historyIndex + 1);
+          
+          setPlanTimeline(nextState.planTimeline || []);
+          setCurrentRestaurants(nextState.currentRestaurants || []);
+          setPackingList(nextState.packingList || []);
+          setFlights(nextState.flights || { outbound: null, inbound: null });
+          
+          saveToDb({
+              plan_timeline: nextState.planTimeline,
+              current_restaurants: nextState.currentRestaurants,
+              packing_list: nextState.packingList,
+              flights: nextState.flights
+          });
+          showToast("⏩ 뽕! 다시 실행했습니다.");
+          setIsMobileMenuOpen(false);
+      } else {
+          showToast("더 이상 다시 실행할 수 없습니다.");
+      }
+  };
 
   function handleLoginSuccess(id, pw) {
     setAppUserId(id);
@@ -908,6 +980,43 @@ const MainApp = () => {
   };
 
   /* ===================== 3. UseEffect 파트 ===================== */
+
+  // 데이터 로딩 완료 후 일정시간 뒤부터 History(롤백) 추적 시작
+  useEffect(() => {
+      if (isDbLoaded && activeTripId) {
+          const timer = setTimeout(() => setIsReadyToTrack(true), 1500);
+          return () => clearTimeout(timer);
+      }
+  }, [isDbLoaded, activeTripId]);
+
+  // History(롤백) 추적
+  useEffect(() => {
+      if (!isReadyToTrack) return;
+      if (isUndoingRef.current) {
+          isUndoingRef.current = false;
+          return;
+      }
+      
+      const currentState = { planTimeline, currentRestaurants, packingList, flights };
+      setHistory(prev => {
+          const newHistory = prev.slice(0, historyIndex + 1);
+          if (newHistory.length > 0) {
+              const last = newHistory[newHistory.length - 1];
+              if (JSON.stringify(last) === JSON.stringify(currentState)) {
+                  return prev; // 이전 상태와 동일하면 추가하지 않음
+              }
+          }
+          return [...newHistory, currentState];
+      });
+      setHistoryIndex(prev => prev + 1);
+  }, [planTimeline, currentRestaurants, packingList, flights, isReadyToTrack]);
+
+  // 여행 변경 시 History 초기화
+  useEffect(() => {
+      setIsReadyToTrack(false);
+      setHistory([]);
+      setHistoryIndex(-1);
+  }, [activeTripId]);
   
   useEffect(() => {
     if (appUserId === "Guest") {
@@ -1078,10 +1187,15 @@ const MainApp = () => {
     document.head.appendChild(script);
 
     try {
-      const savedScale = localStorage.getItem('my_travel_scale');
-      let parsedScale = parseFloat(savedScale);
-      if (isNaN(parsedScale) || parsedScale < 0.3 || parsedScale > 3) parsedScale = 1;
-      setAppScale(parsedScale);
+      const savedElementScale = localStorage.getItem('my_travel_element_scale');
+      let parsedElementScale = parseFloat(savedElementScale);
+      if (isNaN(parsedElementScale) || parsedElementScale < 0.3 || parsedElementScale > 3) parsedElementScale = 1;
+      setElementScale(parsedElementScale);
+
+      const savedFontScale = localStorage.getItem('my_travel_font_scale');
+      let parsedFontScale = parseFloat(savedFontScale);
+      if (isNaN(parsedFontScale) || parsedFontScale < 0.5 || parsedFontScale > 2) parsedFontScale = 1;
+      setFontScale(parsedFontScale);
 
       const savedTheme = localStorage.getItem('my_travel_theme');
       if (savedTheme) setAppTheme(S(savedTheme));
@@ -1310,10 +1424,11 @@ const MainApp = () => {
     );
   }
 
-  const finalAppScale = (typeof appScale === 'number' && !isNaN(appScale) && appScale > 0.3) ? appScale : 1;
+  // 요소 개별 크기 조절 (기존 appScale 대체)
+  const finalElementScale = (typeof elementScale === 'number' && !isNaN(elementScale) && elementScale > 0.3) ? elementScale : 1;
 
   return (
-    <div style={{ zoom: finalAppScale, fontFamily: appFont }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`}>
+    <div style={{ zoom: finalElementScale, fontFamily: appFont }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`}>
       
       {/* Toast 메시지 추가 */}
       {toastMsg && (
@@ -1323,7 +1438,7 @@ const MainApp = () => {
       )}
 
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9500] flex">
+        <div className="fixed inset-0 bg-black/60 z-[9500] flex" onClick={() => setIsMobileMenuOpen(false)}>
           <div className={`w-64 h-full shadow-2xl flex flex-col animate-in slide-in-from-left ${isDarkMode ? 'bg-slate-900 border-r border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
             <div className={`p-5 border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} flex items-center justify-between`}>
               <div className="flex items-center space-x-3">
@@ -1378,6 +1493,14 @@ const MainApp = () => {
             </div>
             
             <div className={`p-4 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} space-y-2`}>
+              <div className="flex space-x-2 mb-2">
+                 <button onClick={handleUndo} disabled={historyIndex <= 0} className={`flex-1 flex items-center justify-center py-2 rounded-xl text-xs font-bold transition-all ${historyIndex <= 0 ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800' : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300'}`}>
+                    <span className="mr-1">⏪</span> 슝
+                 </button>
+                 <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className={`flex-1 flex items-center justify-center py-2 rounded-xl text-xs font-bold transition-all ${historyIndex >= history.length - 1 ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800' : 'bg-rose-100 text-rose-600 hover:bg-rose-200 dark:bg-rose-900/50 dark:text-rose-300'}`}>
+                    뽕 <span className="ml-1">⏩</span>
+                 </button>
+              </div>
               <button onClick={() => { setIsSettingsOpen(true); setIsMobileMenuOpen(false); }} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                 <span>⚙️ 환경 설정</span>
               </button>
@@ -1386,7 +1509,6 @@ const MainApp = () => {
               </button>
             </div>
           </div>
-          <div className="flex-1" onClick={() => setIsMobileMenuOpen(false)}></div>
         </div>
       )}
 
@@ -1414,7 +1536,42 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 대시보드용 준비물 확인 모달 (입력 불가능, 보기/체크 전용) */}
+      {/* 날씨 상세 정보 모달창 */}
+      {isWeatherModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setIsWeatherModalOpen(false)}>
+           <div className={`${cardBg} p-5 rounded-3xl w-full max-w-xs sm:max-w-sm shadow-2xl animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+              <div className={`flex justify-between items-center mb-4 border-b pb-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                 <h3 className={`font-black text-sm ${textMain}`}>⛅ {S(displayCityName)} 날씨 예보</h3>
+                 <button onClick={() => setIsWeatherModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+              </div>
+              <div className="space-y-2.5 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1">
+                 {forecast.length === 0 ? (
+                    <p className={`text-xs ${textMuted} text-center py-5 font-bold`}>날씨 정보를 불러올 수 없습니다.<br/>(일정 탭에서 지역을 선택해주세요)</p>
+                 ) : (
+                    forecast.slice(0, maxDay).map((f, i) => {
+                       const info = getWeatherInfo(f.code);
+                       const isToday = i === (dashboardDay - 1);
+                       return (
+                          <div key={i} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
+                             <div className="flex flex-col">
+                                <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {i + 1} ({f.date.slice(5)})</span>
+                                <span className={`text-xs font-black mt-0.5 ${textMain}`}>{info[0]} {info[1]}</span>
+                             </div>
+                             <div className="text-right flex flex-col">
+                                <span className="text-[11px] font-bold text-rose-500">최고 {f.max}°</span>
+                                <span className="text-[11px] font-bold text-blue-500">최저 {f.min}°</span>
+                             </div>
+                          </div>
+                       );
+                    })
+                 )}
+              </div>
+              <button onClick={() => setIsWeatherModalOpen(false)} className="w-full mt-4 bg-indigo-600 text-white rounded-xl py-2.5 text-xs font-bold shadow-md hover:bg-indigo-700 transition-colors">확인</button>
+           </div>
+        </div>
+      )}
+
+      {/* 대시보드용 준비물 확인 모달 */}
       {isDashboardPackingOpen && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsDashboardPackingOpen(false)}>
           <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
@@ -1428,7 +1585,6 @@ const MainApp = () => {
                      ✨ 앗! 준비물을 하나씩 채우고 계시군요. 완벽한 여행이 될 거예요!
                   </div>
                 )}
-                {/* 쭈르륵 나열되는 태그 형태의 준비물 리스트 */}
                 <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
                   {packingList.map(item => (
                      <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-700')}`}>
@@ -1447,7 +1603,7 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 일정탭 준비물 체크리스트 팝업 모달 (입력 가능) */}
+      {/* 일정탭 준비물 체크리스트 팝업 모달 */}
       {isPackingModalOpen && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsPackingModalOpen(false)}>
           <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
@@ -1485,7 +1641,7 @@ const MainApp = () => {
       {selectedPlanInfo && (
         <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setSelectedPlanInfo(null)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
-            {selectedPlanInfo.photo && (
+            {selectedPlanInfo.photo && !selectedPlanInfo.isTransport && (
               <div className="w-full h-48 relative">
                 <img src={selectedPlanInfo.photo} className="w-full h-full object-cover" alt="" />
                 <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md">
@@ -1496,7 +1652,7 @@ const MainApp = () => {
             <div className="p-5 flex flex-col">
               <div className="flex justify-between items-start mb-2">
                 <h3 className="text-lg font-black text-slate-900">{S(selectedPlanInfo.place)} {selectedPlanInfo.isAccommodation ? '🏠' : ''}</h3>
-                {!selectedPlanInfo.photo && <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-1 rounded shadow-sm">{S(selectedPlanInfo.time)}</span>}
+                {(!selectedPlanInfo.photo || selectedPlanInfo.isTransport) && <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-1 rounded shadow-sm">{S(selectedPlanInfo.time)}</span>}
               </div>
               
               {selectedPlanInfo.localName && (
@@ -1929,10 +2085,10 @@ const MainApp = () => {
       )}
 
       {isSettingsOpen && (
-        <div className="fixed inset-0 bg-black/50 z-[6000] backdrop-blur-sm flex items-center justify-center p-4">
-          <div className={`${cardBg} w-full max-w-sm p-5 flex flex-col animate-in zoom-in-95 z-[6001]`}>
+        <div className="fixed inset-0 bg-black/50 z-[6000] backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setIsSettingsOpen(false)}>
+          <div className={`${cardBg} w-full max-w-sm p-5 flex flex-col animate-in zoom-in-95 z-[6001]`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between pb-3 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'} mb-4`}>
-              <h2 className="text-sm font-black flex items-center space-x-2"><span className="text-indigo-500 text-lg">⚙️</span> <span>앱 환경 설정 ⚙️</span></h2>
+              <h2 className="text-sm font-black flex items-center space-x-2"><span className="text-indigo-500 text-lg">⚙️</span> <span>앱 환경 설정</span></h2>
               <button onClick={() => setIsSettingsOpen(false)} className={`p-1 rounded ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-600'}`}>✕</button>
             </div>
             
@@ -1965,11 +2121,17 @@ const MainApp = () => {
 
               <div>
                 <label className={`text-xs font-bold ${textMuted} mb-2 flex justify-between`}>
-                  <span>화면 및 요소 크기 (확대/축소)</span>
-                  <span className="text-indigo-500">{Math.round(appScale * 100)}%</span>
+                  <span>화면 요소 크기 (확대/축소)</span>
+                  <span className="text-indigo-500">{Math.round(elementScale * 100)}%</span>
                 </label>
-                <input type="range" min="0.7" max="1.3" step="0.05" value={appScale} onChange={handleScaleChange} className="w-full accent-indigo-600 cursor-pointer" />
-                <div className="flex justify-between text-[9px] text-slate-400 mt-1 px-1"><span>작게</span><span>크게</span></div>
+                <input type="range" min="0.7" max="1.3" step="0.05" value={elementScale} onChange={handleElementScaleChange} className="w-full accent-indigo-600 cursor-pointer" />
+              </div>
+              <div>
+                <label className={`text-xs font-bold ${textMuted} mb-2 flex justify-between`}>
+                  <span>글자 크기 (확대/축소)</span>
+                  <span className="text-indigo-500">{Math.round(fontScale * 100)}%</span>
+                </label>
+                <input type="range" min="0.5" max="2.0" step="0.1" value={fontScale} onChange={handleFontScaleChange} className="w-full accent-indigo-600 cursor-pointer" />
               </div>
 
               <div className={`pt-4 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
@@ -1996,7 +2158,7 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 헤더 및 본문 UI 구역 */}
+      {/* Main UI */}
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-0">
         <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors`}>
           <div className="flex items-center flex-1 space-x-2 sm:space-x-4">
@@ -2009,7 +2171,7 @@ const MainApp = () => {
                 <span className={`absolute left-3 top-1/2 -translate-y-1/2 ${textMuted} text-sm`}>🔍</span>
                 <input 
                   type="text" 
-                  placeholder="검색 🔍" 
+                  placeholder="검색" 
                   value={S(globalSearchQuery)}
                   onChange={(e) => setGlobalSearchQuery(e.target.value)}
                   onKeyDown={handleGlobalSearchEnter}
@@ -2038,7 +2200,7 @@ const MainApp = () => {
                 )}
               </div>
 
-              {/* z-index 속성 부여 및 onClick 직접 연결로 날씨 모달 버그 해결 */}
+              {/* 날씨 버튼 (모달 연결) */}
               <button 
                 onClick={() => setIsWeatherModalOpen(true)} 
                 className={`relative z-50 pointer-events-auto cursor-pointer flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border shadow-sm flex-shrink-0 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
@@ -2080,7 +2242,6 @@ const MainApp = () => {
               </button>
             </div>
 
-            {/* 모바일 화면에서 가로스크롤 없애고 자동 리사이징 되는 Grid 환율창 */}
             <div className="grid grid-cols-5 w-full gap-1 sm:gap-3 flex-shrink-0 pb-1">
               {CURRENCIES.map(cur => {
                 const isFocused = focusedCurrency === cur.code;
@@ -2129,10 +2290,9 @@ const MainApp = () => {
               </div>
             )}
 
-            {/* 모바일에서도 좌우 병렬 배치 (flex-row) 및 CSS 변수를 활용한 드래그 리사이징 */}
             <div className="flex-1 flex flex-row gap-1 sm:gap-4 overflow-hidden min-h-0 h-full w-full relative" style={{"--mob-left": `${panelRatio}%`}}>
               
-              {/* 좌측 패널 (오늘의 여행 계획) */}
+              {/* Left Panel */}
               <div className={`max-md:w-[var(--mob-left)] md:w-[40%] ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-2xl sm:rounded-3xl shrink-0`}>
                 <div className={`flex flex-col mb-1.5 sm:mb-3 flex-shrink-0 border-b pb-1.5 relative z-10 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                   <div className={`flex items-center justify-between space-x-1.5 mb-1 sm:mb-2 ${textMuted}`}>
@@ -2181,7 +2341,7 @@ const MainApp = () => {
                 </div>
               </div>
 
-              {/* 드래그 핸들러 바 (모바일에서만 보임) */}
+              {/* Drag Handle */}
               <div 
                  className="w-1.5 bg-slate-200/60 dark:bg-slate-700 hover:bg-indigo-400 rounded-full flex-shrink-0 md:hidden flex items-center justify-center cursor-col-resize active:bg-indigo-500 transition-colors"
                  onMouseDown={handleDragStart}
@@ -2190,7 +2350,7 @@ const MainApp = () => {
                 <div className="w-0.5 h-8 bg-slate-400/50 dark:bg-slate-500 rounded-full pointer-events-none"></div>
               </div>
 
-              {/* 우측 패널 (오늘의 여행 리스트) */}
+              {/* Right Panel */}
               <div className={`flex-1 ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-2xl sm:rounded-3xl`}>
                 <div className="flex items-center justify-between mb-1.5 sm:mb-3 flex-shrink-0 relative z-30">
                   <h3 className={`text-[10px] sm:text-sm font-bold tracking-tight flex items-center ${textMain}`}>
@@ -2307,7 +2467,7 @@ const MainApp = () => {
                     value={travelStartDate} 
                     onChange={(e) => { 
                       setTravelStartDate(e.target.value); 
-                      saveToDb({ travel_start_date: e.target.value }); // 날짜 정상적으로 저장되도록 DB 연동 수정
+                      saveToDb({ travel_start_date: e.target.value });
                     }}
                     className={`text-[8px] sm:text-[10px] font-bold outline-none bg-transparent ${textMain}`}
                   />
@@ -2567,11 +2727,30 @@ const MainApp = () => {
         </div>
       </main>
 
+      {/* 폰트 및 요소 개별 스케일 동적 적용 CSS */}
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         
+        :root {
+          --font-scale: ${fontScale};
+        }
+
+        /* Tailwind 텍스트 클래스들 동적 오버라이드 (폰트 스케일 적용) */
+        .text-\\[6px\\] { font-size: calc(6px * var(--font-scale)) !important; }
+        .text-\\[7px\\] { font-size: calc(7px * var(--font-scale)) !important; }
+        .text-\\[8px\\] { font-size: calc(8px * var(--font-scale)) !important; }
+        .text-\\[9px\\] { font-size: calc(9px * var(--font-scale)) !important; }
+        .text-\\[10px\\] { font-size: calc(10px * var(--font-scale)) !important; }
+        .text-\\[11px\\] { font-size: calc(11px * var(--font-scale)) !important; }
+        .text-xs { font-size: calc(0.75rem * var(--font-scale)) !important; line-height: calc(1rem * var(--font-scale)) !important; }
+        .text-sm { font-size: calc(0.875rem * var(--font-scale)) !important; line-height: calc(1.25rem * var(--font-scale)) !important; }
+        .text-base { font-size: calc(1rem * var(--font-scale)) !important; line-height: calc(1.5rem * var(--font-scale)) !important; }
+        .text-lg { font-size: calc(1.125rem * var(--font-scale)) !important; line-height: calc(1.75rem * var(--font-scale)) !important; }
+        .text-xl { font-size: calc(1.25rem * var(--font-scale)) !important; line-height: calc(1.75rem * var(--font-scale)) !important; }
+        .text-2xl { font-size: calc(1.5rem * var(--font-scale)) !important; line-height: calc(2rem * var(--font-scale)) !important; }
+        
         body {
-          font-family: inherit; /* 상위 컴포넌트에서 선택한 폰트를 상속받도록 수정 */
+          font-family: inherit;
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
         }
