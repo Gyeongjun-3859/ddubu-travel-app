@@ -8,9 +8,11 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 3. 모바일 일정(Plan) 탭 개별 스크롤 제거 -> 전체 화면 스크롤 통합
   - 4. 대시보드 전용 준비물 확인 모달 분리 및 퀵 버튼 추가
   - 5. 헤더 날씨 버튼 레이어(Z-index) 오류 수정 및 클릭 활성화
-  - 6. 날씨 상세 정보 모달창 추가 및 여행 날짜 기반 날씨 동기화 로직 적용 (NEW)
+  - 6. 날씨 상세 정보 모달창 추가 및 여행 날짜 기반 날씨 동기화 로직 적용
   - 7. 요소/글자 개별 크기 조절 분리 및 슝/뽕 롤백 기능 추가
-  - 8. 국가/지역 선택 데이터 로컬/DB 영구 저장 및 재접속 시 자동 복구 로직 추가 (NEW)
+  - 8. 국가/지역 선택 데이터 로컬/DB 영구 저장 및 재접속 시 자동 복구 로직 추가
+  - 9. 교통/항공권 일괄 등록 및 모바일 Hover 대체 기능 적용
+  - 10. 중복 렌더링 블록 제거 및 JSX 태그 매칭 오류 완벽 수정 (HOTFIX)
   =============================================================================
 */
 
@@ -148,6 +150,7 @@ const MainApp = () => {
   const [sharedTripId, setSharedTripId] = useState(null);
   const [pendingInvite, setPendingInvite] = useState(null);
   const [inviteIdInput, setInviteIdInput] = useState("");
+  const [sharedUsers, setSharedUsers] = useState([]);
 
   const [weather, setWeather] = useState(null);
   const [forecast, setForecast] = useState([]);
@@ -252,10 +255,17 @@ const MainApp = () => {
   const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
   const [transType, setTransType] = useState('flight'); 
   const [transDir, setTransDir] = useState('outbound'); 
-  const [transData, setTransData] = useState({ airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 });
+  
+  const initialTransState = { airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 };
+  const [modalTransData, setModalTransData] = useState({
+    outbound: { ...initialTransState },
+    inbound: { ...initialTransState }
+  });
 
   const [panelRatio, setPanelRatio] = useState(50); // 모바일 병렬 배치 비율
   const dragRef = useRef(false);
+
+  const [activeMobileCard, setActiveMobileCard] = useState(null);
 
   const isDarkMode = appTheme === 'dark';
 
@@ -268,7 +278,6 @@ const MainApp = () => {
     currentRestaurantsRef.current = currentRestaurants;
   }, [currentRestaurants]);
 
-  // 접속 시, 지역 이름을 통해 국가/지역 셀렉트 박스 상태를 복구하는 헬퍼 함수
   const syncCountryRegionFromCityName = useCallback((cityName, timeline = []) => {
     if (!cityName || cityName === "선택된 지역 없음") return;
     let matchedCountry = "";
@@ -299,7 +308,7 @@ const MainApp = () => {
             setGlobalPlanCountry("수동입력");
         }
     }
-  }, [setGlobalPlanCountry, setGlobalPlanRegion, setGlobalManualCountry, setGlobalManualRegion]);
+  }, []);
   
   function getDateStringForDay(dayIndex) {
     if (!travelStartDate) return "";
@@ -709,8 +718,18 @@ const MainApp = () => {
 
   async function handleAcceptInvite() {
     if (pendingInvite) {
-      setSharedTripId(S(pendingInvite.trip_id));
+      const targetTripId = S(pendingInvite.trip_id);
+      setSharedTripId(targetTripId);
       await supabaseClient.from('invites').delete().eq('target_id', appUserId);
+      
+      try {
+        const { data } = await supabaseClient.from('travel_state').select('shared_users').eq('id', targetTripId).single();
+        const currentShared = Array.isArray(data?.shared_users) ? data.shared_users : [];
+        if (!currentShared.includes(appUserId)) {
+          await supabaseClient.from('travel_state').update({ shared_users: [...currentShared, appUserId] }).eq('id', targetTripId);
+        }
+      } catch(e) { console.error("Failed to update shared users:", e); }
+
       setPendingInvite(null); showToast(`일정에 접속했습니다.`);
     }
   }
@@ -928,38 +947,64 @@ const MainApp = () => {
   function removeDay() { if (maxDay > 1) setMaxDay(d => d - 1); }
 
   function handleSaveTransport() {
-    if (!transData.dep || !transData.arr) { showToast("출발지/도착지를 입력해주세요."); return; }
+    const outData = modalTransData.outbound;
+    const inData = modalTransData.inbound;
+    const hasOutbound = outData.dep && outData.arr;
+    const hasInbound = inData.dep && inData.arr;
+
+    if (!hasOutbound && !hasInbound) { showToast("출발지와 도착지를 한 방향 이상 입력해주세요."); return; }
     
     if (transType === 'flight') {
-       const newFlights = { ...flights, [transDir]: { ...transData } };
+       const newFlights = { ...flights };
+       if (hasOutbound) newFlights.outbound = { ...outData };
+       if (hasInbound) newFlights.inbound = { ...inData };
+       
        setFlights(newFlights);
        saveToDb({ flights: newFlights });
-       showToast("항공권이 성공적으로 고정되었습니다! ✈️");
+       showToast("항공권이 성공적으로 저장되었습니다! ✈️");
     } else {
        const emoji = transType === 'train' ? '🚆' : '🚌';
        const label = transType === 'train' ? '기차' : '버스';
-       const planData = { 
-         id: Date.now().toString(), day: parseInt(transData.day), time: S(transData.depTime), 
-         place: `${emoji} ${transData.dep} -> ${transData.arr}`, localName: S(transData.airline), 
-         features: `${label} 번호: ${transData.flightNum} (도착예정: ${transData.arrTime})`, photo: "", 
-         country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false,
-         isTransport: true // 사진 없이 출력하기 위한 플래그
+       const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+       let updatedTimeline = [...safeTimeline];
+
+       const addTransportToTimeline = (dirData, dirLabel) => {
+         const planData = { 
+           id: Date.now().toString() + Math.random().toString(), day: parseInt(dirData.day), time: S(dirData.depTime), 
+           place: `${emoji} ${dirData.dep} -> ${dirData.arr}`, localName: S(dirData.airline), 
+           features: `${label} 번호: ${dirData.flightNum} (도착예정: ${dirData.arrTime}) [${dirLabel}]`, photo: "", 
+           country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false,
+           isTransport: true
+         };
+         updatedTimeline.push(planData);
        };
-       const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-       let updatedTimeline = [...safePlanTimeline, planData];
+
+       if (hasOutbound) addTransportToTimeline(outData, "가는 편");
+       if (hasInbound) addTransportToTimeline(inData, "오는 편");
+
        updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
        setPlanTimeline(updatedTimeline); saveToDb({ plan_timeline: updatedTimeline });
        showToast(`${label} 일정이 추가되었습니다! ${emoji}`);
     }
     setIsTransportModalOpen(false);
-    setTransData({ airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 });
+    setModalTransData({ outbound: { ...initialTransState }, inbound: { ...initialTransState } });
   }
   
   function handleEditFlight(dir) {
     setTransType('flight');
     setTransDir(dir);
-    setTransData(flights[dir] || { airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 });
+    setModalTransData({
+      outbound: flights.outbound || { ...initialTransState },
+      inbound: flights.inbound || { ...initialTransState }
+    });
     setIsTransportModalOpen(true);
+  }
+
+  function handleDeleteFlight(dir) {
+    const newFlights = { ...flights, [dir]: null };
+    setFlights(newFlights);
+    saveToDb({ flights: newFlights });
+    showToast(`${dir === 'outbound' ? '가는 편' : '오는 편'} 항공권이 삭제되었습니다.`);
   }
 
   function handleAddPackingItem(e) {
@@ -1061,6 +1106,8 @@ const MainApp = () => {
               if (data.travel_start_date) setTravelStartDate(S(data.travel_start_date));
               if (data.flights) setFlights(data.flights);
               if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
+              if (data.shared_users && Array.isArray(data.shared_users)) setSharedUsers(data.shared_users);
+              else setSharedUsers([]);
               
               if (Array.isArray(data.current_restaurants)) {
                 const cleanRests = data.current_restaurants.map(r => {
@@ -1257,6 +1304,8 @@ const MainApp = () => {
           setTravelStartDate(data.travel_start_date ? S(data.travel_start_date) : new Date().toISOString().split('T')[0]);
           if (data.flights) setFlights(data.flights);
           if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
+          if (data.shared_users && Array.isArray(data.shared_users)) setSharedUsers(data.shared_users); 
+          else setSharedUsers([]);
           
           if (Array.isArray(data.current_restaurants)) {
             const cleanRests = data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) }));
@@ -1281,6 +1330,7 @@ const MainApp = () => {
           if (payload.new.travel_start_date) setTravelStartDate(S(payload.new.travel_start_date));
           if (payload.new.flights) setFlights(payload.new.flights);
           if (payload.new.packing_list && Array.isArray(payload.new.packing_list)) setPackingList(payload.new.packing_list);
+          if (payload.new.shared_users && Array.isArray(payload.new.shared_users)) setSharedUsers(payload.new.shared_users);
           
           if (Array.isArray(payload.new.current_restaurants)) {
             const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) }));
@@ -1408,6 +1458,8 @@ const MainApp = () => {
     });
   }, [isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, isPinMode, movingPinId, mapActiveDay, getDayColor]);
 
+  /* ===================== UI 및 변수 계산 ===================== */
+
   const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
   const filteredMarkers = markerSearchQuery 
     ? safeCurrentRestaurants.filter(r => r && S(r.name).toLowerCase().includes(S(markerSearchQuery).toLowerCase())) : [];
@@ -1424,7 +1476,6 @@ const MainApp = () => {
   const safeMaxDay = (typeof maxDay === 'number' && maxDay > 0 && maxDay < 100) ? maxDay : 4;
   const tripDays = Array.from({length: safeMaxDay}, (_, i) => i + 1);
 
-  // 헤더 표시용 날씨 계산 (여행 시작일에 맞춤)
   let headerForecastDateStr = "";
   if (travelStartDate) {
     const todayDate = new Date();
@@ -1449,7 +1500,81 @@ const MainApp = () => {
   const headerWeatherInfo = headerForecast ? getWeatherInfo(headerForecast.code) : (weather ? getWeatherInfo(weather.code) : null);
   const headerTemp = headerForecast ? `${headerForecast.max}°` : (weather ? `${weather.temp}°` : '-');
 
-  /* ===================== 4. 메인 렌더링 블록 ===================== */
+  const renderFlightCards = (isDesktop) => {
+    if (!flights.outbound && !flights.inbound) return null;
+    
+    const wrapperClass = isDesktop 
+      ? `hidden md:flex flex-col gap-2 mb-3 w-full shrink-0` 
+      : `flex md:hidden flex-col sm:flex-row gap-1 sm:gap-2 mb-1 p-1.5 sm:p-2 rounded-xl border ${isDarkMode ? 'bg-indigo-900/20 border-indigo-500/30' : 'bg-indigo-50 border-indigo-100'} shrink-0`; 
+
+    const getCardUX = (dirId) => {
+      const isActive = activeMobileCard === `flight_${dirId}`;
+      const baseBorder = isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white';
+      const activeBorder = dirId === 'outbound' ? 'border-indigo-400' : 'border-rose-400';
+      const finalBorder = isActive ? activeBorder : baseBorder;
+      const hoverLogic = isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100';
+      return { finalBorder, hoverLogic, isActive };
+    };
+
+    return (
+      <div className={wrapperClass}>
+        {flights.outbound && (() => {
+          const ux = getCardUX('outbound');
+          return (
+          <div onClick={(e) => {
+             e.stopPropagation();
+             if (ux.isActive) { handleEditFlight('outbound'); setActiveMobileCard(null); }
+             else setActiveMobileCard('flight_outbound');
+          }} className={`flex-1 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer md:hover:border-indigo-400 transition-all group ${ux.finalBorder}`}>
+            <div className="flex justify-between items-center w-full absolute top-1 left-0 right-0 px-1.5">
+               <span className="text-[6px] sm:text-[8px] font-bold text-indigo-500 bg-indigo-100 px-1 rounded">가는 편 🛫</span>
+               <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity ${ux.hoverLogic}`}>
+                 <button onClick={(e) => { e.stopPropagation(); handleEditFlight('outbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                 <button onClick={(e) => { e.stopPropagation(); handleDeleteFlight('outbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+               </div>
+            </div>
+            <div className="flex w-full items-center justify-between mt-3 sm:mt-4 px-1">
+              <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.depTime}</span></div>
+              <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
+                <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
+                <span className="text-[6px] sm:text-[8px] font-bold text-indigo-400 truncate w-full text-center">{flights.outbound.airline}</span>
+              </div>
+              <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.arrTime}</span></div>
+            </div>
+          </div>
+        )})()}
+        {flights.inbound && (() => {
+          const ux = getCardUX('inbound');
+          return (
+          <div onClick={(e) => {
+             e.stopPropagation();
+             if (ux.isActive) { handleEditFlight('inbound'); setActiveMobileCard(null); }
+             else setActiveMobileCard('flight_inbound');
+          }} className={`flex-1 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer md:hover:border-rose-400 transition-all group ${ux.finalBorder}`}>
+            <div className="flex justify-between items-center w-full absolute top-1 left-0 right-0 px-1.5">
+               <span className="text-[6px] sm:text-[8px] font-bold text-rose-500 bg-rose-100 px-1 rounded">오는 편 🛬</span>
+               <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity ${ux.hoverLogic}`}>
+                 <button onClick={(e) => { e.stopPropagation(); handleEditFlight('inbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                 <button onClick={(e) => { e.stopPropagation(); handleDeleteFlight('inbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+               </div>
+            </div>
+            <div className="flex w-full items-center justify-between mt-3 sm:mt-4 px-1">
+              <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.depTime}</span></div>
+              <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
+                <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
+                <span className="text-[6px] sm:text-[8px] font-bold text-rose-400 truncate w-full text-center">{flights.inbound.airline}</span>
+              </div>
+              <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.arrTime}</span></div>
+            </div>
+          </div>
+        )})()}
+      </div>
+    );
+  };
+
+  const finalElementScale = (typeof elementScale === 'number' && !isNaN(elementScale) && elementScale > 0.3) ? elementScale : 1;
+
+  /* ===================== 메인 렌더링 블록 ===================== */
 
   if (!isDbLoaded) return <div className="h-screen w-full flex items-center justify-center bg-slate-50"><span className="text-2xl animate-spin inline-block">🔄</span></div>;
 
@@ -1481,12 +1606,10 @@ const MainApp = () => {
     );
   }
 
-  // 요소 개별 크기 조절
-  const finalElementScale = (typeof elementScale === 'number' && !isNaN(elementScale) && elementScale > 0.3) ? elementScale : 1;
-
   return (
-    <div style={{ zoom: finalElementScale, fontFamily: appFont }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`}>
+    <div style={{ zoom: finalElementScale, fontFamily: appFont }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
       
+      {/* --- 모달 및 팝업 영역 --- */}
       {toastMsg && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl z-[9999] animate-in fade-in slide-in-from-top-4">
           {toastMsg}
@@ -1557,7 +1680,7 @@ const MainApp = () => {
                     뽕 <span className="ml-1">⏩</span>
                  </button>
               </div>
-              <button onClick={() => { setIsSettingsOpen(true); setIsMobileMenuOpen(false); }} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              <button onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(true); setIsMobileMenuOpen(false); }} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                 <span>⚙️ 환경 설정</span>
               </button>
               <button onClick={handleLogout} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all border border-dashed ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>
@@ -1565,6 +1688,65 @@ const MainApp = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}>
+           <div className={`${cardBg} p-6 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+              <div className={`flex justify-between items-center mb-5 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                 <h3 className={`font-black text-sm ${textMain}`}>⚙️ 환경 설정</h3>
+                 <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+              </div>
+              
+              <div className="space-y-4 max-h-[65vh] overflow-y-auto custom-scrollbar pr-2">
+                 <div className="flex flex-col space-y-2">
+                    <label className={`text-xs font-bold ${textMuted}`}>앱 테마</label>
+                    <div className="flex space-x-2">
+                       <button onClick={() => handleThemeChange('light')} className={`flex-1 py-2 text-xs font-bold border rounded-lg ${appTheme === 'light' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600'}`}>기본(Light)</button>
+                       <button onClick={() => handleThemeChange('dark')} className={`flex-1 py-2 text-xs font-bold border rounded-lg ${appTheme === 'dark' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>다크 모드</button>
+                       <button onClick={() => handleThemeChange('pastel')} className={`flex-1 py-2 text-xs font-bold border rounded-lg ${appTheme === 'pastel' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-orange-50 text-orange-800 border-orange-200'}`}>파스텔</button>
+                    </div>
+                 </div>
+                 
+                 <div className="flex flex-col space-y-2">
+                    <label className={`text-xs font-bold ${textMuted}`}>화면/글자 크기 (글꼴: {fontScale}, 요소: {elementScale})</label>
+                    <input type="range" min="0.5" max="1.5" step="0.1" value={fontScale} onChange={handleFontScaleChange} className="w-full accent-indigo-600" />
+                    <input type="range" min="0.5" max="1.5" step="0.1" value={elementScale} onChange={handleElementScaleChange} className="w-full accent-indigo-600 mt-2" />
+                 </div>
+
+                 <div className={`flex flex-col space-y-3 border-t pt-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                    <label className={`text-xs font-bold ${textMuted}`}>🤝 일정 공유 및 초대 (실시간 연동)</label>
+                    {sharedTripId ? (
+                      <div className="bg-indigo-50 dark:bg-indigo-900/30 p-3 rounded-xl border border-indigo-100 dark:border-indigo-800">
+                         <p className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold mb-2">
+                           현재 다른 사용자의 일정에 참여 중입니다.
+                         </p>
+                         <button onClick={handleExitShare} className="w-full py-2 bg-white dark:bg-slate-800 text-rose-500 hover:bg-rose-50 dark:hover:bg-slate-700 rounded-lg text-[10px] font-bold shadow-sm border border-rose-100 dark:border-slate-600 transition-colors">내 일정으로 복귀</button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                         <div className="flex space-x-2">
+                            <input type="text" value={inviteIdInput} onChange={e => setInviteIdInput(e.target.value)} placeholder="초대할 친구 아이디 입력" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold rounded-lg outline-none focus:border-indigo-500 transition-colors`} />
+                            <button onClick={handleSendInvite} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all whitespace-nowrap">초대장 발송</button>
+                         </div>
+                         <div className={`p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
+                            <p className={`text-[10px] font-bold ${textMuted} mb-2`}>현재 이 일정을 함께 보는 사람</p>
+                            <div className="flex flex-wrap gap-1.5">
+                               <span className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 px-2 py-1 rounded text-[9px] font-bold shadow-sm">👑 나 ({appUserId})</span>
+                               {sharedUsers.filter(u => u !== appUserId).map((user, idx) => (
+                                 <span key={idx} className="bg-white text-slate-600 dark:bg-slate-700 dark:text-slate-300 border dark:border-slate-600 px-2 py-1 rounded text-[9px] font-bold shadow-sm">👤 {user}</span>
+                               ))}
+                               {sharedUsers.filter(u => u !== appUserId).length === 0 && <span className="text-[9px] text-slate-400 py-1 pl-1">아직 초대된 친구가 없습니다.</span>}
+                            </div>
+                         </div>
+                      </div>
+                    )}
+                 </div>
+              </div>
+              
+              <button onClick={() => setIsSettingsOpen(false)} className={`w-full mt-6 rounded-xl py-3 text-xs font-bold transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}>닫기</button>
+           </div>
         </div>
       )}
 
@@ -1591,7 +1773,6 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 날씨 상세 정보 모달창 (여행 날짜 동기화 적용) */}
       {isWeatherModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setIsWeatherModalOpen(false)}>
            <div className={`${cardBg} p-5 rounded-3xl w-full max-w-xs sm:max-w-sm shadow-2xl animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
@@ -1804,8 +1985,8 @@ const MainApp = () => {
       )}
 
       {isTransportModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4">
-          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`}>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsTransportModalOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
               <div className="flex items-center space-x-2">
                 <span className="text-indigo-500 text-sm">✈️</span>
@@ -1816,22 +1997,22 @@ const MainApp = () => {
             
             <div className="p-4 space-y-3">
               <div className={`grid grid-cols-3 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-1 rounded-lg`}>
-                 <button onClick={() => setTransType('flight')} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'flight' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>✈️ 항공권</button>
-                 <button onClick={() => setTransType('train')} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'train' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>🚆 기차</button>
-                 <button onClick={() => setTransType('bus')} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'bus' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>🚌 버스</button>
+                 <button onClick={() => {setTransType('flight'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'flight' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>✈️ 항공권</button>
+                 <button onClick={() => {setTransType('train'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'train' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>🚆 기차</button>
+                 <button onClick={() => {setTransType('bus'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'bus' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>🚌 버스</button>
               </div>
 
-              {transType === 'flight' && (
-                <div className="flex space-x-2">
-                   <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400'}`}>가는 편 (Outbound)</button>
-                   <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 ${transDir === 'inbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400'}`}>오는 편 (Inbound)</button>
-                </div>
-              )}
+              {/* 모든 수단에 대해 가는편/오는편 탭 적용 */}
+              <div className="flex space-x-2 items-center">
+                 <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>가는 편 (Outbound)</button>
+                 <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors ${transDir === 'inbound' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>오는 편 (Inbound)</button>
+                 <button onClick={() => setModalTransData(prev => ({...prev, [transDir]: {...initialTransState}}))} className="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-500 rounded border hover:bg-slate-200">초기화</button>
+              </div>
 
               {transType !== 'flight' && (
                 <div className="flex flex-col space-y-1">
                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택 (Day)</label>
-                   <select value={transData.day} onChange={e => setTransData({...transData, day: parseInt(e.target.value)})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer`}>
+                   <select value={modalTransData[transDir].day} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], day: parseInt(e.target.value)}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer`}>
                       {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
                    </select>
                 </div>
@@ -1840,30 +2021,30 @@ const MainApp = () => {
               <div className="flex space-x-2">
                 <div className="flex flex-col space-y-1 w-1/2">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>{transType === 'flight' ? '항공사' : (transType === 'train' ? '기차 종류' : '버스 회사')}</label>
-                  <input type="text" placeholder={transType === 'flight' ? '대한항공' : 'KTX, 고속버스'} value={transData.airline} onChange={e => setTransData({...transData, airline: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                  <input type="text" placeholder={transType === 'flight' ? '대한항공' : 'KTX, 고속버스'} value={modalTransData[transDir].airline} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], airline: e.target.value}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
                 </div>
                 <div className="flex flex-col space-y-1 w-1/2">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>{transType === 'flight' ? '항공편명' : '편명/번호'}</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'KE001' : '102호'} value={transData.flightNum} onChange={e => setTransData({...transData, flightNum: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                  <input type="text" placeholder={transType === 'flight' ? 'KE001' : '102호'} value={modalTransData[transDir].flightNum} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], flightNum: e.target.value}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
                 </div>
               </div>
 
               <div className="flex space-x-2 items-center">
                 <div className="flex flex-col space-y-1 w-[45%]">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>출발지</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'ICN' : '서울역'} value={transData.dep} onChange={e => setTransData({...transData, dep: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
-                  <input type="text" maxLength="5" placeholder="10:00" value={transData.depTime} onChange={e => handleTimeInput(e, val => setTransData({...transData, depTime: val}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1`} />
+                  <input type="text" placeholder={transType === 'flight' ? 'ICN' : '서울역'} value={modalTransData[transDir].dep} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], dep: e.target.value}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                  <input type="text" maxLength="5" placeholder="10:00" value={modalTransData[transDir].depTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], depTime: val}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1`} />
                 </div>
                 <div className="flex flex-col items-center justify-center text-slate-400 font-bold w-[10%]">➔</div>
                 <div className="flex flex-col space-y-1 w-[45%]">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>도착지</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'NRT' : '부산역'} value={transData.arr} onChange={e => setTransData({...transData, arr: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
-                  <input type="text" maxLength="5" placeholder="12:00" value={transData.arrTime} onChange={e => handleTimeInput(e, val => setTransData({...transData, arrTime: val}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1`} />
+                  <input type="text" placeholder={transType === 'flight' ? 'NRT' : '부산역'} value={modalTransData[transDir].arr} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], arr: e.target.value}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                  <input type="text" maxLength="5" placeholder="12:00" value={modalTransData[transDir].arrTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], arrTime: val}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1`} />
                 </div>
               </div>
 
-              <button onClick={handleSaveTransport} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all mt-2">
-                {transType === 'flight' ? '항공권 상단에 고정하기 ✈️' : '일정에 등록하기 📝'}
+              <button onClick={handleSaveTransport} className={`w-full ${modalTransData.outbound.dep && modalTransData.inbound.dep ? 'bg-orange-500 hover:bg-orange-600' : 'bg-indigo-600 hover:bg-indigo-700'} text-white rounded-xl py-3 text-xs font-bold shadow-md active:scale-95 transition-all mt-2`}>
+                {modalTransData.outbound.dep && modalTransData.inbound.dep ? '양방향 일괄 등록하기 ✨' : (transType === 'flight' ? '항공권 상단에 고정하기 ✈️' : '일정에 등록하기 📝')}
               </button>
             </div>
           </div>
@@ -2155,7 +2336,7 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* Main UI */}
+      {/* --- 메인 컨텐츠 영역 --- */}
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-0">
         <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors`}>
           <div className="flex items-center flex-1 space-x-2 sm:space-x-4">
@@ -2255,37 +2436,8 @@ const MainApp = () => {
               })}
             </div>
 
-            {/* 모바일/PC 상관없이 항공권 정보를 대시보드 전체 최상단에 고정 출력 */}
-            {(flights.outbound || flights.inbound) && (
-              <div className={`flex flex-col sm:flex-row gap-1 sm:gap-2 mb-1 p-1.5 sm:p-2 rounded-xl border ${isDarkMode ? 'bg-indigo-900/20 border-indigo-500/30' : 'bg-indigo-50 border-indigo-100'} shrink-0`}>
-                {flights.outbound && (
-                   <div onClick={() => handleEditFlight('outbound')} className={`flex-1 flex flex-col justify-center p-1.5 sm:p-2 rounded-lg border shadow-sm relative cursor-pointer hover:border-indigo-400 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                     <span className="absolute top-1 left-1.5 text-[6px] sm:text-[8px] font-bold text-indigo-500 bg-indigo-100 px-1 rounded">가는 편 🛫</span>
-                     <div className="flex w-full items-center justify-between mt-2.5 sm:mt-3 px-1">
-                       <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.depTime}</span></div>
-                       <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
-                         <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
-                         <span className="text-[6px] sm:text-[8px] font-bold text-indigo-400 truncate w-full text-center">{flights.outbound.airline}</span>
-                       </div>
-                       <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.arrTime}</span></div>
-                     </div>
-                   </div>
-                )}
-                {flights.inbound && (
-                   <div onClick={() => handleEditFlight('inbound')} className={`flex-1 flex flex-col justify-center p-1.5 sm:p-2 rounded-lg border shadow-sm relative cursor-pointer hover:border-rose-400 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                     <span className="absolute top-1 left-1.5 text-[6px] sm:text-[8px] font-bold text-rose-500 bg-rose-100 px-1 rounded">오는 편 🛬</span>
-                     <div className="flex w-full items-center justify-between mt-2.5 sm:mt-3 px-1">
-                       <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.depTime}</span></div>
-                       <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
-                         <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
-                         <span className="text-[6px] sm:text-[8px] font-bold text-rose-400 truncate w-full text-center">{flights.inbound.airline}</span>
-                       </div>
-                       <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.arrTime}</span></div>
-                     </div>
-                   </div>
-                )}
-              </div>
-            )}
+            {/* 모바일에서만 렌더링되는 항공권 */}
+            {renderFlightCards(false)}
 
             <div className="flex-1 flex flex-row gap-1 sm:gap-4 overflow-hidden min-h-0 h-full w-full relative" style={{"--mob-left": `${panelRatio}%`}}>
               
@@ -2319,21 +2471,35 @@ const MainApp = () => {
                 
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col space-y-1 sm:space-y-2 pr-1 relative z-10">
                   {todayPlans.length === 0 ? (
-                     <div onClick={() => changeTab('plan')} className={`flex-1 flex flex-col items-center justify-center text-[8px] sm:text-[10px] ${textMuted} font-bold text-center ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 hover:border-indigo-400'} rounded-lg border border-dashed cursor-pointer transition-all active:scale-[0.99]`}>
+                     <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`flex-1 flex flex-col items-center justify-center text-[8px] sm:text-[10px] ${textMuted} font-bold text-center ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 hover:border-indigo-400'} rounded-lg border border-dashed cursor-pointer transition-all active:scale-[0.99]`}>
                        <span>일정이 없습니다.<br/>클릭하여 추가!</span>
                      </div>
                   ) : (
-                    todayPlans.map((item) => (
-                      <div key={item.id} className={`flex items-center space-x-1 sm:space-x-2 p-1 sm:p-2 rounded-lg border cursor-pointer hover:border-indigo-400 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-100'} shadow-sm transition-all group`} onClick={(e) => { e.stopPropagation(); setSelectedPlanInfo(item); }}>
-                        <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0">{S(item.time)}</div>
+                    todayPlans.map((plan) => {
+                      const isActive = activeMobileCard === plan.id;
+                      const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-600 md:hover:border-indigo-400' : 'border-slate-100 md:hover:border-indigo-400');
+                      
+                      return (
+                      <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1 sm:p-2 rounded-lg border cursor-pointer ${cardBorder} ${isDarkMode ? 'bg-slate-700' : 'bg-white'} shadow-sm transition-all group relative`} onClick={(e) => { 
+                         e.stopPropagation(); 
+                         if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
+                         else setActiveMobileCard(plan.id);
+                      }}>
+                        <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0">{S(plan.time)}</div>
                         <div className="flex-1 min-w-0 flex flex-col px-0.5">
                           <span className={`text-[8px] sm:text-[11px] font-bold truncate ${textMain}`}>
-                            {S(item.place)} {item.localName ? <span className="text-indigo-500 text-[8px] sm:text-[9px]">({S(item.localName)})</span> : ''} {item.isAccommodation && '🏠'}
+                            {S(plan.place)} {plan.localName ? <span className="text-indigo-500 text-[8px] sm:text-[9px]">({S(plan.localName)})</span> : ''} {plan.isAccommodation && '🏠'}
                           </span>
-                          {item.features && <span className={`text-[6px] sm:text-[9px] truncate ${textMuted} mt-0.5`}>{S(item.features)}</span>}
+                          {plan.features && <span className={`text-[6px] sm:text-[9px] truncate ${textMuted} mt-0.5`}>{S(plan.features)}</span>}
+                        </div>
+                        
+                        {/* 모바일 탭 & PC 호버 수정/삭제 메뉴 */}
+                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                           <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1"><span className="text-[10px] sm:text-xs">✏️</span></button>
+                           <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1"><span className="text-[10px] sm:text-xs">🗑️</span></button>
                         </div>
                       </div>
-                    ))
+                    )})
                   )}
                 </div>
               </div>
@@ -2365,36 +2531,51 @@ const MainApp = () => {
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col min-h-0">
-                  {/* 여행 리스트 카드: 좁은 폭에 맞춰 1열/2열 그리드 자동 대응 */}
-                  <div className="flex-1 grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-1.5 sm:gap-2 content-start">
+                  {/* PC에서만 최상단 고정 렌더링되는 항공권 (Day 변경과 무관함) */}
+                  {renderFlightCards(true)}
+
+                  {/* 여행 리스트 카드: 컴팩트한 3열 배치 */}
+                  <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-1.5 content-start">
                     {todayPlans.length === 0 ? (
-                       <div onClick={() => changeTab('plan')} className={`col-span-full flex flex-col items-center justify-center ${textMuted} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 hover:border-indigo-400'} rounded-xl border border-dashed h-20 sm:h-24 cursor-pointer transition-all active:scale-[0.99]`}>
+                       <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`col-span-full flex flex-col items-center justify-center ${textMuted} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 hover:border-indigo-400'} rounded-xl border border-dashed h-20 sm:h-24 cursor-pointer transition-all active:scale-[0.99]`}>
                          <span className="text-[9px] sm:text-[11px] font-bold">일정이 없습니다. 추가해 보세요!</span>
                        </div>
                     ) : (
-                      todayPlans.map((plan) => (
+                      todayPlans.map((plan) => {
+                        const isActive = activeMobileCard === plan.id;
+                        const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-700 md:hover:border-indigo-500' : 'border-slate-200 md:hover:border-indigo-400');
+                        
+                        return (
                         <div 
                           key={plan.id} 
-                          className={`${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-white border-slate-200 hover:border-indigo-400'} rounded-lg border shadow-sm overflow-hidden flex flex-row xs:flex-col transition-all group`}
+                          className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} rounded-lg border shadow-sm overflow-hidden flex flex-col transition-all group relative ${cardBorder}`}
                         >
                           {/* 교통편의 경우 사진 영역 아예 생략 */}
                           {!(plan.isTransport) && (
-                            <div className="w-16 h-16 xs:w-full xs:h-20 relative shrink-0 cursor-pointer border-r xs:border-r-0 xs:border-b border-slate-200 dark:border-slate-700" onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }}>
-                              <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt="" />
+                            <div className="w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b border-slate-200 dark:border-slate-700" 
+                                 onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
+                              <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
                               <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">{S(plan.time)}</div>
-                              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><span className="text-white text-[8px] sm:text-[10px] font-bold">✏️ 수정</span></div>
+                              <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
                             </div>
                           )}
-                          <div className="flex flex-col p-1.5 flex-1 cursor-pointer hover:bg-slate-50/50 dark:hover:bg-slate-700/50 justify-center xs:justify-start min-w-0" onClick={(e) => { e.stopPropagation(); setSelectedPlanInfo(plan); }}>
+                          <div className="flex flex-col p-1.5 flex-1 cursor-pointer hover:bg-slate-50/50 dark:hover:bg-slate-700/50 justify-start min-w-0" 
+                               onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                             {plan.isTransport && <span className="text-indigo-500 font-bold text-[7px] mb-0.5">{S(plan.time)}</span>}
                             <h4 className={`font-black text-[9px] sm:text-[11px] ${textMain} truncate tracking-tight mb-0.5`}>
                               {S(plan.place)} {plan.isAccommodation && '🏠'}
                             </h4>
-                            {plan.localName && <p className="text-[7px] sm:text-[9px] text-indigo-500 font-bold truncate mb-0.5 xs:mb-1">{S(plan.localName)}</p>}
-                            {plan.features && <p className={`text-[7px] sm:text-[8px] ${textMuted} line-clamp-1 xs:line-clamp-2 leading-tight mt-auto`}>{S(plan.features)}</p>}
+                            {plan.localName && <p className="text-[7px] sm:text-[9px] text-indigo-500 font-bold truncate mb-0.5 sm:mb-1">{S(plan.localName)}</p>}
+                            {plan.features && <p className={`text-[7px] sm:text-[8px] ${textMuted} line-clamp-2 leading-tight mt-auto`}>{S(plan.features)}</p>}
+                          </div>
+                          
+                          {/* 모바일 탭 & PC 호버 메뉴 분리 오버레이 */}
+                          <div className={`absolute right-1 top-1 flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                             <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1"><span className="text-xs">✏️</span></button>
+                             <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1"><span className="text-xs">🗑️</span></button>
                           </div>
                         </div>
-                      ))
+                      )})
                     )}
                   </div>
                 </div>
@@ -2410,7 +2591,7 @@ const MainApp = () => {
               </h2>
               <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap sm:flex-nowrap gap-y-1">
                 <button onClick={() => {
-                  setTransType('flight'); setTransDir('outbound'); setTransData({ airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 });
+                  setTransType('flight'); setTransDir('outbound'); setModalTransData({ outbound: { ...initialTransState }, inbound: { ...initialTransState } });
                   setIsTransportModalOpen(true);
                 }} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all active:scale-95 ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300 border-indigo-500/50' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
                    ✈️ 교통/항공권 등록
@@ -2597,18 +2778,19 @@ const MainApp = () => {
                                    <span>일정 없음</span>
                                  </div>
                               ) : (
-                                planTimeline.filter(p => parseInt(p.day || 1) === day).map((plan) => (
-                                  <div key={plan.id} className={`${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-100'} p-1.5 sm:p-2 rounded-lg border relative group hover:border-indigo-300 transition-all`}>
+                                planTimeline.filter(p => parseInt(p.day || 1) === day).map((plan) => {
+                                  const isActive = activeMobileCard === plan.id;
+                                  return (
+                                  <div key={plan.id} className={`${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-100'} p-1.5 sm:p-2 rounded-lg border relative group transition-all ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                                     <div className="flex justify-between items-start mb-1">
                                       <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none">{S(plan.time)}</span>
-                                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex space-x-1 bg-white/90 rounded border border-slate-200 absolute top-1 right-1 z-10 shadow-sm">
-                                        <button onClick={() => handleEditPlanClick(plan)} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
-                                        <button onClick={() => handleDeletePlan(plan.id)} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+                                      <div className={`transition-opacity flex space-x-1 bg-white/90 rounded border border-slate-200 absolute top-1 right-1 z-10 shadow-sm ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                                        <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
                                       </div>
                                     </div>
                                     <div className="flex gap-1.5 items-start mt-1">
-                                      <div className="flex-1 min-w-0 flex flex-col cursor-pointer" onClick={(e) => { e.stopPropagation(); setSelectedPlanInfo(plan); }}>
-                                        {/* 교통편의 경우 사진 생략으로 텍스트 확장 */}
+                                      <div className="flex-1 min-w-0 flex flex-col cursor-pointer" >
                                         <p className={`text-[9px] sm:text-[10px] font-bold ${textMain} leading-tight line-clamp-2`}>{S(plan.place)} {plan.isAccommodation && '🏠'}</p>
                                         {plan.localName && (
                                           <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70">
@@ -2618,14 +2800,13 @@ const MainApp = () => {
                                         {plan.features && <p className={`text-[7px] sm:text-[8px] ${textMuted} line-clamp-2 leading-tight mt-0.5`}>{S(plan.features)}</p>}
                                       </div>
                                       {plan.photo && !plan.isTransport && (
-                                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0" onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }}>
-                                          <img src={plan.photo} className="w-full h-full object-cover hover:opacity-80 transition-opacity" alt="" />
-                                          <div className="absolute inset-0 bg-black/30 opacity-0 hover:opacity-100 flex items-center justify-center transition-opacity"><span className="text-white text-[7px] font-bold">수정</span></div>
+                                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0">
+                                          <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
                                         </div>
                                       )}
                                     </div>
                                   </div>
-                                ))
+                                )})
                               )}
                             </div>
                           </div>

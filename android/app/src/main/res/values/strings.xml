@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">ddubu-travel-app</string>
+    <string name="app_name">뚜부트래블</string>
     <string name="title_activity_main">ddubu-travel-app</string>
     <string name="package_name">com.ddubu.travel</string>
     <string name="custom_url_scheme">com.ddubu.travel</string>
