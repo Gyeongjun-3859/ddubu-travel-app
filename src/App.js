@@ -8,8 +8,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 3. 모바일 일정(Plan) 탭 개별 스크롤 제거 -> 전체 화면 스크롤 통합
   - 4. 대시보드 전용 준비물 확인 모달 분리 및 퀵 버튼 추가
   - 5. 헤더 날씨 버튼 레이어(Z-index) 오류 수정 및 클릭 활성화
-  - 6. [NEW] 날씨 상세 정보 모달창 추가
-  - 7. [NEW] 요소/글자 개별 크기 조절 분리 및 슝/뽕 롤백 기능 추가
+  - 6. 날씨 상세 정보 모달창 추가 및 여행 날짜 기반 날씨 동기화 로직 적용 (NEW)
+  - 7. 요소/글자 개별 크기 조절 분리 및 슝/뽕 롤백 기능 추가
+  - 8. 국가/지역 선택 데이터 로컬/DB 영구 저장 및 재접속 시 자동 복구 로직 추가 (NEW)
   =============================================================================
 */
 
@@ -156,7 +157,6 @@ const MainApp = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [appTheme, setAppTheme] = useState('light');
   
-  // 크기 조절 개별 분리
   const [elementScale, setElementScale] = useState(1);
   const [fontScale, setFontScale] = useState(1);
   
@@ -180,7 +180,6 @@ const MainApp = () => {
   const [maxDay, setMaxDay] = useState(4);
   const [dashboardDay, setDashboardDay] = useState(1);
   
-  // 롤백 (슝/뽕) 기록용 히스토리 기능
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const isUndoingRef = useRef(false);
@@ -268,6 +267,39 @@ const MainApp = () => {
   useEffect(() => {
     currentRestaurantsRef.current = currentRestaurants;
   }, [currentRestaurants]);
+
+  // 접속 시, 지역 이름을 통해 국가/지역 셀렉트 박스 상태를 복구하는 헬퍼 함수
+  const syncCountryRegionFromCityName = useCallback((cityName, timeline = []) => {
+    if (!cityName || cityName === "선택된 지역 없음") return;
+    let matchedCountry = "";
+    for (const [c, rArray] of Object.entries(REGIONS_BY_COUNTRY)) {
+        if (rArray.includes(cityName)) {
+            matchedCountry = c;
+            break;
+        }
+    }
+    if (matchedCountry) {
+        setGlobalPlanCountry(matchedCountry);
+        setGlobalPlanRegion(cityName);
+        setGlobalManualCountry("");
+        setGlobalManualRegion("");
+    } else {
+        setGlobalPlanRegion("수동입력");
+        setGlobalManualRegion(cityName);
+        const plan = (timeline || []).find(p => p && p.region === cityName);
+        if (plan && plan.country) {
+            if (Object.keys(REGIONS_BY_COUNTRY).includes(plan.country)) {
+               setGlobalPlanCountry(plan.country);
+               setGlobalManualCountry("");
+            } else {
+               setGlobalPlanCountry("수동입력");
+               setGlobalManualCountry(plan.country);
+            }
+        } else {
+            setGlobalPlanCountry("수동입력");
+        }
+    }
+  }, [setGlobalPlanCountry, setGlobalPlanRegion, setGlobalManualCountry, setGlobalManualRegion]);
   
   function getDateStringForDay(dayIndex) {
     if (!travelStartDate) return "";
@@ -375,7 +407,6 @@ const MainApp = () => {
       if (!geoData.length) return;
       const { lat, lon } = geoData[0];
 
-      // 지역 정보 가져왔을 때 지도 연동 자동화
       if (mapInstanceRef.current) {
           mapInstanceRef.current.flyTo([parseFloat(lat), parseFloat(lon)], 13);
       }
@@ -510,9 +541,9 @@ const MainApp = () => {
         console.error("여행 삭제 중 오류:", err);
     }
     
-    setTripToDelete(null); // 삭제 확인 모달 닫기
+    setTripToDelete(null);
     setIsSettingsOpen(false);
-    setIsMobileMenuOpen(false); // 메뉴 창도 닫아주어 깔끔하게 돌아감
+    setIsMobileMenuOpen(false);
     showToast("여행이 정상적으로 삭제되었습니다.");
   }
 
@@ -533,7 +564,6 @@ const MainApp = () => {
     try { localStorage.setItem('my_travel_theme', S(themeName)); } catch(e){}
   }
 
-  // --- 롤백(슝/뽕) 기능 ---
   const handleUndo = () => {
       if (historyIndex > 0) {
           isUndoingRef.current = true;
@@ -953,7 +983,6 @@ const MainApp = () => {
     saveToDb({ packing_list: newList });
   }
 
-  // --- 드래그 핸들러 함수 (모바일 화면 패널 조절) ---
   const handleDragMove = useCallback((e) => {
     if (!dragRef.current) return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -981,7 +1010,6 @@ const MainApp = () => {
 
   /* ===================== 3. UseEffect 파트 ===================== */
 
-  // 데이터 로딩 완료 후 일정시간 뒤부터 History(롤백) 추적 시작
   useEffect(() => {
       if (isDbLoaded && activeTripId) {
           const timer = setTimeout(() => setIsReadyToTrack(true), 1500);
@@ -989,7 +1017,6 @@ const MainApp = () => {
       }
   }, [isDbLoaded, activeTripId]);
 
-  // History(롤백) 추적
   useEffect(() => {
       if (!isReadyToTrack) return;
       if (isUndoingRef.current) {
@@ -1003,7 +1030,7 @@ const MainApp = () => {
           if (newHistory.length > 0) {
               const last = newHistory[newHistory.length - 1];
               if (JSON.stringify(last) === JSON.stringify(currentState)) {
-                  return prev; // 이전 상태와 동일하면 추가하지 않음
+                  return prev; 
               }
           }
           return [...newHistory, currentState];
@@ -1011,7 +1038,6 @@ const MainApp = () => {
       setHistoryIndex(prev => prev + 1);
   }, [planTimeline, currentRestaurants, packingList, flights, isReadyToTrack]);
 
-  // 여행 변경 시 History 초기화
   useEffect(() => {
       setIsReadyToTrack(false);
       setHistory([]);
@@ -1028,7 +1054,10 @@ const MainApp = () => {
           if (allStates && typeof allStates === 'object' && allStates[targetId]) {
             const data = allStates[targetId];
             if (data && typeof data === 'object') {
-              if (data.display_city_name) setDisplayCityName(S(data.display_city_name));
+              if (data.display_city_name) {
+                 setDisplayCityName(S(data.display_city_name));
+                 syncCountryRegionFromCityName(S(data.display_city_name), data.plan_timeline);
+              }
               if (data.travel_start_date) setTravelStartDate(S(data.travel_start_date));
               if (data.flights) setFlights(data.flights);
               if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
@@ -1057,7 +1086,7 @@ const MainApp = () => {
         setPlanTimeline([]);
       }
     }
-  }, [appUserId, activeTripId]);
+  }, [appUserId, activeTripId, syncCountryRegionFromCityName]);
 
   useEffect(() => {
     movingPinIdRef.current = movingPinId;
@@ -1221,7 +1250,10 @@ const MainApp = () => {
       try {
         const { data } = await supabaseClient.from('travel_state').select('*').eq('id', targetId).single();
         if (data) {
-          setDisplayCityName(data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음");
+          const cName = data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음";
+          setDisplayCityName(cName);
+          syncCountryRegionFromCityName(cName, data.plan_timeline);
+
           setTravelStartDate(data.travel_start_date ? S(data.travel_start_date) : new Date().toISOString().split('T')[0]);
           if (data.flights) setFlights(data.flights);
           if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
@@ -1242,7 +1274,10 @@ const MainApp = () => {
     const tripChannel = supabaseClient.channel(`trip_${targetId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_state', filter: `id=eq.${targetId}` }, (payload) => {
         if (payload.new) {
-          if (payload.new.display_city_name) setDisplayCityName(S(payload.new.display_city_name));
+          if (payload.new.display_city_name) {
+             setDisplayCityName(S(payload.new.display_city_name));
+             syncCountryRegionFromCityName(S(payload.new.display_city_name), payload.new.plan_timeline);
+          }
           if (payload.new.travel_start_date) setTravelStartDate(S(payload.new.travel_start_date));
           if (payload.new.flights) setFlights(payload.new.flights);
           if (payload.new.packing_list && Array.isArray(payload.new.packing_list)) setPackingList(payload.new.packing_list);
@@ -1277,7 +1312,7 @@ const MainApp = () => {
       supabaseClient.removeChannel(tripChannel);
       supabaseClient.removeChannel(inviteChannel);
     };
-  }, [supabaseClient, appUserId, activeTripId, sharedTripId]);
+  }, [supabaseClient, appUserId, activeTripId, sharedTripId, syncCountryRegionFromCityName]);
 
   useEffect(() => {
     isPinModeRef.current = isPinMode; 
@@ -1389,8 +1424,30 @@ const MainApp = () => {
   const safeMaxDay = (typeof maxDay === 'number' && maxDay > 0 && maxDay < 100) ? maxDay : 4;
   const tripDays = Array.from({length: safeMaxDay}, (_, i) => i + 1);
 
-  const dWeatherInfo = getWeatherForDay(dashboardDay);
-  const dForecast = forecast.find(fc => fc && fc.date === getDateStringForDay(dashboardDay));
+  // 헤더 표시용 날씨 계산 (여행 시작일에 맞춤)
+  let headerForecastDateStr = "";
+  if (travelStartDate) {
+    const todayDate = new Date();
+    const start = new Date(travelStartDate);
+    todayDate.setHours(0, 0, 0, 0);
+    start.setHours(0, 0, 0, 0);
+    const diffTime = todayDate.getTime() - start.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+    if (diffDays < 1) {
+      headerForecastDateStr = getDateStringForDay(1);
+    } else if (diffDays >= 1 && diffDays <= safeMaxDay) {
+      headerForecastDateStr = getDateStringForDay(diffDays);
+    } else {
+      const year = todayDate.getFullYear();
+      const month = String(todayDate.getMonth() + 1).padStart(2, '0');
+      const day = String(todayDate.getDate()).padStart(2, '0');
+      headerForecastDateStr = `${year}-${month}-${day}`;
+    }
+  }
+  const headerForecast = forecast.find(fc => fc && fc.date === headerForecastDateStr);
+  const headerWeatherInfo = headerForecast ? getWeatherInfo(headerForecast.code) : (weather ? getWeatherInfo(weather.code) : null);
+  const headerTemp = headerForecast ? `${headerForecast.max}°` : (weather ? `${weather.temp}°` : '-');
 
   /* ===================== 4. 메인 렌더링 블록 ===================== */
 
@@ -1424,13 +1481,12 @@ const MainApp = () => {
     );
   }
 
-  // 요소 개별 크기 조절 (기존 appScale 대체)
+  // 요소 개별 크기 조절
   const finalElementScale = (typeof elementScale === 'number' && !isNaN(elementScale) && elementScale > 0.3) ? elementScale : 1;
 
   return (
     <div style={{ zoom: finalElementScale, fontFamily: appFont }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`}>
       
-      {/* Toast 메시지 추가 */}
       {toastMsg && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl z-[9999] animate-in fade-in slide-in-from-top-4">
           {toastMsg}
@@ -1519,7 +1575,6 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 여행 삭제 확인 모달 */}
       {tripToDelete && (
         <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm">
            <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95`}>
@@ -1536,7 +1591,7 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 날씨 상세 정보 모달창 */}
+      {/* 날씨 상세 정보 모달창 (여행 날짜 동기화 적용) */}
       {isWeatherModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setIsWeatherModalOpen(false)}>
            <div className={`${cardBg} p-5 rounded-3xl w-full max-w-xs sm:max-w-sm shadow-2xl animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
@@ -1548,13 +1603,31 @@ const MainApp = () => {
                  {forecast.length === 0 ? (
                     <p className={`text-xs ${textMuted} text-center py-5 font-bold`}>날씨 정보를 불러올 수 없습니다.<br/>(일정 탭에서 지역을 선택해주세요)</p>
                  ) : (
-                    forecast.slice(0, maxDay).map((f, i) => {
+                    tripDays.map((d) => {
+                       const targetDateStr = getDateStringForDay(d);
+                       const f = forecast.find(fc => fc && fc.date === targetDateStr);
+                       const todayStr = new Date().toISOString().split('T')[0];
+                       const isToday = targetDateStr === todayStr;
+
+                       if (!f) {
+                           return (
+                              <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
+                                 <div className="flex flex-col">
+                                    <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} ({targetDateStr.slice(5)})</span>
+                                    <span className={`text-xs font-black mt-0.5 ${textMuted}`}>예보 없음</span>
+                                 </div>
+                                 <div className="text-right flex flex-col justify-center">
+                                    <span className={`text-[11px] font-bold ${textMuted}`}>-</span>
+                                 </div>
+                              </div>
+                           );
+                       }
+
                        const info = getWeatherInfo(f.code);
-                       const isToday = i === (dashboardDay - 1);
                        return (
-                          <div key={i} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
+                          <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
                              <div className="flex flex-col">
-                                <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {i + 1} ({f.date.slice(5)})</span>
+                                <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} ({f.date.slice(5)})</span>
                                 <span className={`text-xs font-black mt-0.5 ${textMain}`}>{info[0]} {info[1]}</span>
                              </div>
                              <div className="text-right flex flex-col">
@@ -1571,7 +1644,6 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 대시보드용 준비물 확인 모달 */}
       {isDashboardPackingOpen && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsDashboardPackingOpen(false)}>
           <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
@@ -1603,7 +1675,6 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 일정탭 준비물 체크리스트 팝업 모달 */}
       {isPackingModalOpen && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsPackingModalOpen(false)}>
           <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
@@ -2084,80 +2155,6 @@ const MainApp = () => {
         </div>
       )}
 
-      {isSettingsOpen && (
-        <div className="fixed inset-0 bg-black/50 z-[6000] backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setIsSettingsOpen(false)}>
-          <div className={`${cardBg} w-full max-w-sm p-5 flex flex-col animate-in zoom-in-95 z-[6001]`} onClick={e => e.stopPropagation()}>
-            <div className={`flex items-center justify-between pb-3 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'} mb-4`}>
-              <h2 className="text-sm font-black flex items-center space-x-2"><span className="text-indigo-500 text-lg">⚙️</span> <span>앱 환경 설정</span></h2>
-              <button onClick={() => setIsSettingsOpen(false)} className={`p-1 rounded ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-600'}`}>✕</button>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <label className={`text-xs font-bold ${textMuted} mb-2 block`}>테마 모드</label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <button onClick={() => handleThemeChange('light')} className={`py-2 rounded-lg text-xs font-bold flex justify-center items-center transition-colors ${appTheme === 'light' ? 'bg-indigo-600 text-white shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-500')}`}>라이트</button>
-                  <button onClick={() => handleThemeChange('dark')} className={`py-2 rounded-lg text-xs font-bold flex justify-center items-center transition-colors ${appTheme === 'dark' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-500'}`}>다크</button>
-                  <button onClick={() => handleThemeChange('pastel')} className={`py-2 rounded-lg text-xs font-bold flex justify-center items-center transition-colors ${appTheme === 'pastel' ? 'bg-indigo-600 text-white shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-500')}`}>파스텔</button>
-                  <button onClick={() => handleThemeChange('clean')} className={`py-2 rounded-lg text-xs font-bold flex justify-center items-center transition-colors ${appTheme === 'clean' ? 'bg-indigo-600 text-white shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-500')}`}>모던 클린</button>
-                </div>
-              </div>
-
-              <div>
-                <label className={`text-xs font-bold ${textMuted} mb-2 block`}>글꼴 선택 (Windows 환경 최적화)</label>
-                <select
-                  value={appFont}
-                  onChange={(e) => {
-                    setAppFont(e.target.value);
-                    try { localStorage.setItem('my_travel_font', e.target.value); } catch(err){}
-                  }}
-                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 rounded-lg text-xs font-bold outline-none cursor-pointer`}
-                >
-                  <option value="'Pretendard', -apple-system, sans-serif">Pretendard (기본/Mac 권장)</option>
-                  <option value="'Malgun Gothic', '맑은 고딕', sans-serif">맑은 고딕 (Windows 최적화)</option>
-                  <option value="'Noto Sans KR', sans-serif">Noto Sans (깔끔한 고딕)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className={`text-xs font-bold ${textMuted} mb-2 flex justify-between`}>
-                  <span>화면 요소 크기 (확대/축소)</span>
-                  <span className="text-indigo-500">{Math.round(elementScale * 100)}%</span>
-                </label>
-                <input type="range" min="0.7" max="1.3" step="0.05" value={elementScale} onChange={handleElementScaleChange} className="w-full accent-indigo-600 cursor-pointer" />
-              </div>
-              <div>
-                <label className={`text-xs font-bold ${textMuted} mb-2 flex justify-between`}>
-                  <span>글자 크기 (확대/축소)</span>
-                  <span className="text-indigo-500">{Math.round(fontScale * 100)}%</span>
-                </label>
-                <input type="range" min="0.5" max="2.0" step="0.1" value={fontScale} onChange={handleFontScaleChange} className="w-full accent-indigo-600 cursor-pointer" />
-              </div>
-
-              <div className={`pt-4 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                <label className={`text-xs font-bold ${textMuted} mb-2 block`}>일정 공유 기능</label>
-                <div className={`flex flex-col ${isDarkMode ? 'bg-slate-700' : 'bg-indigo-50'} p-3 rounded-lg border ${isDarkMode ? 'border-slate-600' : 'border-indigo-100'}`}>
-                  <span className={`text-[10px] font-bold ${isDarkMode ? 'text-slate-300' : 'text-indigo-900'} mb-1`}>내 아이디: {S(appUserId)}</span>
-                  <div className="flex space-x-2 mt-1">
-                    <input type="text" placeholder="친구 아이디 입력" value={S(inviteIdInput)} onChange={(e) => setInviteIdInput(e.target.value.replace(/[^a-zA-Z0-9]/g, ''))} className={`flex-1 ${inputBg} px-2 py-1.5 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none`} />
-                    <button onClick={handleSendInvite} className="bg-indigo-600 text-white text-[10px] font-bold px-3 rounded-md shadow-sm hover:bg-indigo-700 transition-colors">초대</button>
-                  </div>
-                </div>
-                {sharedTripId ? (
-                  <button onClick={handleExitShare} className="w-full mt-3 bg-rose-50 text-rose-600 text-xs font-bold py-2.5 rounded-lg border border-rose-200 hover:bg-rose-100 transition-colors">
-                    공유 중단 및 개인 일정으로 복귀
-                  </button>
-                ) : (
-                  <button onClick={handleLogout} className="w-full mt-3 bg-slate-100 text-slate-600 text-xs font-bold py-2.5 rounded-lg border hover:bg-slate-200 transition-colors">
-                    로그아웃 및 다른 계정으로 접속
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main UI */}
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-0">
         <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors`}>
@@ -2200,13 +2197,13 @@ const MainApp = () => {
                 )}
               </div>
 
-              {/* 날씨 버튼 (모달 연결) */}
+              {/* 날씨 버튼 (여행 날짜 동기화 연동) */}
               <button 
                 onClick={() => setIsWeatherModalOpen(true)} 
                 className={`relative z-50 pointer-events-auto cursor-pointer flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border shadow-sm flex-shrink-0 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
               >
-                <span className="text-sm leading-none">{dWeatherInfo ? dWeatherInfo[1] : (weather ? getWeatherInfo(weather.code)[1] : '☁️')}</span>
-                <span className="text-[10px] sm:text-xs font-bold">{dForecast ? `${dForecast.max}°` : (weather ? `${weather.temp}°` : '-')}</span>
+                <span className="text-sm leading-none">{headerWeatherInfo ? headerWeatherInfo[1] : '☁️'}</span>
+                <span className="text-[10px] sm:text-xs font-bold">{headerTemp}</span>
               </button>
             </div>
           </div>
