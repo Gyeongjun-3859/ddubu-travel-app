@@ -20,6 +20,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 15. [FIX] 여행 전환 시 DB 상태 Race Condition 해결 및 상태 덮어쓰기 버그 완벽 수정
   - 16. [FIX] 수동 로그인 시 이전 여행 기록(activeTripId) 미동기화 버그 수정 및 UI 덜컹거림 수정
   - 17. [FIX] 앱 재시작/전환 시 비동기 렌더링으로 인한 데이터 증발(초기화) 완벽 차단 및 문서함용 명시적 저장 버튼 추가
+  - 18. [FIX] 로컬(Guest) 모드 Trips 배열 영구 보존 로직 추가 및 메뉴 UI 닫힘 방지 완벽 통제 적용
   =============================================================================
 */
 
@@ -482,7 +483,7 @@ const MainApp = () => {
     } catch (e) { console.error("Weather error", e); }
   }, []);
 
-  // [FIX] upsert -> update 변경으로 덮어쓰기 버그 해결
+  // [FIX] upsert -> update 변경으로 덮어쓰기 버그 해결 및 완벽한 DB 연동
   const saveToDb = useCallback(async (updates) => {
     const targetId = sharedTripId || activeTripId;
     try {
@@ -562,19 +563,20 @@ const MainApp = () => {
       setTrips(updatedTrips);
       
       if (appUserId !== "Guest") {
-        await supabaseClient.from('travel_state').insert({
+        const insertPayload = {
           id: newId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0],
           current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: []
-        });
-        
-        // [FIX] DB 업데이트는 비동기로 처리 (UI Blocking 및 Race condition 방지)
-        supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: newId }).eq('app_user_id', appUserId).then();
+        };
+        await supabaseClient.from('travel_state').insert(insertPayload);
+        await supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: newId }).eq('app_user_id', appUserId);
       } else {
         try {
           const allStr = localStorage.getItem('my_travel_states') || '{}';
           const all = JSON.parse(allStr);
           all[newId] = { display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0], current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [] };
           localStorage.setItem('my_travel_states', JSON.stringify(all));
+          localStorage.setItem('my_travel_guest_trips', JSON.stringify(updatedTrips));
+          localStorage.setItem('my_travel_guest_active_trip', newId);
         } catch(e) {}
       }
 
@@ -586,7 +588,9 @@ const MainApp = () => {
       const updatedTrips = safeTrips.map(t => t && S(t.id) === S(activeTripId) ? { ...t, name: S(tripModal.name) } : t);
       setTrips(updatedTrips);
       if (appUserId !== "Guest") {
-        supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId).then();
+        await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
+      } else {
+        localStorage.setItem('my_travel_guest_trips', JSON.stringify(updatedTrips));
       }
       showToast("여행 이름이 변경되었습니다.");
     }
@@ -595,10 +599,11 @@ const MainApp = () => {
     setIsSubmittingTrip(false);
   }
 
-  function handleSwitchTrip(tripId) {
+  async function handleSwitchTrip(tripId) {
     if (!supabaseClient || appUserId === "Guest") {
       setActiveTripId(S(tripId));
       setSharedTripId(null);
+      localStorage.setItem('my_travel_guest_active_trip', tripId);
       showToast("여행 일정을 불러왔습니다.");
       return;
     }
@@ -610,11 +615,11 @@ const MainApp = () => {
     setSharedTripId(null);
     showToast("여행 일정을 불러왔습니다.");
 
-    // DB 업데이트 백그라운드 전송
-    supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId).then();
+    // DB 업데이트 대기
+    await supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId);
   }
 
-  function confirmDeleteTrip() {
+  async function confirmDeleteTrip() {
     if (trips.length <= 1) {
         showToast("최소 1개의 여행 일정은 남겨두어야 합니다.");
         setTripToDelete(null);
@@ -625,14 +630,18 @@ const MainApp = () => {
     
     try {
         if (supabaseClient && appUserId !== "Guest") {
-            supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId).then();
-            supabaseClient.from('travel_state').delete().eq('id', tripToDelete).then();
+            await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
+            await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
+        } else {
+            localStorage.setItem('my_travel_guest_trips', JSON.stringify(updatedTrips));
         }
         
         if (activeTripId === tripToDelete) {
             setActiveTripId(updatedTrips[0].id);
             if (supabaseClient && appUserId !== "Guest") {
-                supabaseClient.from('profiles').update({ activeTripId: updatedTrips[0].id }).eq('app_user_id', appUserId).then();
+                await supabaseClient.from('profiles').update({ activeTripId: updatedTrips[0].id }).eq('app_user_id', appUserId);
+            } else {
+                localStorage.setItem('my_travel_guest_active_trip', updatedTrips[0].id);
             }
         }
     } catch(err) {
@@ -745,10 +754,13 @@ const MainApp = () => {
         const initialTrips = [{ id: defaultTripId, name: '🛫 나의 첫 번째 여행' }];
         
         await supabaseClient.from('profiles').insert({ app_user_id: cleanId, password: S(pwInput), trips: initialTrips, activeTripId: defaultTripId });
-        await supabaseClient.from('travel_state').insert({ 
+        
+        const insertPayload = { 
           id: defaultTripId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0], 
           current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [] 
-        });
+        };
+        await supabaseClient.from('travel_state').insert(insertPayload);
+        
         handleLoginSuccess(cleanId, S(pwInput));
       }
     } catch (e) { setIdError("서버 오류가 발생했습니다."); setIsLoggingIn(false); }
@@ -1207,6 +1219,17 @@ const MainApp = () => {
   useEffect(() => {
     if (appUserId === "Guest") {
       try {
+        const savedTrips = localStorage.getItem('my_travel_guest_trips');
+        if (savedTrips) setTrips(JSON.parse(savedTrips));
+        const savedActive = localStorage.getItem('my_travel_guest_active_trip');
+        if (savedActive) setActiveTripId(savedActive);
+      } catch(e) {}
+    }
+  }, [appUserId]);
+
+  useEffect(() => {
+    if (appUserId === "Guest") {
+      try {
         const targetId = S(activeTripId);
         const allStatesStr = localStorage.getItem('my_travel_states');
         let loaded = false;
@@ -1401,7 +1424,6 @@ const MainApp = () => {
     } catch(e){}
   }, []);
 
-  // [FIX] 중앙 State 초기화 및 Fetch 로직: 여행 탭 전환 시 Race Condition을 통제합니다.
   useEffect(() => {
     if (!supabaseClient || !appUserId || appUserId === "Guest") return;
     
@@ -1409,7 +1431,6 @@ const MainApp = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `app_user_id=eq.${appUserId}` }, (payload) => {
         if (payload.new) {
           if (payload.new.trips && Array.isArray(payload.new.trips)) setTrips(payload.new.trips);
-          // [FIX] Race Condition 방지를 위해 실시간 이벤트에서 activeTripId 강제 동기화 제거
         }
       }).subscribe();
 
@@ -2534,9 +2555,6 @@ const MainApp = () => {
           </div>
           
           <div className="flex items-center space-x-1 sm:space-x-2">
-            <button onClick={handleForceSave} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 bg-emerald-500 text-white shadow-sm hover:bg-emerald-600 active:scale-95 flex items-center mr-1`}>
-              <span className="mr-1">💾</span> <span className="hidden sm:inline">저장</span>
-            </button>
             <button onClick={() => changeTab('dashboard')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
               <span className="hidden sm:inline">대쉬보드 </span>🌍
             </button>
@@ -2562,10 +2580,16 @@ const MainApp = () => {
                 </button>
               </h2>
               {errorRates && <span className="text-rose-500 text-[10px] font-bold ml-2 animate-in fade-in">{errorRates}</span>}
-              <button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ml-auto ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
-                <span className="text-xs">🌐</span>
-                <span>AI 번역기</span>
-              </button>
+              <div className="flex items-center space-x-1.5 ml-auto">
+                <button onClick={handleForceSave} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-emerald-900/50 text-emerald-400 border border-emerald-700 hover:bg-emerald-900/70' : 'bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100'}`}>
+                  <span className="text-xs">💾</span>
+                  <span>일정 저장</span>
+                </button>
+                <button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
+                  <span className="text-xs">🌐</span>
+                  <span>AI 번역기</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-5 w-full gap-1 sm:gap-3 flex-shrink-0 pb-1">
@@ -2734,12 +2758,15 @@ const MainApp = () => {
               <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight transition-colors duration-300 ${textMain}`}>
                 📝 꼼꼼하게 채우는 여행 일기
               </h2>
-              <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap sm:flex-nowrap gap-y-1">
+              <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap sm:flex-nowrap gap-y-1 ml-auto">
+                <button onClick={handleForceSave} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-emerald-900/40 text-emerald-300 border-emerald-500/50 hover:bg-emerald-900/60' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}>
+                   💾 저장
+                </button>
                 <button onClick={() => {
                   setTransType('flight'); setTransDir('outbound'); setModalTransData({ flight: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } } });
                   setIsTransportModalOpen(true);
                 }} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300 border-indigo-500/50 hover:bg-indigo-900/60' : 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100'}`}>
-                   ✈️ 교통/항공권 등록
+                   ✈️ 교통/항공권
                 </button>
                 <div className={`flex items-center px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg transition-colors duration-300 ${cardBg}`}>
                   <span className={`text-[8px] sm:text-[9px] font-bold mr-1 sm:mr-1.5 flex-shrink-0 transition-colors duration-300 ${textMuted}`}>국가 🌍</span>
@@ -2898,9 +2925,6 @@ const MainApp = () => {
                   </div>
                   
                   <div className={`mt-3 pt-3 border-t transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                     <button onClick={handleForceSave} className={`w-full mb-2 flex items-center justify-center p-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold transition-all duration-300 active:scale-95 shadow-md`}>
-                        💾 일정 저장하기
-                     </button>
                      <button onClick={() => setIsPackingModalOpen(true)} className={`w-full flex items-center justify-center p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[11px] font-bold transition-all duration-300 active:scale-95 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700`}>
                         🎒 준비물 체크리스트 열기
                      </button>
