@@ -16,8 +16,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 11. 클립보드 이미지 Paste 전역 지원 및 여행 간 전환/생성 시 데이터 꼬임 방지 로직 적용
   - 12. 메뉴 창 유지 및 더블클릭 생성 버그 차단, 전역 모션 스무딩(최적화)
   - 13. 교통편 상태 완벽 분리, 항공권 병렬 배치 및 좌석 번호 표시, 잘림 오류 완벽 복구
-  - 14. [FIX] 새 여행 모달 Z-index 최상위 확보 및 오픈 시 메뉴 자동 닫기 처리
+  - 14. [FIX] 새 여행 모달 Z-index 최상위 확보 및 오픈 시 메뉴 닫힘 방지 처리
   - 15. [FIX] 여행 전환 시 DB 상태 Race Condition 해결 및 상태 덮어쓰기 버그 완벽 수정
+  - 16. [FIX] 수동 로그인 시 이전 여행 기록(activeTripId) 미동기화 버그 수정 및 UI 덜컹거림 수정
   =============================================================================
 */
 
@@ -523,13 +524,11 @@ const MainApp = () => {
 
   function openAddTripModal() {
     if (!supabaseClient || appUserId === "Guest") { showToast("로그인이 필요한 기능입니다."); return; }
-    setIsMobileMenuOpen(false); // [FIX] 메뉴 닫기 추가
     setTripModal({ isOpen: true, mode: 'add', name: '' });
   }
 
   function openRenameTripModal() {
     if (!supabaseClient || appUserId === "Guest") return;
-    setIsMobileMenuOpen(false); // [FIX] 메뉴 닫기 추가
     const safeTrips = Array.isArray(trips) ? trips : [];
     const currentTrip = safeTrips.find(t => t && S(t.id) === S(activeTripId));
     setTripModal({ isOpen: true, mode: 'rename', name: S(currentTrip?.name) });
@@ -556,6 +555,13 @@ const MainApp = () => {
         
         // [FIX] DB 업데이트는 비동기로 처리 (UI Blocking 및 Race condition 방지)
         supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: newId }).eq('app_user_id', appUserId).then();
+      } else {
+        try {
+          const allStr = localStorage.getItem('my_travel_states') || '{}';
+          const all = JSON.parse(allStr);
+          all[newId] = { display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0], current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [] };
+          localStorage.setItem('my_travel_states', JSON.stringify(all));
+        } catch(e) {}
       }
 
       // 상태 변경 트리거 (중앙 useEffect에서 깨끗하게 fetch 되도록 유도)
@@ -576,8 +582,6 @@ const MainApp = () => {
   }
 
   function handleSwitchTrip(tripId) {
-    setIsMobileMenuOpen(false); // [FIX] 모바일 메뉴 닫기
-
     if (!supabaseClient || appUserId === "Guest") {
       setActiveTripId(S(tripId));
       setSharedTripId(null);
@@ -754,6 +758,8 @@ const MainApp = () => {
       }
 
       if (data && data.password === currentPw) {
+        if (data.trips && Array.isArray(data.trips)) setTrips(data.trips);
+        if (data.activeTripId) setActiveTripId(S(data.activeTripId));
         handleLoginSuccess(currentId, currentPw);
       } else {
         setIdError("아이디 또는 비밀번호가 일치하지 않습니다.");
@@ -924,12 +930,16 @@ const MainApp = () => {
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     let updatedTimeline = [...safePlanTimeline, planData];
     updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
-    setPlanTimeline(updatedTimeline); saveToDb({ plan_timeline: updatedTimeline }); resetPlanForm();
+    setPlanTimeline(updatedTimeline); 
+    
+    let updates = { plan_timeline: updatedTimeline };
     
     if (finalRegion && finalRegion !== displayCityName) {
       setDisplayCityName(S(finalRegion));
-      saveToDb({ display_city_name: S(finalRegion) });
+      updates.display_city_name = S(finalRegion);
     }
+    saveToDb(updates); 
+    resetPlanForm();
     showToast("스케줄에 등록 성공! ✨");
   }
   
@@ -1183,6 +1193,7 @@ const MainApp = () => {
   
   useEffect(() => {
     if (appUserId === "Guest") {
+      let ignore = false;
       setDisplayCityName("선택된 지역 없음");
       setCurrentRestaurants([]);
       setPlanTimeline([]);
@@ -1190,47 +1201,52 @@ const MainApp = () => {
       setPackingList([]);
       setTravelStartDate(new Date().toISOString().split('T')[0]);
 
-      try {
-        const targetId = S(activeTripId);
-        const allStatesStr = localStorage.getItem('my_travel_states');
-        if (allStatesStr) {
-          const allStates = JSON.parse(allStatesStr);
-          if (allStates && typeof allStates === 'object' && allStates[targetId]) {
-            const data = allStates[targetId];
-            if (data && typeof data === 'object') {
-              if (data.display_city_name) {
-                 setDisplayCityName(S(data.display_city_name));
-                 syncCountryRegionFromCityName(S(data.display_city_name), data.plan_timeline);
-              }
-              if (data.travel_start_date) setTravelStartDate(S(data.travel_start_date));
-              if (data.flights) setFlights(data.flights);
-              if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
-              if (data.shared_users && Array.isArray(data.shared_users)) setSharedUsers(data.shared_users);
-              else setSharedUsers([]);
-              
-              if (Array.isArray(data.current_restaurants)) {
-                const cleanRests = data.current_restaurants.map(r => {
-                  if (!r || typeof r !== 'object') return null;
-                  return { id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) };
-                }).filter(Boolean);
-                setCurrentRestaurants(cleanRests);
-              }
-              if (Array.isArray(data.plan_timeline)) {
-                const cleanPlans = data.plan_timeline.map(p => {
-                  if (!p || typeof p !== 'object') return null;
-                  return { id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) };
-                }).filter(Boolean);
-                setPlanTimeline(cleanPlans);
+      setTimeout(() => {
+        if (ignore) return;
+        try {
+          const targetId = S(activeTripId);
+          const allStatesStr = localStorage.getItem('my_travel_states');
+          if (allStatesStr) {
+            const allStates = JSON.parse(allStatesStr);
+            if (allStates && typeof allStates === 'object' && allStates[targetId]) {
+              const data = allStates[targetId];
+              if (data && typeof data === 'object') {
+                if (data.display_city_name) {
+                   setDisplayCityName(S(data.display_city_name));
+                   syncCountryRegionFromCityName(S(data.display_city_name), data.plan_timeline);
+                }
+                if (data.travel_start_date) setTravelStartDate(S(data.travel_start_date));
+                if (data.flights) setFlights(data.flights);
+                if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
+                if (data.shared_users && Array.isArray(data.shared_users)) setSharedUsers(data.shared_users);
+                else setSharedUsers([]);
+                
+                if (Array.isArray(data.current_restaurants)) {
+                  const cleanRests = data.current_restaurants.map(r => {
+                    if (!r || typeof r !== 'object') return null;
+                    return { id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) };
+                  }).filter(Boolean);
+                  setCurrentRestaurants(cleanRests);
+                }
+                if (Array.isArray(data.plan_timeline)) {
+                  const cleanPlans = data.plan_timeline.map(p => {
+                    if (!p || typeof p !== 'object') return null;
+                    return { id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) };
+                  }).filter(Boolean);
+                  setPlanTimeline(cleanPlans);
+                }
               }
             }
           }
+        } catch (e) {
+          console.error("Local data load error", e);
+          try { localStorage.removeItem('my_travel_states'); } catch(err){}
+          setCurrentRestaurants([]);
+          setPlanTimeline([]);
         }
-      } catch (e) {
-        console.error("Local data load error", e);
-        try { localStorage.removeItem('my_travel_states'); } catch(err){}
-        setCurrentRestaurants([]);
-        setPlanTimeline([]);
-      }
+      }, 0);
+      
+      return () => { ignore = true; };
     }
   }, [appUserId, activeTripId, syncCountryRegionFromCityName]);
 
@@ -1388,7 +1404,7 @@ const MainApp = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `app_user_id=eq.${appUserId}` }, (payload) => {
         if (payload.new) {
           if (payload.new.trips && Array.isArray(payload.new.trips)) setTrips(payload.new.trips);
-          if (payload.new.activeTripId && !sharedTripId) setActiveTripId(S(payload.new.activeTripId));
+          // [FIX] Race Condition 방지를 위해 실시간 이벤트에서 activeTripId 강제 동기화 제거
         }
       }).subscribe();
 
@@ -1401,9 +1417,11 @@ const MainApp = () => {
     setPackingList([]);
     setTravelStartDate(new Date().toISOString().split('T')[0]);
 
+    let ignore = false;
     const fetchTrip = async () => {
       try {
         const { data } = await supabaseClient.from('travel_state').select('*').eq('id', targetId).single();
+        if (ignore) return;
         if (data) {
           const cName = data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음";
           setDisplayCityName(cName);
@@ -1466,6 +1484,7 @@ const MainApp = () => {
       }).subscribe();
 
     return () => {
+      ignore = true;
       supabaseClient.removeChannel(profileChannel);
       supabaseClient.removeChannel(tripChannel);
       supabaseClient.removeChannel(inviteChannel);
@@ -2583,7 +2602,7 @@ const MainApp = () => {
                       {tripDays.map(d => {
                          const wInfo = getWeatherForDay(d);
                          return (
-                           <button key={d} onClick={() => { setDashboardDay(d); saveToDb({dashboardDay: d}); }} className={`h-8 sm:h-10 flex flex-col items-center justify-center rounded flex-shrink-0 transition-all duration-300 ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
+                           <button key={d} onClick={() => { setDashboardDay(d); }} className={`h-8 sm:h-10 flex flex-col items-center justify-center rounded flex-shrink-0 transition-all duration-300 border ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border-slate-200/50' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
                              <span className="text-[7px] sm:text-[8px] font-bold">D{d}</span>
                              {wInfo ? <span className="text-[7px] sm:text-[8px] leading-none mt-0.5">{wInfo[1]}</span> : <div className="h-1 sm:h-2"></div>}
                            </button>
@@ -2646,7 +2665,7 @@ const MainApp = () => {
                   <div className="flex items-center space-x-1 sm:space-x-2">
                     <div className={`grid grid-cols-4 gap-0.5 p-0.5 rounded-md min-w-[70px] sm:min-w-[100px] w-full max-w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
                       {tripDays.map(d => (
-                         <button key={d} onClick={() => { setDashboardDay(d); saveToDb({dashboardDay: d}); }} className={`px-1 py-0.5 text-[7px] sm:text-[8px] font-bold rounded flex-shrink-0 transition-all duration-300 ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
+                         <button key={d} onClick={() => { setDashboardDay(d); }} className={`px-1 py-0.5 text-[7px] sm:text-[8px] font-bold rounded flex-shrink-0 transition-all duration-300 border ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border-slate-200/50' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
                            D{d}
                          </button>
                       ))}
