@@ -13,6 +13,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 8. 국가/지역 선택 데이터 로컬/DB 영구 저장 및 재접속 시 자동 복구 로직 추가
   - 9. 교통/항공권 일괄 등록 및 모바일 Hover 대체 기능 적용
   - 10. 중복 렌더링 블록 제거 및 JSX 태그 매칭 오류 완벽 수정 (HOTFIX)
+  - 11. 클립보드 이미지 Paste 전역 지원 및 여행 간 전환/생성 시 데이터 꼬임 방지 로직 적용
+  - 12. 메뉴 창 유지 및 더블클릭 생성 버그 차단, 전역 모션 스무딩(최적화)
+  - 13. 교통편 상태 완벽 분리, 항공권 병렬 배치 및 좌석 번호 표시, 잘림 오류 완벽 복구
   =============================================================================
 */
 
@@ -111,9 +114,9 @@ const SelectOrInput = ({ value, manualValue, onChangeSelect, onChangeManual, onC
           value={S(manualValue)} 
           onChange={e => onChangeManual(e.target.value)} 
           placeholder={placeholder || "직접입력"} 
-          className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} ${placeholderClass} pr-5`}
+          className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} ${placeholderClass} pr-5 transition-all duration-300`}
         />
-        <button onClick={onCancelManual} className={`absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-center h-full px-2 text-xs ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>✕</button>
+        <button onClick={onCancelManual} className={`absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-center h-full px-2 text-xs ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-600'} transition-colors duration-300`}>✕</button>
       </div>
     );
   }
@@ -122,7 +125,7 @@ const SelectOrInput = ({ value, manualValue, onChangeSelect, onChangeManual, onC
       value={S(value)} 
       onChange={handleSelect} 
       disabled={options === null}
-      className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} cursor-pointer appearance-none pr-3`}
+      className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} cursor-pointer appearance-none pr-3 transition-all duration-300`}
     >
       <option value="">선택</option>
       {options && Array.isArray(options) && options.map(o => <option key={S(o)} value={S(o)}>{S(o)}</option>)}
@@ -138,6 +141,7 @@ const MainApp = () => {
   
   const [showIdSetup, setShowIdSetup] = useState(true);
   const [isLoginMode, setIsLoginMode] = useState(true);
+  const [isLoggingIn, setIsLoggingIn] = useState(false); 
   const [idInput, setIdInput] = useState("");
   const [pwInput, setPwInput] = useState("");
   const [idError, setIdError] = useState("");
@@ -151,6 +155,7 @@ const MainApp = () => {
   const [pendingInvite, setPendingInvite] = useState(null);
   const [inviteIdInput, setInviteIdInput] = useState("");
   const [sharedUsers, setSharedUsers] = useState([]);
+  const [isSubmittingTrip, setIsSubmittingTrip] = useState(false); 
 
   const [weather, setWeather] = useState(null);
   const [forecast, setForecast] = useState([]);
@@ -256,10 +261,11 @@ const MainApp = () => {
   const [transType, setTransType] = useState('flight'); 
   const [transDir, setTransDir] = useState('outbound'); 
   
-  const initialTransState = { airline: '', flightNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 };
+  const initialTransState = { airline: '', flightNum: '', seatNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 };
   const [modalTransData, setModalTransData] = useState({
-    outbound: { ...initialTransState },
-    inbound: { ...initialTransState }
+    flight: { outbound: { ...initialTransState }, inbound: { ...initialTransState } },
+    train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } },
+    bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }
   });
 
   const [panelRatio, setPanelRatio] = useState(50); // 모바일 병렬 배치 비율
@@ -272,11 +278,51 @@ const MainApp = () => {
   const DAY_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#a855f7', '#ec4899', '#06b6d4', '#f97316', '#8b5cf6'];
   const getDayColor = useCallback((day) => DAY_COLORS[(parseInt(day) - 1) % DAY_COLORS.length], [DAY_COLORS]);
 
+  // Paste 이벤트를 위한 최신 상태 참조용
+  const activeContextRef = useRef({ editingPlan, isAddPlaceModalOpen, activeTab });
+  useEffect(() => {
+    activeContextRef.current = { editingPlan, isAddPlaceModalOpen, activeTab };
+  }, [editingPlan, isAddPlaceModalOpen, activeTab]);
+
   /* ===================== 2. 함수 호이스팅 및 로직 ===================== */
 
   useEffect(() => {
     currentRestaurantsRef.current = currentRestaurants;
   }, [currentRestaurants]);
+
+  // 클립보드 붙여넣기 기능 전역 리스너
+  useEffect(() => {
+    const handlePaste = (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      
+      let imageFile = null;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          imageFile = items[i].getAsFile();
+          break;
+        }
+      }
+
+      if (imageFile) {
+        compressImage(imageFile, (compressedBase64) => {
+          const ctx = activeContextRef.current;
+          if (ctx.editingPlan) {
+            setEditingPlan(prev => ({...prev, photo: compressedBase64}));
+            showToast("📋 복사된 이미지가 붙여넣기 되었습니다!");
+          } else if (ctx.isAddPlaceModalOpen) {
+            setNewManualPhoto(compressedBase64);
+            showToast("📋 핀 사진에 이미지가 붙여넣어 졌습니다!");
+          } else if (ctx.activeTab === 'plan') {
+            setNewPhoto(compressedBase64);
+            showToast("📋 스케줄 사진에 이미지가 붙여넣어 졌습니다!");
+          }
+        });
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
 
   const syncCountryRegionFromCityName = useCallback((cityName, timeline = []) => {
     if (!cityName || cityName === "선택된 지역 없음") return;
@@ -475,7 +521,6 @@ const MainApp = () => {
   function openAddTripModal() {
     if (!supabaseClient || appUserId === "Guest") { showToast("로그인이 필요한 기능입니다."); return; }
     setTripModal({ isOpen: true, mode: 'add', name: '' });
-    setIsMobileMenuOpen(false);
   }
 
   function openRenameTripModal() {
@@ -483,13 +528,14 @@ const MainApp = () => {
     const safeTrips = Array.isArray(trips) ? trips : [];
     const currentTrip = safeTrips.find(t => t && S(t.id) === S(activeTripId));
     setTripModal({ isOpen: true, mode: 'rename', name: S(currentTrip?.name) });
-    setIsMobileMenuOpen(false);
   }
 
   async function submitTripModal() {
     if (!supabaseClient) return;
     if (!tripModal.name.trim()) { showToast("이름을 입력해주세요."); return; }
+    if (isSubmittingTrip) return; 
     
+    setIsSubmittingTrip(true);
     const safeTrips = Array.isArray(trips) ? trips.filter(Boolean) : [];
 
     if (tripModal.mode === 'add') {
@@ -504,6 +550,13 @@ const MainApp = () => {
 
       await supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: newId }).eq('app_user_id', appUserId);
 
+      setDisplayCityName("선택된 지역 없음");
+      setCurrentRestaurants([]);
+      setPlanTimeline([]);
+      setFlights({ outbound: null, inbound: null });
+      setPackingList([]);
+      setTravelStartDate(new Date().toISOString().split('T')[0]);
+      
       setActiveTripId(newId);
       setSharedTripId(null);
       showToast(`'${tripModal.name}' 일정을 시작합니다.`);
@@ -513,15 +566,23 @@ const MainApp = () => {
       await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
       showToast("여행 이름이 변경되었습니다.");
     }
+    
     setTripModal({ isOpen: false, mode: 'add', name: '' });
+    setIsSubmittingTrip(false);
   }
 
   async function handleSwitchTrip(tripId) {
     if (!supabaseClient || appUserId === "Guest") return;
     await supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId);
+    
+    setDisplayCityName("선택된 지역 없음");
+    setCurrentRestaurants([]);
+    setPlanTimeline([]);
+    setFlights({ outbound: null, inbound: null });
+    setPackingList([]);
+    
     setActiveTripId(S(tripId));
     setSharedTripId(null);
-    setIsMobileMenuOpen(false);
     showToast("여행 일정을 불러왔습니다.");
   }
 
@@ -541,6 +602,12 @@ const MainApp = () => {
         }
         
         if (activeTripId === tripToDelete) {
+            setDisplayCityName("선택된 지역 없음");
+            setCurrentRestaurants([]);
+            setPlanTimeline([]);
+            setFlights({ outbound: null, inbound: null });
+            setPackingList([]);
+            
             setActiveTripId(updatedTrips[0].id);
             if (supabaseClient && appUserId !== "Guest") {
                 await supabaseClient.from('profiles').update({ activeTripId: updatedTrips[0].id }).eq('app_user_id', appUserId);
@@ -551,8 +618,6 @@ const MainApp = () => {
     }
     
     setTripToDelete(null);
-    setIsSettingsOpen(false);
-    setIsMobileMenuOpen(false);
     showToast("여행이 정상적으로 삭제되었습니다.");
   }
 
@@ -591,7 +656,6 @@ const MainApp = () => {
               flights: prevState.flights
           });
           showToast("⏪ 슝! 이전 상태로 되돌렸습니다.");
-          setIsMobileMenuOpen(false);
       } else {
           showToast("더 이상 되돌릴 수 없습니다.");
       }
@@ -615,7 +679,6 @@ const MainApp = () => {
               flights: nextState.flights
           });
           showToast("⏩ 뽕! 다시 실행했습니다.");
-          setIsMobileMenuOpen(false);
       } else {
           showToast("더 이상 다시 실행할 수 없습니다.");
       }
@@ -625,6 +688,7 @@ const MainApp = () => {
     setAppUserId(id);
     setShowIdSetup(false);
     setIdError("");
+    setIsLoggingIn(false);
     
     try {
       const authPrefs = { id: id, pw: pw, saveIdPw: saveCredentials, autoLogin: autoLogin };
@@ -637,19 +701,23 @@ const MainApp = () => {
   async function handleSignUp() {
     if (idInput.trim().length < 3) { setIdError("아이디는 3자 이상 입력하세요."); return; }
     if (pwInput.trim().length < 4) { setIdError("비밀번호는 4자 이상 입력하세요."); return; }
+    
+    setIsLoggingIn(true);
     const cleanId = S(idInput).trim().toLowerCase();
     
-    if (!supabaseClient) { setIdError("서버에 연결할 수 없습니다. 키를 확인해주세요."); return; }
+    if (!supabaseClient) { setIdError("서버에 연결할 수 없습니다. 키를 확인해주세요."); setIsLoggingIn(false); return; }
 
     try {
       const { data, error } = await supabaseClient.from('profiles').select('app_user_id').eq('app_user_id', cleanId).single();
       if (error && error.code === '42P01') {
         setIdError("테이블이 없습니다. Supabase SQL Editor에서 생성 쿼리를 실행해주세요!");
+        setIsLoggingIn(false);
         return;
       }
       
       if (data) { 
         setIdError("이미 사용 중인 아이디입니다."); 
+        setIsLoggingIn(false);
       } else {
         const defaultTripId = `trip_${cleanId}_${Date.now()}`;
         const initialTrips = [{ id: defaultTripId, name: '🛫 나의 첫 번째 여행' }];
@@ -661,20 +729,22 @@ const MainApp = () => {
         });
         handleLoginSuccess(cleanId, S(pwInput));
       }
-    } catch (e) { setIdError("서버 오류가 발생했습니다."); }
+    } catch (e) { setIdError("서버 오류가 발생했습니다."); setIsLoggingIn(false); }
   }
 
   async function handleLogin(overrideId = null, overridePw = null) {
+    setIsLoggingIn(true);
     const currentId = S(overrideId || idInput).trim().toLowerCase();
     const currentPw = S(overridePw || pwInput);
 
-    if (!currentId || !currentPw) { setIdError("아이디와 비밀번호를 입력해주세요."); return; }
-    if (!supabaseClient) { setIdError("서버에 연결할 수 없습니다. 키를 확인해주세요."); return; }
+    if (!currentId || !currentPw) { setIdError("아이디와 비밀번호를 입력해주세요."); setIsLoggingIn(false); return; }
+    if (!supabaseClient) { setIdError("서버에 연결할 수 없습니다. 키를 확인해주세요."); setIsLoggingIn(false); return; }
 
     try {
       const { data, error } = await supabaseClient.from('profiles').select('*').eq('app_user_id', currentId).single();
       if (error && error.code === '42P01') {
         setIdError("테이블이 없습니다. Supabase SQL Editor에서 생성 쿼리를 실행해주세요!");
+        setIsLoggingIn(false);
         return;
       }
 
@@ -682,8 +752,9 @@ const MainApp = () => {
         handleLoginSuccess(currentId, currentPw);
       } else {
         setIdError("아이디 또는 비밀번호가 일치하지 않습니다.");
+        setIsLoggingIn(false);
       }
-    } catch (e) { setIdError("서버 오류가 발생했습니다."); }
+    } catch (e) { setIdError("서버 오류가 발생했습니다."); setIsLoggingIn(false); }
   }
 
   function handleSkipIdSetup() { 
@@ -947,56 +1018,72 @@ const MainApp = () => {
   function removeDay() { if (maxDay > 1) setMaxDay(d => d - 1); }
 
   function handleSaveTransport() {
-    const outData = modalTransData.outbound;
-    const inData = modalTransData.inbound;
-    const hasOutbound = outData.dep && outData.arr;
-    const hasInbound = inData.dep && inData.arr;
+    let hasAnyData = false;
+    let updatedTimeline = [...(Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [])];
+    let newFlights = { ...flights };
 
-    if (!hasOutbound && !hasInbound) { showToast("출발지와 도착지를 한 방향 이상 입력해주세요."); return; }
-    
-    if (transType === 'flight') {
-       const newFlights = { ...flights };
-       if (hasOutbound) newFlights.outbound = { ...outData };
-       if (hasInbound) newFlights.inbound = { ...inData };
-       
-       setFlights(newFlights);
-       saveToDb({ flights: newFlights });
-       showToast("항공권이 성공적으로 저장되었습니다! ✈️");
-    } else {
-       const emoji = transType === 'train' ? '🚆' : '🚌';
-       const label = transType === 'train' ? '기차' : '버스';
-       const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-       let updatedTimeline = [...safeTimeline];
+    const types = ['flight', 'train', 'bus'];
+    const dirs = ['outbound', 'inbound'];
 
-       const addTransportToTimeline = (dirData, dirLabel) => {
-         const planData = { 
-           id: Date.now().toString() + Math.random().toString(), day: parseInt(dirData.day), time: S(dirData.depTime), 
-           place: `${emoji} ${dirData.dep} -> ${dirData.arr}`, localName: S(dirData.airline), 
-           features: `${label} 번호: ${dirData.flightNum} (도착예정: ${dirData.arrTime}) [${dirLabel}]`, photo: "", 
-           country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false,
-           isTransport: true
-         };
-         updatedTimeline.push(planData);
-       };
+    types.forEach(type => {
+      dirs.forEach(dir => {
+        const data = modalTransData[type][dir];
+        if (data.dep && data.arr) {
+          hasAnyData = true;
+          if (type === 'flight') {
+             newFlights[dir] = { ...data };
+          } else {
+             const emoji = type === 'train' ? '🚆' : '🚌';
+             const label = type === 'train' ? '기차' : '버스';
+             const dirLabel = dir === 'outbound' ? '가는 편' : '오는 편';
+             const planData = { 
+               id: Date.now().toString() + Math.random().toString(), 
+               day: parseInt(data.day), 
+               time: S(data.depTime), 
+               place: `${emoji} ${data.dep} -> ${data.arr}`, 
+               localName: S(data.airline), 
+               features: `${label} 번호: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} (도착예정: ${data.arrTime}) [${dirLabel}]`, 
+               photo: "", 
+               country: S(globalPlanCountry), 
+               region: S(globalPlanRegion), 
+               isAccommodation: false,
+               isTransport: true
+             };
+             updatedTimeline.push(planData);
+          }
+        }
+      });
+    });
 
-       if (hasOutbound) addTransportToTimeline(outData, "가는 편");
-       if (hasInbound) addTransportToTimeline(inData, "오는 편");
-
-       updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
-       setPlanTimeline(updatedTimeline); saveToDb({ plan_timeline: updatedTimeline });
-       showToast(`${label} 일정이 추가되었습니다! ${emoji}`);
+    if (!hasAnyData) {
+       showToast("출발지와 도착지를 한 방향 이상 입력해주세요.");
+       return;
     }
+
+    setFlights(newFlights);
+    updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
+    setPlanTimeline(updatedTimeline);
+    saveToDb({ flights: newFlights, plan_timeline: updatedTimeline });
+
+    showToast("교통/항공권이 성공적으로 일괄 등록되었습니다! ✨");
     setIsTransportModalOpen(false);
-    setModalTransData({ outbound: { ...initialTransState }, inbound: { ...initialTransState } });
+    setModalTransData({
+      flight: { outbound: { ...initialTransState }, inbound: { ...initialTransState } },
+      train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } },
+      bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }
+    });
   }
   
   function handleEditFlight(dir) {
     setTransType('flight');
     setTransDir(dir);
-    setModalTransData({
-      outbound: flights.outbound || { ...initialTransState },
-      inbound: flights.inbound || { ...initialTransState }
-    });
+    setModalTransData(prev => ({
+      ...prev,
+      flight: {
+        outbound: flights.outbound || { ...initialTransState },
+        inbound: flights.inbound || { ...initialTransState }
+      }
+    }));
     setIsTransportModalOpen(true);
   }
 
@@ -1091,6 +1178,13 @@ const MainApp = () => {
   
   useEffect(() => {
     if (appUserId === "Guest") {
+      setDisplayCityName("선택된 지역 없음");
+      setCurrentRestaurants([]);
+      setPlanTimeline([]);
+      setFlights({ outbound: null, inbound: null });
+      setPackingList([]);
+      setTravelStartDate(new Date().toISOString().split('T')[0]);
+
       try {
         const targetId = S(activeTripId);
         const allStatesStr = localStorage.getItem('my_travel_states');
@@ -1293,6 +1387,14 @@ const MainApp = () => {
       }).subscribe();
 
     const targetId = sharedTripId || activeTripId;
+    
+    setDisplayCityName("선택된 지역 없음");
+    setCurrentRestaurants([]);
+    setPlanTimeline([]);
+    setFlights({ outbound: null, inbound: null });
+    setPackingList([]);
+    setTravelStartDate(new Date().toISOString().split('T')[0]);
+
     const fetchTrip = async () => {
       try {
         const { data } = await supabaseClient.from('travel_state').select('*').eq('id', targetId).single();
@@ -1500,12 +1602,11 @@ const MainApp = () => {
   const headerWeatherInfo = headerForecast ? getWeatherInfo(headerForecast.code) : (weather ? getWeatherInfo(weather.code) : null);
   const headerTemp = headerForecast ? `${headerForecast.max}°` : (weather ? `${weather.temp}°` : '-');
 
-  const renderFlightCards = (isDesktop) => {
+  const renderFlightCards = () => {
     if (!flights.outbound && !flights.inbound) return null;
     
-    const wrapperClass = isDesktop 
-      ? `hidden md:flex flex-col gap-2 mb-3 w-full shrink-0` 
-      : `flex md:hidden flex-col sm:flex-row gap-1 sm:gap-2 mb-1 p-1.5 sm:p-2 rounded-xl border ${isDarkMode ? 'bg-indigo-900/20 border-indigo-500/30' : 'bg-indigo-50 border-indigo-100'} shrink-0`; 
+    // PC/모바일 구분 없이 항시 좌우 반반(50%) 병렬 배치 유지
+    const wrapperClass = `flex flex-row gap-1.5 sm:gap-2 mb-2 w-full shrink-0`; 
 
     const getCardUX = (dirId) => {
       const isActive = activeMobileCard === `flight_${dirId}`;
@@ -1525,12 +1626,17 @@ const MainApp = () => {
              e.stopPropagation();
              if (ux.isActive) { handleEditFlight('outbound'); setActiveMobileCard(null); }
              else setActiveMobileCard('flight_outbound');
-          }} className={`flex-1 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer md:hover:border-indigo-400 transition-all group ${ux.finalBorder}`}>
+          }} className={`flex-1 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer md:hover:border-indigo-400 transition-all duration-300 group ${ux.finalBorder}`}>
             <div className="flex justify-between items-center w-full absolute top-1 left-0 right-0 px-1.5">
                <span className="text-[6px] sm:text-[8px] font-bold text-indigo-500 bg-indigo-100 px-1 rounded">가는 편 🛫</span>
-               <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity ${ux.hoverLogic}`}>
-                 <button onClick={(e) => { e.stopPropagation(); handleEditFlight('outbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
-                 <button onClick={(e) => { e.stopPropagation(); handleDeleteFlight('outbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+               <div className="flex items-center space-x-1 relative">
+                 <span className={`text-[6px] sm:text-[7px] font-bold text-slate-400 bg-slate-100/80 dark:bg-slate-700/80 px-1.5 py-0.5 rounded transition-opacity duration-300 ${ux.isActive ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'}`}>
+                    {flights.outbound.flightNum || '편명미상'} {flights.outbound.seatNum ? `| ${flights.outbound.seatNum}` : ''}
+                 </span>
+                 <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity duration-300 absolute right-0 top-0 ${ux.hoverLogic}`}>
+                   <button onClick={(e) => { e.stopPropagation(); handleEditFlight('outbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                   <button onClick={(e) => { e.stopPropagation(); handleDeleteFlight('outbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+                 </div>
                </div>
             </div>
             <div className="flex w-full items-center justify-between mt-3 sm:mt-4 px-1">
@@ -1550,12 +1656,17 @@ const MainApp = () => {
              e.stopPropagation();
              if (ux.isActive) { handleEditFlight('inbound'); setActiveMobileCard(null); }
              else setActiveMobileCard('flight_inbound');
-          }} className={`flex-1 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer md:hover:border-rose-400 transition-all group ${ux.finalBorder}`}>
+          }} className={`flex-1 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer md:hover:border-rose-400 transition-all duration-300 group ${ux.finalBorder}`}>
             <div className="flex justify-between items-center w-full absolute top-1 left-0 right-0 px-1.5">
                <span className="text-[6px] sm:text-[8px] font-bold text-rose-500 bg-rose-100 px-1 rounded">오는 편 🛬</span>
-               <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity ${ux.hoverLogic}`}>
-                 <button onClick={(e) => { e.stopPropagation(); handleEditFlight('inbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
-                 <button onClick={(e) => { e.stopPropagation(); handleDeleteFlight('inbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+               <div className="flex items-center space-x-1 relative">
+                 <span className={`text-[6px] sm:text-[7px] font-bold text-slate-400 bg-slate-100/80 dark:bg-slate-700/80 px-1.5 py-0.5 rounded transition-opacity duration-300 ${ux.isActive ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'}`}>
+                    {flights.inbound.flightNum || '편명미상'} {flights.inbound.seatNum ? `| ${flights.inbound.seatNum}` : ''}
+                 </span>
+                 <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity duration-300 absolute right-0 top-0 ${ux.hoverLogic}`}>
+                   <button onClick={(e) => { e.stopPropagation(); handleEditFlight('inbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                   <button onClick={(e) => { e.stopPropagation(); handleDeleteFlight('inbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+                 </div>
                </div>
             </div>
             <div className="flex w-full items-center justify-between mt-3 sm:mt-4 px-1">
@@ -1581,26 +1692,28 @@ const MainApp = () => {
   if (showIdSetup) {
     return (
       <div className="flex h-screen w-full bg-slate-100 items-center justify-center font-sans select-none p-4">
-        <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-sm flex flex-col items-center">
-          <div className="text-4xl mb-4 bg-indigo-50 w-20 h-20 rounded-full flex items-center justify-center">🐱</div>
+        <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-sm flex flex-col items-center animate-in zoom-in-95 duration-300">
+          <div className="text-4xl mb-4 bg-indigo-50 w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-105">🐱</div>
           <h2 className="text-xl font-black text-slate-900 mb-2">{isLoginMode ? "로그인" : "계정 생성"}</h2>
           <p className="text-xs text-slate-500 text-center mb-6">{isLoginMode ? "여행 일정을 다시 확인해보세요!" : "아이디를 만들어 일정을 공유하세요!"}</p>
           
-          <input type="text" placeholder="아이디 (영문/숫자 3자 이상)" value={S(idInput)} onChange={(e) => {setIdInput(e.target.value.replace(/[^a-zA-Z0-9]/g, '')); setIdError("");}} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 mb-3" />
-          <input type="password" placeholder="비밀번호 (4자 이상)" value={S(pwInput)} onChange={(e) => {setPwInput(e.target.value); setIdError("");}} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 mb-3" />
+          <input type="text" placeholder="아이디 (영문/숫자 3자 이상)" value={S(idInput)} onChange={(e) => {setIdInput(e.target.value.replace(/[^a-zA-Z0-9]/g, '')); setIdError("");}} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 transition-all duration-300 mb-3" />
+          <input type="password" placeholder="비밀번호 (4자 이상)" value={S(pwInput)} onChange={(e) => {setPwInput(e.target.value); setIdError("");}} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 transition-all duration-300 mb-3" />
 
           <div className="flex w-full justify-between items-center mb-5 px-1">
             <label className="flex items-center space-x-2 cursor-pointer text-xs font-bold text-slate-600"><input type="checkbox" checked={saveCredentials} onChange={e => setSaveCredentials(e.target.checked)} className="accent-indigo-600 w-3.5 h-3.5" /><span>ID/PW 저장</span></label>
             <label className="flex items-center space-x-2 cursor-pointer text-xs font-bold text-slate-600"><input type="checkbox" checked={autoLogin} onChange={e => {setAutoLogin(e.target.checked); if(e.target.checked) setSaveCredentials(true);}} className="accent-indigo-600 w-3.5 h-3.5" /><span>자동 로그인</span></label>
           </div>
 
-          {idError && <p className="text-[10px] text-rose-500 font-bold mb-3 text-center">{S(idError)}</p>}
+          {idError && <p className="text-[10px] text-rose-500 font-bold mb-3 text-center animate-in slide-in-from-top-1">{S(idError)}</p>}
           
           <div className="flex w-full space-x-2">
-            <button onClick={() => setIsLoginMode(!isLoginMode)} className="flex-1 bg-slate-100 text-slate-600 rounded-xl py-3 text-xs font-bold hover:bg-slate-200">{isLoginMode ? "회원가입" : "로그인으로"}</button>
-            <button onClick={() => isLoginMode ? handleLogin() : handleSignUp()} className="flex-[2] bg-indigo-600 text-white rounded-xl py-3 text-sm font-bold hover:bg-indigo-700 shadow-md">{isLoginMode ? "로그인" : "아이디 생성"}</button>
+            <button onClick={() => setIsLoginMode(!isLoginMode)} disabled={isLoggingIn} className={`flex-1 bg-slate-100 text-slate-600 rounded-xl py-3 text-xs font-bold transition-all duration-300 ${isLoggingIn ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200'}`}>{isLoginMode ? "회원가입" : "로그인으로"}</button>
+            <button onClick={() => isLoginMode ? handleLogin() : handleSignUp()} disabled={isLoggingIn} className={`flex-[2] bg-indigo-600 text-white rounded-xl py-3 text-sm font-bold shadow-md transition-all duration-300 ${isLoggingIn ? 'opacity-50 cursor-not-allowed' : 'hover:bg-indigo-700 active:scale-95'}`}>
+              {isLoggingIn ? "처리 중..." : (isLoginMode ? "로그인" : "아이디 생성")}
+            </button>
           </div>
-          <button onClick={handleSkipIdSetup} className="mt-5 text-[10px] text-slate-400 font-bold underline">건너뛰기 (로컬 테스트)</button>
+          <button onClick={handleSkipIdSetup} disabled={isLoggingIn} className="mt-5 text-[10px] text-slate-400 font-bold underline hover:text-slate-600 transition-colors">건너뛰기 (로컬 테스트)</button>
         </div>
       </div>
     );
@@ -1611,14 +1724,14 @@ const MainApp = () => {
       
       {/* --- 모달 및 팝업 영역 --- */}
       {toastMsg && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl z-[9999] animate-in fade-in slide-in-from-top-4">
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl z-[9999] animate-in fade-in slide-in-from-top-4 duration-300">
           {toastMsg}
         </div>
       )}
 
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9500] flex" onClick={() => setIsMobileMenuOpen(false)}>
-          <div className={`w-64 h-full shadow-2xl flex flex-col animate-in slide-in-from-left ${isDarkMode ? 'bg-slate-900 border-r border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 z-[9500] flex transition-opacity duration-300" onClick={() => setIsMobileMenuOpen(false)}>
+          <div className={`w-64 h-full shadow-2xl flex flex-col animate-in slide-in-from-left duration-300 ${isDarkMode ? 'bg-slate-900 border-r border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
             <div className={`p-5 border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} flex items-center justify-between`}>
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-xl">🐱</div>
@@ -1627,7 +1740,7 @@ const MainApp = () => {
                   <span className="text-[10px] text-slate-500 font-bold">환영합니다!</span>
                 </div>
               </div>
-              <button onClick={() => setIsMobileMenuOpen(false)} className={`text-xl ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>✕</button>
+              <button onClick={() => setIsMobileMenuOpen(false)} className={`text-xl transition-colors hover:text-rose-500 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>✕</button>
             </div>
             
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
@@ -1637,35 +1750,35 @@ const MainApp = () => {
                   {trips.map(t => (
                     <button 
                       key={t.id} 
-                      onClick={() => handleSwitchTrip(t.id)} 
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all truncate flex items-center justify-between group ${activeTripId === t.id && !sharedTripId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
+                      onClick={() => { handleSwitchTrip(t.id); setIsMobileMenuOpen(false); }} 
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 truncate flex items-center justify-between group ${activeTripId === t.id && !sharedTripId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
                     >
                       <span className="truncate">{S(t.name)}</span>
-                      <span onClick={(e) => { e.stopPropagation(); setTripToDelete(t.id); }} className={`text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] hover:scale-110 p-1`}>🗑️</span>
+                      <span onClick={(e) => { e.stopPropagation(); setTripToDelete(t.id); }} className={`text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-[10px] hover:scale-110 p-1`}>🗑️</span>
                     </button>
                   ))}
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-2">
-                   <button onClick={openAddTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>+ 새 여행</button>
-                   <button onClick={openRenameTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>✏️ 이름 변경</button>
+                   <button onClick={openAddTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}>+ 새 여행</button>
+                   <button onClick={openRenameTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}>✏️ 이름 변경</button>
                 </div>
               </div>
 
               {sharedTripId && (
-                <div className="p-3 bg-rose-50 rounded-xl border border-rose-100">
+                <div className="p-3 bg-rose-50 rounded-xl border border-rose-100 animate-in fade-in duration-300">
                   <h3 className="text-[10px] font-black text-rose-600 mb-1">🤝 공유 일정 참여 중</h3>
                   <p className="text-[9px] text-rose-500 mb-2 leading-tight">현재 친구의 일정을 함께 보고 있습니다.</p>
-                  <button onClick={handleExitShare} className="w-full bg-white text-rose-600 py-1.5 rounded text-[10px] font-bold shadow-sm border border-rose-100">내 일정으로 복귀</button>
+                  <button onClick={handleExitShare} className="w-full bg-white text-rose-600 py-1.5 rounded text-[10px] font-bold shadow-sm border border-rose-100 hover:bg-rose-50 transition-colors">내 일정으로 복귀</button>
                 </div>
               )}
 
               {pendingInvite && (
-                <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+                <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 animate-in fade-in duration-300">
                   <h3 className="text-[10px] font-black text-indigo-600 mb-1">💌 새 초대장 도착!</h3>
                   <p className="text-[9px] text-indigo-500 mb-2 truncate">From: {S(pendingInvite.from_id)}</p>
                   <div className="flex space-x-1.5">
-                    <button onClick={handleAcceptInvite} className="flex-1 bg-indigo-600 text-white py-1.5 rounded text-[10px] font-bold shadow-sm">수락</button>
-                    <button onClick={handleRejectInvite} className="flex-1 bg-white text-slate-600 py-1.5 rounded text-[10px] font-bold shadow-sm border">거절</button>
+                    <button onClick={handleAcceptInvite} className="flex-1 bg-indigo-600 text-white py-1.5 rounded text-[10px] font-bold shadow-sm hover:bg-indigo-700 transition-colors">수락</button>
+                    <button onClick={handleRejectInvite} className="flex-1 bg-white text-slate-600 py-1.5 rounded text-[10px] font-bold shadow-sm border hover:bg-slate-50 transition-colors">거절</button>
                   </div>
                 </div>
               )}
@@ -1673,17 +1786,17 @@ const MainApp = () => {
             
             <div className={`p-4 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} space-y-2`}>
               <div className="flex space-x-2 mb-2">
-                 <button onClick={handleUndo} disabled={historyIndex <= 0} className={`flex-1 flex items-center justify-center py-2 rounded-xl text-xs font-bold transition-all ${historyIndex <= 0 ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800' : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300'}`}>
+                 <button onClick={handleUndo} disabled={historyIndex <= 0} className={`flex-1 flex items-center justify-center py-2 rounded-xl text-xs font-bold transition-all duration-300 ${historyIndex <= 0 ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800' : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300 active:scale-95'}`}>
                     <span className="mr-1">⏪</span> 슝
                  </button>
-                 <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className={`flex-1 flex items-center justify-center py-2 rounded-xl text-xs font-bold transition-all ${historyIndex >= history.length - 1 ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800' : 'bg-rose-100 text-rose-600 hover:bg-rose-200 dark:bg-rose-900/50 dark:text-rose-300'}`}>
+                 <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className={`flex-1 flex items-center justify-center py-2 rounded-xl text-xs font-bold transition-all duration-300 ${historyIndex >= history.length - 1 ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800' : 'bg-rose-100 text-rose-600 hover:bg-rose-200 dark:bg-rose-900/50 dark:text-rose-300 active:scale-95'}`}>
                     뽕 <span className="ml-1">⏩</span>
                  </button>
               </div>
-              <button onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(true); setIsMobileMenuOpen(false); }} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              <button onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(true); }} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                 <span>⚙️ 환경 설정</span>
               </button>
-              <button onClick={handleLogout} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all border border-dashed ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>
+              <button onClick={handleLogout} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 border border-dashed active:scale-95 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>
                 <span>🚪 로그아웃</span>
               </button>
             </div>
@@ -1692,43 +1805,43 @@ const MainApp = () => {
       )}
 
       {isSettingsOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}>
-           <div className={`${cardBg} p-6 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsSettingsOpen(false)}>
+           <div className={`${cardBg} p-6 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
               <div className={`flex justify-between items-center mb-5 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                  <h3 className={`font-black text-sm ${textMain}`}>⚙️ 환경 설정</h3>
-                 <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+                 <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
               </div>
               
               <div className="space-y-4 max-h-[65vh] overflow-y-auto custom-scrollbar pr-2">
                  <div className="flex flex-col space-y-2">
                     <label className={`text-xs font-bold ${textMuted}`}>앱 테마</label>
                     <div className="flex space-x-2">
-                       <button onClick={() => handleThemeChange('light')} className={`flex-1 py-2 text-xs font-bold border rounded-lg ${appTheme === 'light' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600'}`}>기본(Light)</button>
-                       <button onClick={() => handleThemeChange('dark')} className={`flex-1 py-2 text-xs font-bold border rounded-lg ${appTheme === 'dark' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>다크 모드</button>
-                       <button onClick={() => handleThemeChange('pastel')} className={`flex-1 py-2 text-xs font-bold border rounded-lg ${appTheme === 'pastel' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-orange-50 text-orange-800 border-orange-200'}`}>파스텔</button>
+                       <button onClick={() => handleThemeChange('light')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'light' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>기본(Light)</button>
+                       <button onClick={() => handleThemeChange('dark')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'dark' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'}`}>다크 모드</button>
+                       <button onClick={() => handleThemeChange('pastel')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'pastel' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100'}`}>파스텔</button>
                     </div>
                  </div>
                  
                  <div className="flex flex-col space-y-2">
                     <label className={`text-xs font-bold ${textMuted}`}>화면/글자 크기 (글꼴: {fontScale}, 요소: {elementScale})</label>
-                    <input type="range" min="0.5" max="1.5" step="0.1" value={fontScale} onChange={handleFontScaleChange} className="w-full accent-indigo-600" />
-                    <input type="range" min="0.5" max="1.5" step="0.1" value={elementScale} onChange={handleElementScaleChange} className="w-full accent-indigo-600 mt-2" />
+                    <input type="range" min="0.5" max="1.5" step="0.1" value={fontScale} onChange={handleFontScaleChange} className="w-full accent-indigo-600 transition-all duration-300" />
+                    <input type="range" min="0.5" max="1.5" step="0.1" value={elementScale} onChange={handleElementScaleChange} className="w-full accent-indigo-600 mt-2 transition-all duration-300" />
                  </div>
 
                  <div className={`flex flex-col space-y-3 border-t pt-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                     <label className={`text-xs font-bold ${textMuted}`}>🤝 일정 공유 및 초대 (실시간 연동)</label>
                     {sharedTripId ? (
-                      <div className="bg-indigo-50 dark:bg-indigo-900/30 p-3 rounded-xl border border-indigo-100 dark:border-indigo-800">
+                      <div className="bg-indigo-50 dark:bg-indigo-900/30 p-3 rounded-xl border border-indigo-100 dark:border-indigo-800 animate-in fade-in duration-300">
                          <p className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold mb-2">
-                           현재 다른 사용자의 일정에 참여 중입니다.
+                            현재 다른 사용자의 일정에 참여 중입니다.
                          </p>
                          <button onClick={handleExitShare} className="w-full py-2 bg-white dark:bg-slate-800 text-rose-500 hover:bg-rose-50 dark:hover:bg-slate-700 rounded-lg text-[10px] font-bold shadow-sm border border-rose-100 dark:border-slate-600 transition-colors">내 일정으로 복귀</button>
                       </div>
                     ) : (
-                      <div className="space-y-3">
+                      <div className="space-y-3 animate-in fade-in duration-300">
                          <div className="flex space-x-2">
-                            <input type="text" value={inviteIdInput} onChange={e => setInviteIdInput(e.target.value)} placeholder="초대할 친구 아이디 입력" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold rounded-lg outline-none focus:border-indigo-500 transition-colors`} />
-                            <button onClick={handleSendInvite} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all whitespace-nowrap">초대장 발송</button>
+                            <input type="text" value={inviteIdInput} onChange={e => setInviteIdInput(e.target.value)} placeholder="초대할 친구 아이디 입력" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold rounded-lg outline-none focus:border-indigo-500 transition-colors duration-300`} />
+                            <button onClick={handleSendInvite} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300 whitespace-nowrap">초대장 발송</button>
                          </div>
                          <div className={`p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
                             <p className={`text-[10px] font-bold ${textMuted} mb-2`}>현재 이 일정을 함께 보는 사람</p>
@@ -1745,42 +1858,42 @@ const MainApp = () => {
                  </div>
               </div>
               
-              <button onClick={() => setIsSettingsOpen(false)} className={`w-full mt-6 rounded-xl py-3 text-xs font-bold transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}>닫기</button>
+              <button onClick={() => setIsSettingsOpen(false)} className={`w-full mt-6 rounded-xl py-3 text-xs font-bold transition-colors duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}>닫기</button>
            </div>
         </div>
       )}
 
       {viewPhoto && (
-        <div className="fixed inset-0 bg-black/90 z-[5000] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewPhoto(null)}>
-          <img src={viewPhoto} className="max-w-full max-h-full object-contain rounded-md shadow-2xl" alt="" />
+        <div className="fixed inset-0 bg-black/90 z-[5000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setViewPhoto(null)}>
+          <img src={viewPhoto} className="max-w-full max-h-full object-contain rounded-md shadow-2xl animate-in zoom-in-95 duration-300" alt="" />
           <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1 rounded-full hover:bg-black/80 transition-colors" onClick={() => setViewPhoto(null)}>✕</button>
         </div>
       )}
 
       {tripToDelete && (
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm">
-           <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95`}>
+        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
+           <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95 duration-300`}>
               <div className="text-3xl mb-3">🗑️</div>
               <h3 className={`text-sm font-black mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>여행 삭제</h3>
               <p className={`text-[11px] font-bold mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'} leading-relaxed`}>
                  정말 이 여행을 삭제하시겠습니까?<br/>삭제된 데이터는 절대 복구할 수 없습니다.
               </p>
               <div className="flex space-x-2">
-                 <button className={`flex-1 py-2.5 rounded-xl font-bold text-xs ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'}`} onClick={() => setTripToDelete(null)}>취소</button>
-                 <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600" onClick={confirmDeleteTrip}>삭제하기</button>
+                 <button className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`} onClick={() => setTripToDelete(null)}>취소</button>
+                 <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600 active:scale-95 transition-all duration-300" onClick={confirmDeleteTrip}>삭제하기</button>
               </div>
            </div>
         </div>
       )}
 
       {isWeatherModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setIsWeatherModalOpen(false)}>
-           <div className={`${cardBg} p-5 rounded-3xl w-full max-w-xs sm:max-w-sm shadow-2xl animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsWeatherModalOpen(false)}>
+           <div className={`${cardBg} p-5 rounded-3xl w-full max-w-xs sm:max-w-sm shadow-2xl animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
               <div className={`flex justify-between items-center mb-4 border-b pb-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                  <h3 className={`font-black text-sm ${textMain}`}>⛅ {S(displayCityName)} 날씨 예보</h3>
-                 <button onClick={() => setIsWeatherModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+                 <button onClick={() => setIsWeatherModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
               </div>
-              <div className="space-y-2.5 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1">
+              <div className="space-y-2.5 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1 scroll-smooth">
                  {forecast.length === 0 ? (
                     <p className={`text-xs ${textMuted} text-center py-5 font-bold`}>날씨 정보를 불러올 수 없습니다.<br/>(일정 탭에서 지역을 선택해주세요)</p>
                  ) : (
@@ -1792,7 +1905,7 @@ const MainApp = () => {
 
                        if (!f) {
                            return (
-                              <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
+                              <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all duration-300 ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
                                  <div className="flex flex-col">
                                     <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} ({targetDateStr.slice(5)})</span>
                                     <span className={`text-xs font-black mt-0.5 ${textMuted}`}>예보 없음</span>
@@ -1806,7 +1919,7 @@ const MainApp = () => {
 
                        const info = getWeatherInfo(f.code);
                        return (
-                          <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
+                          <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all duration-300 ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
                              <div className="flex flex-col">
                                 <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} ({f.date.slice(5)})</span>
                                 <span className={`text-xs font-black mt-0.5 ${textMain}`}>{info[0]} {info[1]}</span>
@@ -1820,27 +1933,27 @@ const MainApp = () => {
                     })
                  )}
               </div>
-              <button onClick={() => setIsWeatherModalOpen(false)} className="w-full mt-4 bg-indigo-600 text-white rounded-xl py-2.5 text-xs font-bold shadow-md hover:bg-indigo-700 transition-colors">확인</button>
+              <button onClick={() => setIsWeatherModalOpen(false)} className="w-full mt-4 bg-indigo-600 text-white rounded-xl py-2.5 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">확인</button>
            </div>
         </div>
       )}
 
       {isDashboardPackingOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsDashboardPackingOpen(false)}>
-          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsDashboardPackingOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
              <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                 <h3 className={`text-sm font-black flex items-center ${textMain}`}><span className="mr-2">🎒</span> 이번 여행 준비물 목록</h3>
-                <button onClick={() => setIsDashboardPackingOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
+                <button onClick={() => setIsDashboardPackingOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg transition-colors">✕</button>
              </div>
              <div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
                 {packingList.some(item => item.isChecked) && (
-                  <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 p-2.5 rounded-lg text-[11px] font-bold text-center animate-in fade-in shrink-0 border border-emerald-100 dark:border-emerald-800/50">
+                  <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 p-2.5 rounded-lg text-[11px] font-bold text-center animate-in fade-in shrink-0 border border-emerald-100 dark:border-emerald-800/50 duration-300">
                      ✨ 앗! 준비물을 하나씩 채우고 계시군요. 완벽한 여행이 될 거예요!
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
                   {packingList.map(item => (
-                     <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-700')}`}>
+                     <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100')}`}>
                        <span className={`text-[11px] font-bold truncate max-w-[250px]`}>{item.text}</span>
                      </div>
                   ))}
@@ -1857,28 +1970,28 @@ const MainApp = () => {
       )}
 
       {isPackingModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsPackingModalOpen(false)}>
-          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsPackingModalOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
              <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                 <h3 className={`text-sm font-black flex items-center ${textMain}`}><span className="mr-2">🎒</span> 준비물 챙기기</h3>
-                <button onClick={() => setIsPackingModalOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
+                <button onClick={() => setIsPackingModalOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg transition-colors">✕</button>
              </div>
              <div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
                 <div className="flex space-x-2 shrink-0">
-                  <input type="text" placeholder="챙길 물건 입력 후 엔터키" onKeyDown={handleAddPackingItem} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none rounded-lg shadow-sm`} />
+                  <input type="text" placeholder="챙길 물건 입력 후 엔터키" onKeyDown={handleAddPackingItem} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
                 </div>
 
                 {packingList.some(item => item.isChecked) && (
-                  <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 p-2.5 rounded-lg text-[11px] font-bold text-center animate-in fade-in shrink-0 border border-emerald-100 dark:border-emerald-800/50">
+                  <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 p-2.5 rounded-lg text-[11px] font-bold text-center animate-in fade-in shrink-0 border border-emerald-100 dark:border-emerald-800/50 duration-300">
                      ✨ 앗! 준비물을 하나씩 채우고 계시군요. 완벽한 여행이 될 거예요!
                   </div>
                 )}
 
                 <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
                   {packingList.map(item => (
-                     <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`group cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-700')}`}>
+                     <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`group cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100')}`}>
                        <span className={`text-[11px] font-bold truncate max-w-[200px]`}>{item.text}</span>
-                       <button onClick={(e) => { e.stopPropagation(); deletePackingItem(item.id); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-indigo-400 hover:text-indigo-600'}`}>✕</button>
+                       <button onClick={(e) => { e.stopPropagation(); deletePackingItem(item.id); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-indigo-400 hover:text-indigo-600'}`}>✕</button>
                      </div>
                   ))}
                   {packingList.length === 0 && (
@@ -1891,8 +2004,8 @@ const MainApp = () => {
       )}
 
       {selectedPlanInfo && (
-        <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setSelectedPlanInfo(null)}>
-          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPlanInfo(null)}>
+          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             {selectedPlanInfo.photo && !selectedPlanInfo.isTransport && (
               <div className="w-full h-48 relative">
                 <img src={selectedPlanInfo.photo} className="w-full h-full object-cover" alt="" />
@@ -1920,15 +2033,15 @@ const MainApp = () => {
                 <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
               )}
               
-              <button onClick={() => setSelectedPlanInfo(null)} className="mt-5 w-full bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">닫기</button>
+              <button onClick={() => setSelectedPlanInfo(null)} className="mt-5 w-full bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors duration-300">닫기</button>
             </div>
           </div>
         </div>
       )}
 
       {selectedPinInfo && (
-        <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setSelectedPinInfo(null)}>
-          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPinInfo(null)}>
+          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             {selectedPinInfo.img && !S(selectedPinInfo.img).includes("unsplash") && (
               <div className="w-full h-48 relative">
                 <img src={selectedPinInfo.img} className="w-full h-full object-cover" alt="" />
@@ -1955,8 +2068,8 @@ const MainApp = () => {
                 <button onClick={() => {
                   openEditPinModal(selectedPinInfo);
                   setSelectedPinInfo(null);
-                }} className="flex-1 bg-indigo-100 text-indigo-600 py-3 rounded-xl font-bold text-sm hover:bg-indigo-200 transition-colors">정보 수정</button>
-                <button onClick={() => setSelectedPinInfo(null)} className="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">닫기</button>
+                }} className="flex-1 bg-indigo-100 text-indigo-600 py-3 rounded-xl font-bold text-sm hover:bg-indigo-200 transition-colors duration-300">정보 수정</button>
+                <button onClick={() => setSelectedPinInfo(null)} className="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors duration-300">닫기</button>
               </div>
             </div>
           </div>
@@ -1964,87 +2077,91 @@ const MainApp = () => {
       )}
 
       {tripModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 z-[7000] backdrop-blur-sm flex items-center justify-center p-4">
-          <div className={`${cardBg} w-full max-w-xs p-5 flex flex-col animate-in zoom-in-95 z-[7001]`}>
+        <div className="fixed inset-0 bg-black/50 z-[7000] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
+          <div className={`${cardBg} w-full max-w-xs p-5 flex flex-col animate-in zoom-in-95 z-[7001] duration-300`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between pb-3 border-b mb-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
               <h2 className="text-sm font-black text-indigo-500">{tripModal.mode === 'add' ? '새 여행 만들기 ✈️' : '여행 이름 변경 ✏️'}</h2>
-              <button onClick={() => setTripModal({ ...tripModal, isOpen: false })}>✕</button>
+              <button onClick={() => setTripModal({ ...tripModal, isOpen: false })} className="transition-colors hover:text-slate-500">✕</button>
             </div>
             <input 
               type="text" 
               value={S(tripModal.name)} 
               onChange={e => setTripModal({ ...tripModal, name: e.target.value })} 
               placeholder="여행 이름을 입력하세요" 
-              className={`w-full ${inputBg} p-3 text-xs font-bold outline-none mb-4`}
+              className={`w-full ${inputBg} p-3 text-xs font-bold outline-none mb-4 transition-all duration-300 focus:ring-2 focus:ring-indigo-500 rounded`}
               autoFocus
               onKeyDown={e => e.key === 'Enter' && submitTripModal()}
             />
-            <button onClick={submitTripModal} className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-bold text-xs shadow-md">확인</button>
+            <button onClick={submitTripModal} disabled={isSubmittingTrip} className={`w-full bg-indigo-600 text-white py-2.5 rounded-lg font-bold text-xs shadow-md transition-all duration-300 ${isSubmittingTrip ? 'opacity-50 cursor-not-allowed' : 'hover:bg-indigo-700 active:scale-95'}`}>확인</button>
           </div>
         </div>
       )}
 
       {isTransportModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsTransportModalOpen(false)}>
-          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsTransportModalOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
               <div className="flex items-center space-x-2">
                 <span className="text-indigo-500 text-sm">✈️</span>
                 <h3 className="text-xs font-bold">교통권 등록</h3>
               </div>
-              <button onClick={() => setIsTransportModalOpen(false)} className={`p-1 rounded ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}>✕</button>
+              <button onClick={() => setIsTransportModalOpen(false)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}>✕</button>
             </div>
             
             <div className="p-4 space-y-3">
               <div className={`grid grid-cols-3 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-1 rounded-lg`}>
-                 <button onClick={() => {setTransType('flight'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'flight' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>✈️ 항공권</button>
-                 <button onClick={() => {setTransType('train'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'train' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>🚆 기차</button>
-                 <button onClick={() => {setTransType('bus'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded ${transType === 'bus' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500'}`}>🚌 버스</button>
+                 <button onClick={() => {setTransType('flight'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'flight' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>✈️ 항공권</button>
+                 <button onClick={() => {setTransType('train'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'train' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚆 기차</button>
+                 <button onClick={() => {setTransType('bus'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'bus' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚌 버스</button>
               </div>
 
               {/* 모든 수단에 대해 가는편/오는편 탭 적용 */}
               <div className="flex space-x-2 items-center">
-                 <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>가는 편 (Outbound)</button>
-                 <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors ${transDir === 'inbound' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>오는 편 (Inbound)</button>
-                 <button onClick={() => setModalTransData(prev => ({...prev, [transDir]: {...initialTransState}}))} className="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-500 rounded border hover:bg-slate-200">초기화</button>
+                 <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>가는 편 (Outbound)</button>
+                 <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'inbound' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>오는 편 (Inbound)</button>
+                 <button onClick={() => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...initialTransState}}}))} className="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-500 rounded border hover:bg-slate-200 transition-colors duration-300">초기화</button>
               </div>
 
               {transType !== 'flight' && (
-                <div className="flex flex-col space-y-1">
+                <div className="flex flex-col space-y-1 animate-in fade-in duration-300">
                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택 (Day)</label>
-                   <select value={modalTransData[transDir].day} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], day: parseInt(e.target.value)}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer`}>
+                   <select value={modalTransData[transType][transDir].day} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], day: parseInt(e.target.value)}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer transition-all duration-300`}>
                       {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
                    </select>
                 </div>
               )}
 
               <div className="flex space-x-2">
-                <div className="flex flex-col space-y-1 w-1/2">
+                <div className="flex flex-col space-y-1 w-1/3">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>{transType === 'flight' ? '항공사' : (transType === 'train' ? '기차 종류' : '버스 회사')}</label>
-                  <input type="text" placeholder={transType === 'flight' ? '대한항공' : 'KTX, 고속버스'} value={modalTransData[transDir].airline} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], airline: e.target.value}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                  <input type="text" placeholder={transType === 'flight' ? '대한항공' : 'KTX, 고속버스'} value={modalTransData[transType][transDir].airline} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], airline: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
                 </div>
-                <div className="flex flex-col space-y-1 w-1/2">
+                <div className="flex flex-col space-y-1 w-1/3">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>{transType === 'flight' ? '항공편명' : '편명/번호'}</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'KE001' : '102호'} value={modalTransData[transDir].flightNum} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], flightNum: e.target.value}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
+                  <input type="text" placeholder={transType === 'flight' ? 'KE001' : '102호'} value={modalTransData[transType][transDir].flightNum} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], flightNum: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
+                </div>
+                <div className="flex flex-col space-y-1 w-1/3">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>좌석번호</label>
+                  <input type="text" placeholder="12A" value={modalTransData[transType][transDir].seatNum} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], seatNum: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
                 </div>
               </div>
 
               <div className="flex space-x-2 items-center">
                 <div className="flex flex-col space-y-1 w-[45%]">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>출발지</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'ICN' : '서울역'} value={modalTransData[transDir].dep} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], dep: e.target.value}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
-                  <input type="text" maxLength="5" placeholder="10:00" value={modalTransData[transDir].depTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], depTime: val}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1`} />
+                  <input type="text" placeholder={transType === 'flight' ? 'ICN' : '서울역'} value={modalTransData[transType][transDir].dep} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], dep: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
+                  <input type="text" maxLength="5" placeholder="10:00" value={modalTransData[transType][transDir].depTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], depTime: val}}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 transition-all duration-300 focus:border-indigo-500 outline-none`} />
                 </div>
                 <div className="flex flex-col items-center justify-center text-slate-400 font-bold w-[10%]">➔</div>
                 <div className="flex flex-col space-y-1 w-[45%]">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>도착지</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'NRT' : '부산역'} value={modalTransData[transDir].arr} onChange={e => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], arr: e.target.value}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg`} />
-                  <input type="text" maxLength="5" placeholder="12:00" value={modalTransData[transDir].arrTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transDir]: {...prev[transDir], arrTime: val}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1`} />
+                  <input type="text" placeholder={transType === 'flight' ? 'NRT' : '부산역'} value={modalTransData[transType][transDir].arr} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], arr: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
+                  <input type="text" maxLength="5" placeholder="12:00" value={modalTransData[transType][transDir].arrTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], arrTime: val}}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 transition-all duration-300 focus:border-indigo-500 outline-none`} />
                 </div>
               </div>
 
-              <button onClick={handleSaveTransport} className={`w-full ${modalTransData.outbound.dep && modalTransData.inbound.dep ? 'bg-orange-500 hover:bg-orange-600' : 'bg-indigo-600 hover:bg-indigo-700'} text-white rounded-xl py-3 text-xs font-bold shadow-md active:scale-95 transition-all mt-2`}>
-                {modalTransData.outbound.dep && modalTransData.inbound.dep ? '양방향 일괄 등록하기 ✨' : (transType === 'flight' ? '항공권 상단에 고정하기 ✈️' : '일정에 등록하기 📝')}
+              <button onClick={handleSaveTransport} className={`w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-3 text-xs font-bold shadow-md active:scale-95 transition-all duration-300 mt-2`}>
+                일괄 등록하기 ✨
               </button>
             </div>
           </div>
@@ -2052,27 +2169,27 @@ const MainApp = () => {
       )}
 
       {editingPlan && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[6000] flex items-center justify-center p-4">
-          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 rounded-2xl`}>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[6000] flex items-center justify-center p-4 transition-opacity duration-300">
+          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
               <div className="flex items-center space-x-2">
                 <span className="text-orange-500 text-sm">✏️</span>
                 <h3 className="text-xs font-bold">일정 수정하기</h3>
               </div>
-              <button onClick={() => setEditingPlan(null)} className={`p-1 rounded ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}>✕</button>
+              <button onClick={() => setEditingPlan(null)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}>✕</button>
             </div>
             
             <div className="p-4 space-y-3">
               <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm`}>
                 {tripDays.map(d => (
-                  <button key={d} onClick={() => setEditingPlan({...editingPlan, day: d})} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all ${editingPlan.day === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100'}`}>D{d}</button>
+                  <button key={d} onClick={() => setEditingPlan({...editingPlan, day: d})} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 ${editingPlan.day === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
                 ))}
               </div>
 
               <div className="flex space-x-2">
                 <div className="flex flex-col space-y-1 w-1/2">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>국가 🌍</label>
-                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center`}>
+                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center transition-colors duration-300`}>
                     <SelectOrInput 
                       inputId="edit-country-input"
                       value={editingPlan.countrySelect} manualValue={editingPlan.manualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
@@ -2085,7 +2202,7 @@ const MainApp = () => {
                 </div>
                 <div className="flex flex-col space-y-1 w-1/2">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>지역 📍</label>
-                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center`}>
+                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center transition-colors duration-300`}>
                     <SelectOrInput 
                       inputId="edit-region-input"
                       value={editingPlan.regionSelect} manualValue={editingPlan.manualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
@@ -2101,34 +2218,34 @@ const MainApp = () => {
               <div className="flex space-x-2 items-end">
                 <div className="flex flex-col space-y-1 w-1/3">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>시간 ⏰</label>
-                  <input type="text" maxLength="5" value={S(editingPlan.time)} onChange={(e) => handleTimeInput(e, (val) => setEditingPlan({...editingPlan, time: val}))} placeholder="09:00" className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm`} />
+                  <input type="text" maxLength="5" value={S(editingPlan.time)} onChange={(e) => handleTimeInput(e, (val) => setEditingPlan({...editingPlan, time: val}))} placeholder="09:00" className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
                 </div>
                 <div className="flex flex-col space-y-1 flex-1 relative">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 📍</label>
-                  <input type="text" placeholder="장소 이름 입력" value={S(editingPlan.place)} onChange={(e) => setEditingPlan({...editingPlan, place: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6`} />
+                  <input type="text" placeholder="장소 이름 입력" value={S(editingPlan.place)} onChange={(e) => setEditingPlan({...editingPlan, place: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6 transition-all duration-300`} />
                 </div>
               </div>
 
               <div className="flex space-x-2 items-end">
                 <div className="flex flex-col space-y-1 flex-1">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어(복사용)</label>
-                  <input type="text" placeholder="현지어 입력" value={S(editingPlan.localName)} onChange={(e) => setEditingPlan({...editingPlan, localName: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm`} />
+                  <input type="text" placeholder="현지어 입력" value={S(editingPlan.localName)} onChange={(e) => setEditingPlan({...editingPlan, localName: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
                 </div>
                 <div className="flex flex-col space-y-1 flex-1">
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모</label>
-                  <input type="text" placeholder="간단한 메모" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm`} />
+                  <input type="text" placeholder="간단한 메모" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
                 </div>
               </div>
 
               <div className="flex flex-col space-y-1 w-full">
                 <input type="file" accept="image/*" ref={editFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, true)} className="hidden" />
-                <button type="button" onClick={() => editFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold border transition-all flex items-center justify-center ${editingPlan.photo ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                  <span className="flex items-center">{editingPlan.photo ? "📸 첨부 완료" : "📸 사진 선택 (옵션)"}</span>
+                <button type="button" onClick={() => editFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold border transition-all duration-300 flex items-center justify-center ${editingPlan.photo ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
+                  <span className="flex items-center">{editingPlan.photo ? "📸 사진 변경 (또는 Ctrl+V로 붙여넣기)" : "📸 사진 선택 (또는 Ctrl+V로 붙여넣기)"}</span>
                 </button>
               </div>
 
               <div className="flex items-center space-x-2 my-1.5 px-1">
-                <input type="checkbox" id="editPlanIsAcc" checked={Boolean(editingPlan.isAccommodation)} onChange={e => setEditingPlan({...editingPlan, isAccommodation: e.target.checked})} className="accent-indigo-600 w-3.5 h-3.5 rounded" />
+                <input type="checkbox" id="editPlanIsAcc" checked={Boolean(editingPlan.isAccommodation)} onChange={e => setEditingPlan({...editingPlan, isAccommodation: e.target.checked})} className="accent-indigo-600 w-3.5 h-3.5 rounded cursor-pointer" />
                 <label htmlFor="editPlanIsAcc" className={`text-[10px] font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
               </div>
 
@@ -2147,7 +2264,7 @@ const MainApp = () => {
                     setDisplayCityName(S(finalRegion));
                     saveToDb({ display_city_name: S(finalRegion) });
                   }
-                }} className="w-full bg-orange-500 text-white rounded-md py-2 text-[11px] font-bold shadow-sm hover:bg-orange-600 active:scale-95 transition-all">
+                }} className="w-full bg-orange-500 text-white rounded-md py-2 text-[11px] font-bold shadow-sm hover:bg-orange-600 active:scale-95 transition-all duration-300">
                   수정 내용 저장
                 </button>
               </div>
@@ -2157,47 +2274,47 @@ const MainApp = () => {
       )}
 
       {isAddPlaceModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9000] backdrop-blur-sm flex items-center justify-center p-4">
-          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 z-[9000] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
+          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
               <h3 className="text-sm font-black flex items-center">
                 <span className="mr-2 text-indigo-500 text-lg">📍</span> 
                 {clickedLocation?.id ? '핀 정보 수정' : '새 지도 핀 등록'}
               </h3>
-              <button onClick={() => setIsAddPlaceModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+              <button onClick={() => setIsAddPlaceModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
             </div>
             
-            <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh] custom-scrollbar">
+            <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh] custom-scrollbar scroll-smooth">
               <div className="flex flex-col space-y-1">
                 <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 이름 (필수)</label>
-                <input type="text" placeholder="예: 에펠탑" value={newManualPlaceName} onChange={e => setNewManualPlaceName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg`} />
+                <input type="text" placeholder="예: 에펠탑" value={newManualPlaceName} onChange={e => setNewManualPlaceName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
               </div>
 
               <div className="flex flex-col space-y-1">
                 <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어 이름 (복사용)</label>
-                <input type="text" placeholder="예: Tour Eiffel" value={newManualLocalName} onChange={e => setNewManualLocalName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg`} />
+                <input type="text" placeholder="예: Tour Eiffel" value={newManualLocalName} onChange={e => setNewManualLocalName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
               </div>
 
               <div className="flex flex-col space-y-1">
                 <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모 / 특징</label>
-                <input type="text" placeholder="간단한 메모 입력" value={newManualFeature} onChange={e => setNewManualFeature(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg`} />
+                <input type="text" placeholder="간단한 메모 입력" value={newManualFeature} onChange={e => setNewManualFeature(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
               </div>
 
-              <div className="flex flex-col space-y-2 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg border border-slate-100 dark:border-slate-700">
+              <div className="flex flex-col space-y-2 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300">
                 <div className="flex space-x-2 items-end">
-                  <div className={`flex flex-col space-y-1 ${pinLinkDay ? 'w-1/3' : 'w-full'}`}>
+                  <div className={`flex flex-col space-y-1 ${pinLinkDay ? 'w-1/3' : 'w-full'} transition-all duration-300`}>
                     <label className={`text-[9px] font-bold ${textMuted} px-1`}>일정 동기화</label>
                     <select value={pinLinkDay} onChange={e => {
                        setPinLinkDay(e.target.value); 
                        setPinLinkPlanId(""); 
                        setNewManualTime(""); 
-                    }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[11px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg cursor-pointer`}>
+                    }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[11px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
                       <option value="">-- 연동 안 함 --</option>
                       {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
                     </select>
                   </div>
                   {pinLinkDay && (
-                     <div className="flex flex-col space-y-1 w-2/3">
+                     <div className="flex flex-col space-y-1 w-2/3 animate-in fade-in duration-300">
                        <label className={`text-[9px] font-bold ${textMuted} px-1`}>기존 일정과 연결 (또는 수동입력)</label>
                        <select value={pinLinkPlanId} onChange={e => {
                           const val = e.target.value;
@@ -2208,7 +2325,7 @@ const MainApp = () => {
                           } else {
                              setNewManualTime("");
                           }
-                       }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg cursor-pointer`}>
+                       }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
                           <option value="">-- 일정 선택 --</option>
                           {planTimeline.filter(p => String(p.day) === String(pinLinkDay)).map(p => (
                              <option key={p.id} value={p.id}>[{p.time}] {S(p.place)}</option>
@@ -2220,28 +2337,28 @@ const MainApp = () => {
                 </div>
 
                 {(!pinLinkDay || pinLinkPlanId === 'manual') && (
-                   <div className="flex flex-col space-y-1 w-1/2 pt-1">
+                   <div className="flex flex-col space-y-1 w-1/2 pt-1 animate-in fade-in duration-300">
                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>방문 시간</label>
-                     <input type="text" placeholder="09:00" maxLength="5" value={newManualTime} onChange={e => handleTimeInput(e, setNewManualTime)} disabled={!pinLinkDay} className={`w-full ${!pinLinkDay ? 'opacity-50 bg-slate-100 cursor-not-allowed' : inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg`} />
+                     <input type="text" placeholder="09:00" maxLength="5" value={newManualTime} onChange={e => handleTimeInput(e, setNewManualTime)} disabled={!pinLinkDay} className={`w-full ${!pinLinkDay ? 'opacity-50 bg-slate-100 cursor-not-allowed' : inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
                    </div>
                 )}
               </div>
 
               <div className="flex flex-col space-y-1 w-full pt-1">
                 <input type="file" accept="image/*" ref={manualFileInputRef} onChange={handleManualPhotoUpload} className="hidden" />
-                <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`w-full py-2.5 text-xs font-bold rounded-lg border transition-all flex items-center justify-center ${newManualPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                  {newManualPhoto ? <span className="flex items-center">📸 사진 첨부 완료 (변경)</span> : <span className="flex items-center">📸 장소 사진 첨부 (옵션)</span>}
+                <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`w-full py-2.5 text-xs font-bold rounded-lg border transition-all duration-300 flex items-center justify-center ${newManualPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
+                  {newManualPhoto ? <span className="flex items-center">📸 사진 변경 (또는 Ctrl+V로 붙여넣기)</span> : <span className="flex items-center">📸 사진 첨부 (또는 Ctrl+V로 붙여넣기)</span>}
                 </button>
               </div>
 
-              <div className="flex items-center space-x-2 my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700">
+              <div className="flex items-center space-x-2 my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300">
                 <input type="checkbox" id="manualPlanIsAcc" checked={newManualIsAccommodation} onChange={e => setNewManualIsAccommodation(e.target.checked)} className="accent-indigo-600 w-4 h-4 cursor-pointer" />
                 <label htmlFor="manualPlanIsAcc" className={`text-xs font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
               </div>
             </div>
             
             <div className="p-4 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-              <button onClick={handleManualPlaceAdd} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">
+              <button onClick={handleManualPlaceAdd} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">
                 {clickedLocation?.id ? '핀 정보 저장하기' : '지도에 핀 꽂기 📍'}
               </button>
             </div>
@@ -2250,8 +2367,8 @@ const MainApp = () => {
       )}
 
       {isMyPinsModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[3500] backdrop-blur-sm flex items-center justify-center p-4">
-          <div className={`${cardBg} w-full max-w-5xl flex flex-col animate-in zoom-in-95 max-h-[85vh] rounded-3xl overflow-hidden`}>
+        <div className="fixed inset-0 bg-black/60 z-[3500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
+          <div className={`${cardBg} w-full max-w-5xl flex flex-col animate-in zoom-in-95 duration-300 max-h-[85vh] rounded-3xl overflow-hidden`}>
             <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
               <h3 className="text-sm font-black flex items-center"><span className="mr-2 text-indigo-500 text-lg">📍</span> 내 핀/장소 목록</h3>
               <div className="flex items-center space-x-3">
@@ -2267,14 +2384,14 @@ const MainApp = () => {
                   setPinLinkPlanId("");
                   setNewManualTime("");
                   setIsAddPlaceModalOpen(true);
-                }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-indigo-700 active:scale-95 transition-transform">
+                }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-indigo-700 active:scale-95 transition-all duration-300">
                   <span className="mr-1 text-sm">➕</span> 새 장소 추가
                 </button>
-                <button onClick={() => setIsMyPinsModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+                <button onClick={() => setIsMyPinsModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
               </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-50/50 dark:bg-slate-900/50">
+            <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-50/50 dark:bg-slate-900/50 scroll-smooth">
               {safeCurrentRestaurants.length === 0 ? (
                 <div className="text-center py-20 text-xs font-bold text-slate-400 flex flex-col items-center">
                   <span className="text-4xl mb-3 opacity-20">📍</span>
@@ -2283,23 +2400,23 @@ const MainApp = () => {
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                   {safeCurrentRestaurants.map(pin => (
-                    <div key={pin.id} className={`flex flex-col p-2 border rounded-xl shadow-sm ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
+                    <div key={pin.id} className={`flex flex-col p-2 border rounded-xl shadow-sm transition-all duration-300 hover:shadow-md ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
                       
                       {pin.img && !S(pin.img).includes("unsplash") ? (
                         <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0">
-                          <img src={pin.img} className="w-full h-full object-cover" alt="" />
+                          <img src={pin.img} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
                           {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm">숙소</div>}
                         </div>
                       ) : (
-                        <div className={`w-full h-12 flex items-center justify-center rounded-lg mb-1.5 shrink-0 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
+                        <div className={`w-full h-12 flex items-center justify-center rounded-lg mb-1.5 shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
                           {pin.isAccommodation ? '🏠 숙소' : '📍 장소'}
                         </div>
                       )}
                       
                       <div className="flex-1 min-w-0 flex flex-col justify-center">
-                        <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight mb-0.5">{S(pin.name)}</h4>
+                        <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight mb-0.5 transition-colors">{S(pin.name)}</h4>
                         {pin.localName && (
-                          <p className="text-[9px] font-bold text-indigo-500 truncate cursor-pointer hover:opacity-80 leading-tight mb-0.5" onClick={(e) => handleCopyLocalName(e, pin.localName)}>
+                          <p className="text-[9px] font-bold text-indigo-500 truncate cursor-pointer hover:opacity-80 leading-tight mb-0.5 transition-opacity" onClick={(e) => handleCopyLocalName(e, pin.localName)}>
                             📋 {S(pin.localName)}
                           </p>
                         )}
@@ -2312,10 +2429,10 @@ const MainApp = () => {
                           setIsMyPinsModalOpen(false);
                           setActiveTab('map');
                           showToast("🗺️ 지도에서 핀을 꽂을 위치를 클릭해주세요!");
-                        }} className="flex-1 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 py-1 rounded text-[9px] font-bold hover:bg-emerald-100">
+                        }} className="flex-1 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 py-1 rounded text-[9px] font-bold hover:bg-emerald-100 transition-colors duration-300">
                           위치 지정
                         </button>
-                        <button onClick={() => openEditPinModal(pin)} className="flex-1 bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 py-1 rounded text-[9px] font-bold hover:bg-slate-200">
+                        <button onClick={() => openEditPinModal(pin)} className="flex-1 bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 py-1 rounded text-[9px] font-bold hover:bg-slate-200 transition-colors duration-300">
                           수정
                         </button>
                         <button onClick={() => {
@@ -2323,7 +2440,7 @@ const MainApp = () => {
                            setCurrentRestaurants(updated);
                            saveToDb({ current_restaurants: updated });
                            showToast("핀이 삭제되었습니다.");
-                        }} className="w-6 flex items-center justify-center bg-rose-50 text-rose-500 dark:bg-rose-900/30 dark:text-rose-400 py-1 rounded hover:bg-rose-100">
+                        }} className="w-6 flex items-center justify-center bg-rose-50 text-rose-500 dark:bg-rose-900/30 dark:text-rose-400 py-1 rounded hover:bg-rose-100 transition-colors duration-300">
                            <span className="text-[10px]">🗑️</span>
                         </button>
                       </div>
@@ -2338,15 +2455,15 @@ const MainApp = () => {
 
       {/* --- 메인 컨텐츠 영역 --- */}
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-0">
-        <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors`}>
+        <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors duration-300`}>
           <div className="flex items-center flex-1 space-x-2 sm:space-x-4">
-            <button className={`p-1.5 rounded-lg ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'} transition-all`} onClick={() => setIsMobileMenuOpen(true)}>
+            <button className={`p-1.5 rounded-lg ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'} transition-all duration-300 active:scale-95`} onClick={() => setIsMobileMenuOpen(true)}>
               <span className="text-xl leading-none">☰</span>
             </button>
             
             <div className="flex-1 flex max-w-[250px] sm:max-w-md items-center space-x-2">
               <div className="flex-1 relative">
-                <span className={`absolute left-3 top-1/2 -translate-y-1/2 ${textMuted} text-sm`}>🔍</span>
+                <span className={`absolute left-3 top-1/2 -translate-y-1/2 ${textMuted} text-sm transition-colors duration-300`}>🔍</span>
                 <input 
                   type="text" 
                   placeholder="검색" 
@@ -2355,20 +2472,20 @@ const MainApp = () => {
                   onKeyDown={handleGlobalSearchEnter}
                   onFocus={() => {if (suggestions.length > 0) setShowCountrySuggestions(true)}}
                   onBlur={() => setTimeout(() => setShowCountrySuggestions(false), 200)}
-                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-700' : 'border-slate-200'} rounded-lg py-1.5 pl-9 pr-8 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none transition-all shadow-sm`} 
+                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-700' : 'border-slate-200'} rounded-lg py-1.5 pl-9 pr-8 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none transition-all duration-300 shadow-sm`} 
                 />
                 {globalSearchQuery && (
-                  <button onClick={() => { setGlobalSearchQuery(""); setSuggestions([]); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">✕</button>
+                  <button onClick={() => { setGlobalSearchQuery(""); setSuggestions([]); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">✕</button>
                 )}
                 
                 {showCountrySuggestions && suggestions.length > 0 && (
-                  <div className={`absolute top-full left-0 right-0 mt-1 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'} border rounded-md shadow-xl overflow-hidden z-50`}>
+                  <div className={`absolute top-full left-0 right-0 mt-1 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'} border rounded-md shadow-xl overflow-hidden z-50 animate-in fade-in duration-200`}>
                     <div className="max-h-48 overflow-y-auto custom-scrollbar">
                       {suggestions.map((suggestion, idx) => (
                         <button
                           key={idx}
                           onMouseDown={() => fetchCityRestaurants(suggestion)}
-                          className={`w-full text-left px-4 py-2.5 text-[11px] font-bold flex items-center transition-colors ${isDarkMode ? 'text-slate-200 hover:bg-slate-600 hover:text-indigo-300' : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                          className={`w-full text-left px-4 py-2.5 text-[11px] font-bold flex items-center transition-colors duration-300 ${isDarkMode ? 'text-slate-200 hover:bg-slate-600 hover:text-indigo-300' : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-600'}`}
                         >
                           <span className="mr-2 opacity-50 text-sm">📍</span><span>{S(suggestion)}</span>
                         </button>
@@ -2381,7 +2498,7 @@ const MainApp = () => {
               {/* 날씨 버튼 (여행 날짜 동기화 연동) */}
               <button 
                 onClick={() => setIsWeatherModalOpen(true)} 
-                className={`relative z-50 pointer-events-auto cursor-pointer flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border shadow-sm flex-shrink-0 transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                className={`relative z-50 pointer-events-auto cursor-pointer flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border shadow-sm flex-shrink-0 transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
               >
                 <span className="text-sm leading-none">{headerWeatherInfo ? headerWeatherInfo[1] : '☁️'}</span>
                 <span className="text-[10px] sm:text-xs font-bold">{headerTemp}</span>
@@ -2390,13 +2507,13 @@ const MainApp = () => {
           </div>
           
           <div className="flex items-center space-x-1 sm:space-x-2">
-            <button onClick={() => changeTab('dashboard')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
+            <button onClick={() => changeTab('dashboard')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
               <span className="hidden sm:inline">대쉬보드 </span>🌍
             </button>
-            <button onClick={() => changeTab('plan')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'plan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
+            <button onClick={() => changeTab('plan')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'plan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
               <span className="hidden sm:inline">일정 </span>📆
             </button>
-            <button onClick={() => changeTab('map')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'map' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
+            <button onClick={() => changeTab('map')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'map' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
               <span className="hidden sm:inline">지도 </span>🗺️
             </button>
           </div>
@@ -2407,14 +2524,15 @@ const MainApp = () => {
           {/* --- Dashboard Tab --- */}
           <div className={`absolute inset-0 p-2 sm:p-4 pt-3 sm:pt-4 pb-4 flex flex-col gap-3 overflow-hidden transition-opacity duration-300 ${activeTab === 'dashboard' ? 'opacity-100 z-10' : 'opacity-0 -z-10 pointer-events-none'}`}>
             <div className="flex items-end justify-between px-1 flex-shrink-0">
-              <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight ${textMain}`}>
+              <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight transition-colors duration-300 ${textMain}`}>
                 💸 실시간 동시 환율
-                <button onClick={() => fetchRealTimeRates(true)} className={`ml-3 p-1.5 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-white'} shadow-sm text-indigo-500 hover:bg-indigo-50 transition-colors`}>
-                  <span className={`text-sm ${loadingRates ? 'animate-spin inline-block' : ''}`}>🔄</span>
+                <button onClick={() => fetchRealTimeRates(true)} className={`ml-2 px-2 py-0.5 rounded-md flex items-center space-x-1 border shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-700 text-indigo-400 hover:bg-slate-700' : 'bg-white border-slate-200 text-indigo-500 hover:bg-indigo-50'}`}>
+                  <span className={`text-[10px] ${loadingRates ? 'animate-spin inline-block' : ''}`}>🔄</span>
+                  <span className="text-[9px] font-bold">업데이트</span>
                 </button>
               </h2>
-              {errorRates && <span className="text-rose-500 text-[10px] font-bold ml-2">{errorRates}</span>}
-              <button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all ml-auto ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
+              {errorRates && <span className="text-rose-500 text-[10px] font-bold ml-2 animate-in fade-in">{errorRates}</span>}
+              <button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ml-auto ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
                 <span className="text-xs">🌐</span>
                 <span>AI 번역기</span>
               </button>
@@ -2424,27 +2542,27 @@ const MainApp = () => {
               {CURRENCIES.map(cur => {
                 const isFocused = focusedCurrency === cur.code;
                 return (
-                  <div key={cur.code} className={`flex flex-col items-center justify-center p-1 sm:p-3 rounded-lg sm:rounded-xl border ${cardBg} transition-all duration-200 relative ${isFocused ? (isDarkMode ? 'border-indigo-400 bg-slate-800' : 'border-indigo-400 bg-indigo-50 shadow-sm') : 'shadow-sm'}`}>
-                    <span className={`text-[8px] sm:text-[10px] font-bold mb-0.5 sm:mb-1 uppercase truncate w-full text-center ${isFocused ? 'text-indigo-500' : textMuted}`}>{cur.label}</span>
+                  <div key={cur.code} className={`flex flex-col items-center justify-center p-1 sm:p-3 rounded-lg sm:rounded-xl border transition-all duration-300 relative ${isFocused ? (isDarkMode ? 'border-indigo-400 bg-slate-800 shadow-md' : 'border-indigo-400 bg-indigo-50 shadow-md') : `${cardBg} shadow-sm hover:shadow`}`}>
+                    <span className={`text-[8px] sm:text-[10px] font-bold mb-0.5 sm:mb-1 uppercase truncate w-full text-center transition-colors duration-300 ${isFocused ? 'text-indigo-500' : textMuted}`}>{cur.label}</span>
                     <input 
                       type="text" inputMode="decimal" value={getInputValue(cur.code)} onChange={(e) => handleInputChange(cur.code, e.target.value)} onFocus={() => setFocusedCurrency(cur.code)} onBlur={() => setFocusedCurrency(null)} placeholder={getPlaceholder(cur.code)} 
-                      className={`w-full bg-transparent border-none outline-none text-center text-[10px] sm:text-base font-black p-0 focus:ring-0 transition-colors placeholder:font-medium placeholder:text-slate-400 ${isFocused ? 'text-indigo-600' : textMain}`} 
+                      className={`w-full bg-transparent border-none outline-none text-center text-[10px] sm:text-base font-black p-0 focus:ring-0 transition-colors duration-300 placeholder:font-medium placeholder:text-slate-400 ${isFocused ? 'text-indigo-600' : textMain}`} 
                     />
-                    <span className={`text-[7px] sm:text-[9px] font-bold mt-0.5 sm:mt-1 ${isFocused ? 'text-indigo-400' : (amount ? textMuted : 'opacity-30')}`}>{amount ? cur.sym : '₩'}</span>
+                    <span className={`text-[7px] sm:text-[9px] font-bold mt-0.5 sm:mt-1 transition-all duration-300 ${isFocused ? 'text-indigo-400' : (amount ? textMuted : 'opacity-30')}`}>{amount ? cur.sym : '₩'}</span>
                   </div>
                 );
               })}
             </div>
 
             {/* 모바일에서만 렌더링되는 항공권 */}
-            {renderFlightCards(false)}
+            {renderFlightCards()}
 
             <div className="flex-1 flex flex-row gap-1 sm:gap-4 overflow-hidden min-h-0 h-full w-full relative" style={{"--mob-left": `${panelRatio}%`}}>
               
               {/* Left Panel */}
-              <div className={`max-md:w-[var(--mob-left)] md:w-[40%] ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-2xl sm:rounded-3xl shrink-0`}>
-                <div className={`flex flex-col mb-1.5 sm:mb-3 flex-shrink-0 border-b pb-1.5 relative z-10 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                  <div className={`flex items-center justify-between space-x-1.5 mb-1 sm:mb-2 ${textMuted}`}>
+              <div className={`max-md:w-[var(--mob-left)] md:w-[40%] ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-2xl sm:rounded-3xl shrink-0 transition-colors duration-300`}>
+                <div className={`flex flex-col mb-1.5 sm:mb-3 flex-shrink-0 border-b pb-1.5 relative z-10 transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                  <div className={`flex items-center justify-between space-x-1.5 mb-1 sm:mb-2 transition-colors duration-300 ${textMuted}`}>
                     <div className="flex items-center space-x-1.5">
                       <span className="text-[10px] sm:text-xs flex-shrink-0">📅</span>
                       <span className="text-[8px] sm:text-[10px] font-bold tracking-tight truncate">{getDayDateString(dashboardDay)}</span>
@@ -2452,14 +2570,14 @@ const MainApp = () => {
                   </div>
                   <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-1.5">
                     <div className="flex items-center justify-between w-full">
-                      <h3 className={`text-[10px] sm:text-xs font-bold tracking-tight ${textMain} leading-tight truncate mr-1`}>🎒 오늘의 계획</h3>
-                      <button onClick={() => setIsDashboardPackingOpen(true)} className={`px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold flex-shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>🎒 준비물</button>
+                      <h3 className={`text-[10px] sm:text-xs font-bold tracking-tight leading-tight truncate mr-1 transition-colors duration-300 ${textMain}`}>🎒 오늘의 계획</h3>
+                      <button onClick={() => setIsDashboardPackingOpen(true)} className={`px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold flex-shrink-0 transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>🎒 준비물</button>
                     </div>
-                    <div className={`grid grid-cols-4 gap-0.5 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-0.5 rounded-md w-full xl:w-[120px] overflow-y-auto custom-scrollbar max-h-16`}>
+                    <div className={`grid grid-cols-4 gap-0.5 p-0.5 rounded-md w-full xl:w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
                       {tripDays.map(d => {
                          const wInfo = getWeatherForDay(d);
                          return (
-                           <button key={d} onClick={() => { setDashboardDay(d); saveToDb({dashboardDay: d}); }} className={`h-8 sm:h-10 flex flex-col items-center justify-center rounded flex-shrink-0 transition-all ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200'}`}>
+                           <button key={d} onClick={() => { setDashboardDay(d); saveToDb({dashboardDay: d}); }} className={`h-8 sm:h-10 flex flex-col items-center justify-center rounded flex-shrink-0 transition-all duration-300 ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
                              <span className="text-[7px] sm:text-[8px] font-bold">D{d}</span>
                              {wInfo ? <span className="text-[7px] sm:text-[8px] leading-none mt-0.5">{wInfo[1]}</span> : <div className="h-1 sm:h-2"></div>}
                            </button>
@@ -2469,9 +2587,9 @@ const MainApp = () => {
                   </div>
                 </div>
                 
-                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col space-y-1 sm:space-y-2 pr-1 relative z-10">
+                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col space-y-1 sm:space-y-2 pr-1 relative z-10 scroll-smooth">
                   {todayPlans.length === 0 ? (
-                     <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`flex-1 flex flex-col items-center justify-center text-[8px] sm:text-[10px] ${textMuted} font-bold text-center ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 hover:border-indigo-400'} rounded-lg border border-dashed cursor-pointer transition-all active:scale-[0.99]`}>
+                     <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`flex-1 flex flex-col items-center justify-center text-[8px] sm:text-[10px] ${textMuted} font-bold text-center rounded-lg border border-dashed cursor-pointer transition-all duration-300 active:scale-[0.99] ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 hover:border-indigo-400 hover:bg-slate-100'}`}>
                        <span>일정이 없습니다.<br/>클릭하여 추가!</span>
                      </div>
                   ) : (
@@ -2480,23 +2598,23 @@ const MainApp = () => {
                       const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-600 md:hover:border-indigo-400' : 'border-slate-100 md:hover:border-indigo-400');
                       
                       return (
-                      <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1 sm:p-2 rounded-lg border cursor-pointer ${cardBorder} ${isDarkMode ? 'bg-slate-700' : 'bg-white'} shadow-sm transition-all group relative`} onClick={(e) => { 
+                      <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1 sm:p-2 rounded-lg border cursor-pointer shadow-sm transition-all duration-300 group relative ${cardBorder} ${isDarkMode ? 'bg-slate-700 hover:bg-slate-600' : 'bg-white hover:bg-slate-50'}`} onClick={(e) => { 
                          e.stopPropagation(); 
                          if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                          else setActiveMobileCard(plan.id);
                       }}>
-                        <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0">{S(plan.time)}</div>
+                        <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{S(plan.time)}</div>
                         <div className="flex-1 min-w-0 flex flex-col px-0.5">
-                          <span className={`text-[8px] sm:text-[11px] font-bold truncate ${textMain}`}>
+                          <span className={`text-[8px] sm:text-[11px] font-bold truncate transition-colors duration-300 ${textMain}`}>
                             {S(plan.place)} {plan.localName ? <span className="text-indigo-500 text-[8px] sm:text-[9px]">({S(plan.localName)})</span> : ''} {plan.isAccommodation && '🏠'}
                           </span>
-                          {plan.features && <span className={`text-[6px] sm:text-[9px] truncate ${textMuted} mt-0.5`}>{S(plan.features)}</span>}
+                          {plan.features && <span className={`text-[6px] sm:text-[9px] truncate mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</span>}
                         </div>
                         
                         {/* 모바일 탭 & PC 호버 수정/삭제 메뉴 */}
-                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
-                           <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1"><span className="text-[10px] sm:text-xs">✏️</span></button>
-                           <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1"><span className="text-[10px] sm:text-xs">🗑️</span></button>
+                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                           <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
+                           <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
                         </div>
                       </div>
                     )})
@@ -2506,7 +2624,7 @@ const MainApp = () => {
 
               {/* Drag Handle */}
               <div 
-                 className="w-1.5 bg-slate-200/60 dark:bg-slate-700 hover:bg-indigo-400 rounded-full flex-shrink-0 md:hidden flex items-center justify-center cursor-col-resize active:bg-indigo-500 transition-colors"
+                 className="w-1.5 bg-slate-200/60 dark:bg-slate-700 hover:bg-indigo-400 rounded-full flex-shrink-0 md:hidden flex items-center justify-center cursor-col-resize active:bg-indigo-500 transition-colors duration-300"
                  onMouseDown={handleDragStart}
                  onTouchStart={handleDragStart}
               >
@@ -2514,15 +2632,15 @@ const MainApp = () => {
               </div>
 
               {/* Right Panel */}
-              <div className={`flex-1 ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-2xl sm:rounded-3xl`}>
+              <div className={`flex-1 ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-2xl sm:rounded-3xl transition-colors duration-300`}>
                 <div className="flex items-center justify-between mb-1.5 sm:mb-3 flex-shrink-0 relative z-30">
-                  <h3 className={`text-[10px] sm:text-sm font-bold tracking-tight flex items-center ${textMain}`}>
+                  <h3 className={`text-[10px] sm:text-sm font-bold tracking-tight flex items-center transition-colors duration-300 ${textMain}`}>
                     <span className="truncate max-w-[100px] sm:max-w-none">✈️ 여행 리스트({S(displayCityName)})</span>
                   </h3>
                   <div className="flex items-center space-x-1 sm:space-x-2">
-                    <div className={`grid grid-cols-4 gap-0.5 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-0.5 rounded-md min-w-[70px] sm:min-w-[100px] w-full max-w-[120px] overflow-y-auto custom-scrollbar max-h-16`}>
+                    <div className={`grid grid-cols-4 gap-0.5 p-0.5 rounded-md min-w-[70px] sm:min-w-[100px] w-full max-w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
                       {tripDays.map(d => (
-                         <button key={d} onClick={() => { setDashboardDay(d); saveToDb({dashboardDay: d}); }} className={`px-1 py-0.5 text-[7px] sm:text-[8px] font-bold rounded flex-shrink-0 transition-all ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200'}`}>
+                         <button key={d} onClick={() => { setDashboardDay(d); saveToDb({dashboardDay: d}); }} className={`px-1 py-0.5 text-[7px] sm:text-[8px] font-bold rounded flex-shrink-0 transition-all duration-300 ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
                            D{d}
                          </button>
                       ))}
@@ -2530,14 +2648,11 @@ const MainApp = () => {
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col min-h-0">
-                  {/* PC에서만 최상단 고정 렌더링되는 항공권 (Day 변경과 무관함) */}
-                  {renderFlightCards(true)}
-
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col min-h-0 scroll-smooth">
                   {/* 여행 리스트 카드: 컴팩트한 3열 배치 */}
                   <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-1.5 content-start">
                     {todayPlans.length === 0 ? (
-                       <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`col-span-full flex flex-col items-center justify-center ${textMuted} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 hover:border-indigo-400'} rounded-xl border border-dashed h-20 sm:h-24 cursor-pointer transition-all active:scale-[0.99]`}>
+                       <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`col-span-full flex flex-col items-center justify-center rounded-xl border border-dashed h-20 sm:h-24 cursor-pointer transition-all duration-300 active:scale-[0.99] ${textMuted} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 hover:border-indigo-400 hover:bg-white'}`}>
                          <span className="text-[9px] sm:text-[11px] font-bold">일정이 없습니다. 추가해 보세요!</span>
                        </div>
                     ) : (
@@ -2548,31 +2663,31 @@ const MainApp = () => {
                         return (
                         <div 
                           key={plan.id} 
-                          className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} rounded-lg border shadow-sm overflow-hidden flex flex-col transition-all group relative ${cardBorder}`}
+                          className={`rounded-lg border shadow-sm overflow-hidden flex flex-col transition-all duration-300 group relative hover:shadow-md ${cardBorder} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-white'}`}
                         >
                           {/* 교통편의 경우 사진 영역 아예 생략 */}
                           {!(plan.isTransport) && (
-                            <div className="w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b border-slate-200 dark:border-slate-700" 
+                            <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} 
                                  onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                               <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
                               <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">{S(plan.time)}</div>
-                              <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
+                              <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
                             </div>
                           )}
-                          <div className="flex flex-col p-1.5 flex-1 cursor-pointer hover:bg-slate-50/50 dark:hover:bg-slate-700/50 justify-start min-w-0" 
+                          <div className={`flex flex-col p-1.5 flex-1 cursor-pointer justify-start min-w-0 transition-colors duration-300 ${isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50/50'}`} 
                                onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                             {plan.isTransport && <span className="text-indigo-500 font-bold text-[7px] mb-0.5">{S(plan.time)}</span>}
-                            <h4 className={`font-black text-[9px] sm:text-[11px] ${textMain} truncate tracking-tight mb-0.5`}>
+                            <h4 className={`font-black text-[9px] sm:text-[11px] truncate tracking-tight mb-0.5 transition-colors duration-300 ${textMain}`}>
                               {S(plan.place)} {plan.isAccommodation && '🏠'}
                             </h4>
                             {plan.localName && <p className="text-[7px] sm:text-[9px] text-indigo-500 font-bold truncate mb-0.5 sm:mb-1">{S(plan.localName)}</p>}
-                            {plan.features && <p className={`text-[7px] sm:text-[8px] ${textMuted} line-clamp-2 leading-tight mt-auto`}>{S(plan.features)}</p>}
+                            {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-auto transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
                           </div>
                           
                           {/* 모바일 탭 & PC 호버 메뉴 분리 오버레이 */}
-                          <div className={`absolute right-1 top-1 flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
-                             <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1"><span className="text-xs">✏️</span></button>
-                             <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1"><span className="text-xs">🗑️</span></button>
+                          <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                             <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1 transition-colors"><span className="text-xs">✏️</span></button>
+                             <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1 transition-colors"><span className="text-xs">🗑️</span></button>
                           </div>
                         </div>
                       )})
@@ -2586,18 +2701,18 @@ const MainApp = () => {
           {/* --- Plan Tab --- */}
           <div className={`absolute inset-0 p-2 sm:p-4 pt-3 pb-4 flex flex-col animate-in slide-in-from-bottom-4 transition-opacity duration-300 overflow-hidden ${activeTab === 'plan' ? 'visible opacity-100 z-10' : 'invisible opacity-0 -z-10 pointer-events-none'}`}>
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 sm:mb-3 px-1 gap-2 flex-shrink-0">
-              <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight ${textMain}`}>
+              <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight transition-colors duration-300 ${textMain}`}>
                 📝 꼼꼼하게 채우는 여행 일기
               </h2>
               <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap sm:flex-nowrap gap-y-1">
                 <button onClick={() => {
-                  setTransType('flight'); setTransDir('outbound'); setModalTransData({ outbound: { ...initialTransState }, inbound: { ...initialTransState } });
+                  setTransType('flight'); setTransDir('outbound'); setModalTransData({ flight: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } } });
                   setIsTransportModalOpen(true);
-                }} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all active:scale-95 ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300 border-indigo-500/50' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
+                }} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300 border-indigo-500/50 hover:bg-indigo-900/60' : 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100'}`}>
                    ✈️ 교통/항공권 등록
                 </button>
-                <div className={`flex items-center ${cardBg} px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg`}>
-                  <span className={`text-[8px] sm:text-[9px] font-bold mr-1 sm:mr-1.5 ${textMuted} flex-shrink-0`}>국가 🌍</span>
+                <div className={`flex items-center px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg transition-colors duration-300 ${cardBg}`}>
+                  <span className={`text-[8px] sm:text-[9px] font-bold mr-1 sm:mr-1.5 flex-shrink-0 transition-colors duration-300 ${textMuted}`}>국가 🌍</span>
                   <div className="flex-1 relative w-14 sm:w-20 h-full flex items-center">
                     <SelectOrInput 
                       inputId="global-country-input"
@@ -2612,8 +2727,8 @@ const MainApp = () => {
                     />
                   </div>
                 </div>
-                <div className={`flex items-center ${cardBg} px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg`}>
-                  <span className={`text-[8px] sm:text-[9px] font-bold mr-1 sm:mr-1.5 ${textMuted} flex-shrink-0`}>지역 📍</span>
+                <div className={`flex items-center px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg transition-colors duration-300 ${cardBg}`}>
+                  <span className={`text-[8px] sm:text-[9px] font-bold mr-1 sm:mr-1.5 flex-shrink-0 transition-colors duration-300 ${textMuted}`}>지역 📍</span>
                   <div className="flex-1 relative w-14 sm:w-20 h-full flex items-center">
                     <SelectOrInput 
                       inputId="global-region-input"
@@ -2638,8 +2753,8 @@ const MainApp = () => {
                     />
                   </div>
                 </div>
-                <div className={`flex items-center ${cardBg} px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg`}>
-                  <span className={`text-[8px] sm:text-[9px] font-bold mr-1 sm:mr-1.5 ${textMuted}`}>시작일</span>
+                <div className={`flex items-center px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg transition-colors duration-300 ${cardBg}`}>
+                  <span className={`text-[8px] sm:text-[9px] font-bold mr-1 sm:mr-1.5 transition-colors duration-300 ${textMuted}`}>시작일</span>
                   <input 
                     type="date" 
                     value={travelStartDate} 
@@ -2647,33 +2762,33 @@ const MainApp = () => {
                       setTravelStartDate(e.target.value); 
                       saveToDb({ travel_start_date: e.target.value });
                     }}
-                    className={`text-[8px] sm:text-[10px] font-bold outline-none bg-transparent ${textMain}`}
+                    className={`text-[8px] sm:text-[10px] font-bold outline-none bg-transparent transition-colors duration-300 ${textMain}`}
                   />
                 </div>
               </div>
             </div>
             
             {/* 전체 스크롤을 위해 컨테이너에 overflow-y-auto 적용 (모바일) */}
-            <div className={`flex-1 ${cardBg} flex flex-col sm:flex-row overflow-y-auto sm:overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar`}>
-              <div className={`w-full sm:w-56 p-3 sm:p-4 border-b sm:border-b-0 sm:border-r ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'} flex flex-col flex-shrink-0 sm:overflow-y-auto custom-scrollbar`}>
+            <div className={`flex-1 flex flex-col sm:flex-row overflow-y-auto sm:overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar transition-colors duration-300 ${cardBg}`}>
+              <div className={`w-full sm:w-56 p-3 sm:p-4 border-b sm:border-b-0 sm:border-r flex flex-col flex-shrink-0 sm:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
                 <div className="space-y-2 mt-1">
                   <div className="flex items-center justify-between mb-1">
-                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택</label>
+                    <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>일차 선택</label>
                     <div className="flex space-x-1">
-                      <button onClick={addDay} className="bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-indigo-100">+ Day 추가</button>
-                      {maxDay > 4 && <button onClick={removeDay} className="bg-rose-50 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-rose-100">- 삭제</button>}
+                      <button onClick={addDay} className="bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-indigo-100 transition-colors duration-300">+ Day 추가</button>
+                      {maxDay > 4 && <button onClick={removeDay} className="bg-rose-50 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-rose-100 transition-colors duration-300">- 삭제</button>}
                     </div>
                   </div>
-                  <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm mb-2 max-h-24 overflow-y-auto custom-scrollbar`}>
+                  <div className={`grid grid-cols-4 gap-1 border rounded-lg p-1 shadow-sm mb-2 max-h-24 overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200/80'}`}>
                     {tripDays.map(d => (
-                      <button key={d} onClick={() => setNewDay(d)} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all ${newDay === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100'}`}>D{d}</button>
+                      <button key={d} onClick={() => setNewDay(d)} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 ${newDay === d ? 'bg-indigo-600 text-white shadow-md scale-105' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
                     ))}
                   </div>
 
                   <div className="flex space-x-2">
                     <div className="flex flex-col space-y-1 w-1/2">
-                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>국가 🌍</label>
-                      <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 h-8 flex items-center rounded`}>
+                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>국가 🌍</label>
+                      <div className={`w-full border px-2 py-1.5 h-8 flex items-center rounded transition-colors duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}>
                         <SelectOrInput 
                           inputId="form-country-input"
                           value={planCountry} manualValue={manualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
@@ -2685,8 +2800,8 @@ const MainApp = () => {
                       </div>
                     </div>
                     <div className="flex flex-col space-y-1 w-1/2">
-                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>지역 📍</label>
-                      <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 h-8 flex items-center rounded`}>
+                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>지역 📍</label>
+                      <div className={`w-full border px-2 py-1.5 h-8 flex items-center rounded transition-colors duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}>
                         <SelectOrInput 
                           inputId="form-region-input"
                           value={planRegion} manualValue={manualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
@@ -2701,106 +2816,106 @@ const MainApp = () => {
 
                   <div className="flex space-x-2 items-end">
                     <div className="flex flex-col space-y-1 w-1/3">
-                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>시간 ⏰</label>
+                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>시간 ⏰</label>
                       <input 
                         type="text" 
                         maxLength="5" 
                         value={newTime} 
                         onChange={(e) => handleTimeInput(e, setNewTime)} 
                         placeholder="09:00" 
-                        className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded`} 
+                        className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`} 
                       />
                     </div>
                     <div className="flex flex-col space-y-1 flex-1 relative">
-                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 📍</label>
+                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>장소 📍</label>
                       <input 
                         type="text" 
                         placeholder="장소 이름 입력" 
                         value={newPlace} 
                         onChange={(e) => setNewPlace(e.target.value)}
-                        className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6 rounded`}
+                        className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6 rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
                       />
                     </div>
                   </div>
 
                   <div className="flex space-x-2 items-end">
                     <div className="flex flex-col space-y-1 flex-1">
-                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어(복사용)</label>
-                      <input type="text" placeholder="현지어 입력" value={newLocalName} onChange={e => setNewLocalName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded`} />
+                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>현지어(복사용)</label>
+                      <input type="text" placeholder="현지어 입력" value={newLocalName} onChange={e => setNewLocalName(e.target.value)} className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`} />
                     </div>
                     <div className="flex flex-col space-y-1 flex-1">
-                      <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모</label>
-                      <input type="text" placeholder="간단 메모" value={newFeatures} onChange={(e) => setNewFeatures(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSavePlan()} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded`} />
+                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>메모</label>
+                      <input type="text" placeholder="간단 메모" value={newFeatures} onChange={(e) => setNewFeatures(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSavePlan()} className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`} />
                     </div>
                   </div>
 
                   <div className="flex flex-col space-y-1 w-full pt-1">
                     <input type="file" accept="image/*" ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
-                    <button type="button" onClick={() => planFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold rounded border transition-all flex items-center justify-center ${newPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                      {newPhoto ? <span className="flex items-center">📸 사진 첨부 완료</span> : <span className="flex items-center">📸 사진 선택 (옵션)</span>}
+                    <button type="button" onClick={() => planFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold rounded border transition-all duration-300 flex items-center justify-center ${newPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
+                      {newPhoto ? <span className="flex items-center">📸 첨부 완료 (변경하려면 클릭 또는 붙여넣기)</span> : <span className="flex items-center">📸 사진 선택 (또는 Ctrl+V로 붙여넣기)</span>}
                     </button>
                   </div>
 
                   <div className="flex items-center space-x-2 my-1.5 px-1 pb-1">
                     <input type="checkbox" id="planIsAcc" checked={newIsAccommodation} onChange={e => setNewIsAccommodation(e.target.checked)} className="accent-indigo-600 w-3.5 h-3.5 cursor-pointer" />
-                    <label htmlFor="planIsAcc" className={`text-[10px] font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+                    <label htmlFor="planIsAcc" className={`text-[10px] font-bold cursor-pointer transition-colors duration-300 ${textMuted}`}>이 장소를 숙소로 설정 🏠</label>
                   </div>
 
                   <div className="pt-1 flex space-x-2">
-                    <button onClick={handleSavePlan} className="w-full bg-indigo-600 text-white rounded py-2.5 text-[11px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">
+                    <button onClick={handleSavePlan} className="w-full bg-indigo-600 text-white rounded py-2.5 text-[11px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">
                       <span>스케줄에 등록! ✨</span>
                     </button>
                   </div>
                   
-                  <div className={`mt-3 pt-3 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                     <button onClick={() => setIsPackingModalOpen(true)} className={`w-full flex items-center justify-center p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[11px] font-bold transition-all dark:bg-slate-800 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700`}>
+                  <div className={`mt-3 pt-3 border-t transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                     <button onClick={() => setIsPackingModalOpen(true)} className={`w-full flex items-center justify-center p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[11px] font-bold transition-all duration-300 active:scale-95 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700`}>
                         🎒 준비물 체크리스트 열기
                      </button>
                   </div>
                 </div>
               </div>
 
-              <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'} w-full overflow-visible sm:overflow-hidden`}>
+              <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 w-full overflow-visible sm:overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
                 <div className="flex-1 grid grid-cols-4 gap-1 sm:gap-3 h-auto sm:h-full pb-2 min-h-max sm:min-h-0">
                   {[0, 1, 2, 3].map(colIndex => (
-                    <div key={colIndex} className="flex flex-col gap-2 sm:gap-3 h-full overflow-visible sm:overflow-y-auto custom-scrollbar sm:pr-1">
+                    <div key={colIndex} className="flex flex-col gap-2 sm:gap-3 h-full overflow-visible sm:overflow-y-auto custom-scrollbar sm:pr-1 scroll-smooth">
                       {tripDays
                         .filter(day => (day - 1) % 4 === colIndex)
                         .map(day => (
-                          <div key={day} className={`flex-1 flex flex-col ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'} rounded-xl border min-h-[150px] overflow-hidden shadow-sm`}>
-                            <div className={`py-1.5 flex flex-col items-center border-b ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'} flex-shrink-0`}>
-                              <span className={`text-[10px] sm:text-[11px] font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'} leading-tight`}>Day {day}</span>
-                              <span className={`text-[7px] sm:text-[8px] ${textMuted} mt-0.5`}>{getDayDateString(day)}</span>
+                          <div key={day} className={`flex-1 flex flex-col rounded-xl border min-h-[150px] overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
+                            <div className={`py-1.5 flex flex-col items-center border-b flex-shrink-0 transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
+                              <span className={`text-[10px] sm:text-[11px] font-bold leading-tight transition-colors duration-300 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Day {day}</span>
+                              <span className={`text-[7px] sm:text-[8px] mt-0.5 transition-colors duration-300 ${textMuted}`}>{getDayDateString(day)}</span>
                             </div>
-                            <div className={`flex-1 overflow-visible sm:overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+                            <div className={`flex-1 overflow-visible sm:overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
                               {planTimeline.filter(p => parseInt(p.day || 1) === day).length === 0 ? (
-                                 <div className={`flex flex-col items-center justify-center h-full min-h-[100px] text-[8px] sm:text-[9px] ${textMuted}`}>
+                                 <div className={`flex flex-col items-center justify-center h-full min-h-[100px] text-[8px] sm:text-[9px] transition-colors duration-300 ${textMuted}`}>
                                    <span>일정 없음</span>
                                  </div>
                               ) : (
                                 planTimeline.filter(p => parseInt(p.day || 1) === day).map((plan) => {
                                   const isActive = activeMobileCard === plan.id;
                                   return (
-                                  <div key={plan.id} className={`${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-100'} p-1.5 sm:p-2 rounded-lg border relative group transition-all ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
+                                  <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                                     <div className="flex justify-between items-start mb-1">
-                                      <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none">{S(plan.time)}</span>
-                                      <div className={`transition-opacity flex space-x-1 bg-white/90 rounded border border-slate-200 absolute top-1 right-1 z-10 shadow-sm ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
-                                        <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
-                                        <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+                                      <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>
+                                      <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                                        <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
                                       </div>
                                     </div>
                                     <div className="flex gap-1.5 items-start mt-1">
                                       <div className="flex-1 min-w-0 flex flex-col cursor-pointer" >
-                                        <p className={`text-[9px] sm:text-[10px] font-bold ${textMain} leading-tight line-clamp-2`}>{S(plan.place)} {plan.isAccommodation && '🏠'}</p>
+                                        <p className={`text-[9px] sm:text-[10px] font-bold leading-tight line-clamp-2 transition-colors duration-300 ${textMain}`}>{S(plan.place)} {plan.isAccommodation && '🏠'}</p>
                                         {plan.localName && (
-                                          <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70">
+                                          <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70 transition-opacity">
                                             📋 {S(plan.localName)}
                                           </p>
                                         )}
-                                        {plan.features && <p className={`text-[7px] sm:text-[8px] ${textMuted} line-clamp-2 leading-tight mt-0.5`}>{S(plan.features)}</p>}
+                                        {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
                                       </div>
                                       {plan.photo && !plan.isTransport && (
-                                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0">
+                                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500">
                                           <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
                                         </div>
                                       )}
@@ -2823,44 +2938,44 @@ const MainApp = () => {
             <div className="flex flex-col gap-2 mb-2 flex-shrink-0 relative z-20">
               
               {/* 필터 및 색상 동기화 패널 */}
-              <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 w-full max-w-full">
-                 <button onClick={() => setMapActiveDay('all')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all ${mapActiveDay === 'all' ? (isDarkMode ? 'bg-indigo-500 text-white border-indigo-500 shadow-md' : 'bg-slate-800 text-white shadow-md border-slate-800') : (isDarkMode ? 'bg-slate-800 text-slate-300 border border-slate-600' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50')}`}>전체보기</button>
+              <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 w-full max-w-full scroll-smooth">
+                 <button onClick={() => setMapActiveDay('all')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 ${mapActiveDay === 'all' ? (isDarkMode ? 'bg-indigo-500 text-white border-indigo-500 shadow-md' : 'bg-slate-800 text-white shadow-md border-slate-800') : (isDarkMode ? 'bg-slate-800 text-slate-300 border border-slate-600' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50')}`}>전체보기</button>
                  {tripDays.map(d => {
                    const color = getDayColor(d);
                    const isActive = mapActiveDay === d;
                    return (
-                     <button key={d} onClick={() => setMapActiveDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all ${isActive ? 'shadow-md' : 'hover:opacity-80'}`}>Day {d}</button>
+                     <button key={d} onClick={() => setMapActiveDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all duration-300 ${isActive ? 'shadow-md scale-105' : 'hover:opacity-80'}`}>Day {d}</button>
                    )
                  })}
-                 <button onClick={() => setMapActiveDay('unlinked')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all border ${mapActiveDay === 'unlinked' ? 'bg-slate-500 text-white shadow-md border-slate-500' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-600' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
+                 <button onClick={() => setMapActiveDay('unlinked')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 border ${mapActiveDay === 'unlinked' ? 'bg-slate-500 text-white shadow-md border-slate-500' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-600' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
               </div>
 
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                 <div className="relative w-full sm:w-64">
-                   <div className={`flex items-center shadow-sm rounded-lg overflow-hidden border ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-300 bg-white'}`}>
-                      <span className={`ml-3 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>🔍</span>
+                   <div className={`flex items-center shadow-sm rounded-lg overflow-hidden border transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-300 bg-white'}`}>
+                      <span className={`ml-3 text-sm transition-colors duration-300 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>🔍</span>
                       <input 
                         type="text" 
                         value={S(markerSearchQuery)}
                         onChange={e => setMarkerSearchQuery(e.target.value)}
                         placeholder="내 지도 핀 검색..."
-                        className={`w-full pl-2 pr-8 py-2 bg-transparent text-[11px] font-bold ${isDarkMode ? 'text-white placeholder-slate-400' : 'text-slate-800'} focus:outline-none`}
+                        className={`w-full pl-2 pr-8 py-2 bg-transparent text-[11px] font-bold focus:outline-none transition-colors duration-300 ${isDarkMode ? 'text-white placeholder-slate-400' : 'text-slate-800'}`}
                       />
                       {markerSearchQuery && (
-                        <button onClick={() => setMarkerSearchQuery("")} className="absolute right-3 text-slate-400 hover:text-slate-600">✕</button>
+                        <button onClick={() => setMarkerSearchQuery("")} className="absolute right-3 text-slate-400 hover:text-slate-600 transition-colors">✕</button>
                       )}
                    </div>
                    {markerSearchQuery && filteredMarkers.length > 0 && (
-                     <div className={`absolute top-full left-0 right-0 mt-1 ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'} border rounded-lg shadow-xl overflow-hidden max-h-40 overflow-y-auto custom-scrollbar`}>
+                     <div className={`absolute top-full left-0 right-0 mt-1 border rounded-lg shadow-xl overflow-hidden max-h-40 overflow-y-auto custom-scrollbar animate-in fade-in duration-200 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
                         {filteredMarkers.map(marker => (
                           <button 
                             key={marker.id}
                             onClick={() => handleMarkerSearchSelect(marker)}
-                            className={`w-full text-left px-3 py-2.5 text-[11px] font-bold border-b last:border-0 flex items-center transition-colors ${isDarkMode ? 'text-slate-200 border-slate-700 hover:bg-slate-700' : 'text-slate-700 border-slate-100 hover:bg-indigo-50'}`}
+                            className={`w-full text-left px-3 py-2.5 text-[11px] font-bold border-b last:border-0 flex items-center transition-colors duration-300 ${isDarkMode ? 'text-slate-200 border-slate-700 hover:bg-slate-700' : 'text-slate-700 border-slate-100 hover:bg-indigo-50'}`}
                           >
-                            <div className={`w-2 h-2 rounded-full mr-2.5 ${planTimeline.some(p=>S(p.place)===S(marker.name))?'bg-orange-500':'bg-blue-500'} group-hover:scale-125 transition-transform`}></div>
+                            <div className={`w-2 h-2 rounded-full mr-2.5 transition-transform duration-300 ${planTimeline.some(p=>S(p.place)===S(marker.name))?'bg-orange-500':'bg-blue-500'} group-hover:scale-125`}></div>
                             <span className="truncate flex-1">{S(marker.name)}</span>
-                            <span className={`text-[9px] ${textMuted} ml-2`}>{S(marker.city)}</span>
+                            <span className={`text-[9px] ml-2 transition-colors duration-300 ${textMuted}`}>{S(marker.city)}</span>
                           </button>
                         ))}
                      </div>
@@ -2868,32 +2983,32 @@ const MainApp = () => {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1.5">
-                   <button onClick={() => setIsMyPinsModalOpen(true)} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-colors shadow-sm active:scale-95 ${isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-700'}`}>
+                   <button onClick={() => setIsMyPinsModalOpen(true)} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-all duration-300 shadow-sm active:scale-95 ${isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}>
                       <span className="text-xs mr-1">📍</span><span>내 핀 목록</span>
                    </button>
-                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
+                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
                       <input type="checkbox" checked={isPinMode} onChange={e => setIsPinMode(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
                       <span>핀 설정 📍</span>
                    </label>
-                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
+                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
                       <input type="checkbox" checked={showMapPhotos} onChange={e => setShowMapPhotos(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
                       <span>사진</span>
                    </label>
-                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
+                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
                       <input type="checkbox" checked={showMapLabels} onChange={e => setShowMapLabels(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
                       <span>이름</span>
                    </label>
-                   <button onClick={handleFindMyLocation} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-colors shadow-sm active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                   <button onClick={handleFindMyLocation} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-all duration-300 shadow-sm active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
                       <span className="text-xs mr-1">🧭</span><span>현재 위치</span>
                    </button>
                 </div>
               </div>
             </div>
             
-            <div className={`flex-1 ${cardBg} relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl`}>
+            <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`}>
               <div className="w-full h-full rounded-3xl overflow-hidden relative">
                 {!isLeafletLoaded && (
-                  <div className={`absolute inset-0 z-0 flex flex-col items-center justify-center ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-400'}`}>
+                  <div className={`absolute inset-0 z-0 flex flex-col items-center justify-center transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-400'}`}>
                     <span className="text-xl animate-spin inline-block mb-2">🔄</span>
                     <span className="text-[10px] font-bold">지도 로딩 중...</span>
                   </div>
@@ -2935,15 +3050,15 @@ const MainApp = () => {
         
         .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } 
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } 
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; transition: background 0.3s; }
         .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; }
         input[type="text"], input[type="password"], input[type="date"], select { font-variant-numeric: tabular-nums; }
-        .leaflet-container { z-index: 10; font-family: inherit; background: transparent; border-radius: 1rem; }
+        .leaflet-container { z-index: 10; font-family: inherit; background: transparent; border-radius: 1rem; transition: filter 0.3s; }
         .dark .leaflet-container { filter: brightness(0.8) contrast(1.2); }
-        .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); border: 1px solid #e2e8f0; }
+        .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); border: 1px solid #e2e8f0; transition: all 0.3s; }
         .dark .leaflet-popup-content-wrapper { background: #1e293b; border-color: #334155; color: white; }
         .leaflet-popup-content { margin: 12px; font-family: inherit; line-height: 1.4; }
-        .leaflet-popup-tip { background: #fff; border-top: 1px solid #e2e8f0; border-left: 1px solid #e2e8f0; }
+        .leaflet-popup-tip { background: #fff; border-top: 1px solid #e2e8f0; border-left: 1px solid #e2e8f0; transition: all 0.3s; }
         .dark .leaflet-popup-tip { background: #1e293b; border-top-color: #334155; border-left-color: #334155; }
       `}} />
     </div>
@@ -2976,7 +3091,7 @@ class GlobalErrorBoundary extends React.Component {
               localStorage.clear(); 
               window.location.reload(); 
             }} 
-            className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all"
+            className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300"
           >
             데이터 강제 초기화 및 복구하기
           </button>
