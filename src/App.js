@@ -16,6 +16,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 11. 클립보드 이미지 Paste 전역 지원 및 여행 간 전환/생성 시 데이터 꼬임 방지 로직 적용
   - 12. 메뉴 창 유지 및 더블클릭 생성 버그 차단, 전역 모션 스무딩(최적화)
   - 13. 교통편 상태 완벽 분리, 항공권 병렬 배치 및 좌석 번호 표시, 잘림 오류 완벽 복구
+  - 14. [FIX] 새 여행 모달 Z-index 최상위 확보 및 오픈 시 메뉴 자동 닫기 처리
+  - 15. [FIX] 여행 전환 시 DB 상태 Race Condition 해결 및 상태 덮어쓰기 버그 완벽 수정
   =============================================================================
 */
 
@@ -478,6 +480,7 @@ const MainApp = () => {
     } catch (e) { console.error("Weather error", e); }
   }, []);
 
+  // [FIX] upsert -> update 변경으로 덮어쓰기 버그 해결
   const saveToDb = useCallback(async (updates) => {
     const targetId = sharedTripId || activeTripId;
     try {
@@ -491,7 +494,7 @@ const MainApp = () => {
 
     if (supabaseClient && appUserId && appUserId !== "Guest") {
       try {
-        await supabaseClient.from('travel_state').upsert({ id: targetId, ...updates });
+        await supabaseClient.from('travel_state').update(updates).eq('id', targetId);
       } catch (err) { console.error(err); }
     }
   }, [sharedTripId, activeTripId, supabaseClient, appUserId]);
@@ -520,11 +523,13 @@ const MainApp = () => {
 
   function openAddTripModal() {
     if (!supabaseClient || appUserId === "Guest") { showToast("로그인이 필요한 기능입니다."); return; }
+    setIsMobileMenuOpen(false); // [FIX] 메뉴 닫기 추가
     setTripModal({ isOpen: true, mode: 'add', name: '' });
   }
 
   function openRenameTripModal() {
     if (!supabaseClient || appUserId === "Guest") return;
+    setIsMobileMenuOpen(false); // [FIX] 메뉴 닫기 추가
     const safeTrips = Array.isArray(trips) ? trips : [];
     const currentTrip = safeTrips.find(t => t && S(t.id) === S(activeTripId));
     setTripModal({ isOpen: true, mode: 'rename', name: S(currentTrip?.name) });
@@ -543,27 +548,26 @@ const MainApp = () => {
       const updatedTrips = [...safeTrips, { id: newId, name: S(tripModal.name) }];
       setTrips(updatedTrips);
       
-      await supabaseClient.from('travel_state').insert({
-        id: newId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0],
-        current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: []
-      });
+      if (appUserId !== "Guest") {
+        await supabaseClient.from('travel_state').insert({
+          id: newId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0],
+          current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: []
+        });
+        
+        // [FIX] DB 업데이트는 비동기로 처리 (UI Blocking 및 Race condition 방지)
+        supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: newId }).eq('app_user_id', appUserId).then();
+      }
 
-      await supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: newId }).eq('app_user_id', appUserId);
-
-      setDisplayCityName("선택된 지역 없음");
-      setCurrentRestaurants([]);
-      setPlanTimeline([]);
-      setFlights({ outbound: null, inbound: null });
-      setPackingList([]);
-      setTravelStartDate(new Date().toISOString().split('T')[0]);
-      
+      // 상태 변경 트리거 (중앙 useEffect에서 깨끗하게 fetch 되도록 유도)
       setActiveTripId(newId);
       setSharedTripId(null);
       showToast(`'${tripModal.name}' 일정을 시작합니다.`);
     } else {
       const updatedTrips = safeTrips.map(t => t && S(t.id) === S(activeTripId) ? { ...t, name: S(tripModal.name) } : t);
       setTrips(updatedTrips);
-      await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
+      if (appUserId !== "Guest") {
+        supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId).then();
+      }
       showToast("여행 이름이 변경되었습니다.");
     }
     
@@ -571,46 +575,47 @@ const MainApp = () => {
     setIsSubmittingTrip(false);
   }
 
-  async function handleSwitchTrip(tripId) {
-    if (!supabaseClient || appUserId === "Guest") return;
-    await supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId);
+  function handleSwitchTrip(tripId) {
+    setIsMobileMenuOpen(false); // [FIX] 모바일 메뉴 닫기
+
+    if (!supabaseClient || appUserId === "Guest") {
+      setActiveTripId(S(tripId));
+      setSharedTripId(null);
+      showToast("여행 일정을 불러왔습니다.");
+      return;
+    }
+
+    if (activeTripId === tripId && !sharedTripId) return; // 중복 클릭 차단
     
-    setDisplayCityName("선택된 지역 없음");
-    setCurrentRestaurants([]);
-    setPlanTimeline([]);
-    setFlights({ outbound: null, inbound: null });
-    setPackingList([]);
-    
+    // [FIX] 동기화/초기화는 activeTripId를 감지하는 useEffect에 위임 (Race Condition 해결)
     setActiveTripId(S(tripId));
     setSharedTripId(null);
     showToast("여행 일정을 불러왔습니다.");
+
+    // DB 업데이트 백그라운드 전송
+    supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId).then();
   }
 
-  async function confirmDeleteTrip() {
+  function confirmDeleteTrip() {
     if (trips.length <= 1) {
         showToast("최소 1개의 여행 일정은 남겨두어야 합니다.");
         setTripToDelete(null);
         return;
     }
+    setIsMobileMenuOpen(false); // 휴지통 클릭 후 메뉴 닫기 추가
     const updatedTrips = trips.filter(t => t.id !== tripToDelete);
     setTrips(updatedTrips);
     
     try {
         if (supabaseClient && appUserId !== "Guest") {
-            await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
-            await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
+            supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId).then();
+            supabaseClient.from('travel_state').delete().eq('id', tripToDelete).then();
         }
         
         if (activeTripId === tripToDelete) {
-            setDisplayCityName("선택된 지역 없음");
-            setCurrentRestaurants([]);
-            setPlanTimeline([]);
-            setFlights({ outbound: null, inbound: null });
-            setPackingList([]);
-            
             setActiveTripId(updatedTrips[0].id);
             if (supabaseClient && appUserId !== "Guest") {
-                await supabaseClient.from('profiles').update({ activeTripId: updatedTrips[0].id }).eq('app_user_id', appUserId);
+                supabaseClient.from('profiles').update({ activeTripId: updatedTrips[0].id }).eq('app_user_id', appUserId).then();
             }
         }
     } catch(err) {
@@ -1375,6 +1380,7 @@ const MainApp = () => {
     } catch(e){}
   }, []);
 
+  // [FIX] 중앙 State 초기화 및 Fetch 로직: 여행 탭 전환 시 Race Condition을 통제합니다.
   useEffect(() => {
     if (!supabaseClient || !appUserId || appUserId === "Guest") return;
     
@@ -1750,7 +1756,7 @@ const MainApp = () => {
                   {trips.map(t => (
                     <button 
                       key={t.id} 
-                      onClick={() => { handleSwitchTrip(t.id); setIsMobileMenuOpen(false); }} 
+                      onClick={() => { handleSwitchTrip(t.id); }} 
                       className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 truncate flex items-center justify-between group ${activeTripId === t.id && !sharedTripId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
                     >
                       <span className="truncate">{S(t.name)}</span>
@@ -2077,8 +2083,8 @@ const MainApp = () => {
       )}
 
       {tripModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 z-[7000] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
-          <div className={`${cardBg} w-full max-w-xs p-5 flex flex-col animate-in zoom-in-95 z-[7001] duration-300`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 z-[9998] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
+          <div className={`${cardBg} w-full max-w-xs p-5 flex flex-col animate-in zoom-in-95 z-[9999] duration-300`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between pb-3 border-b mb-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
               <h2 className="text-sm font-black text-indigo-500">{tripModal.mode === 'add' ? '새 여행 만들기 ✈️' : '여행 이름 변경 ✏️'}</h2>
               <button onClick={() => setTripModal({ ...tripModal, isOpen: false })} className="transition-colors hover:text-slate-500">✕</button>
