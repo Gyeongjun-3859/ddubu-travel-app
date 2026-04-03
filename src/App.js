@@ -19,6 +19,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 14. [FIX] 새 여행 모달 Z-index 최상위 확보 및 오픈 시 메뉴 닫힘 방지 처리
   - 15. [FIX] 여행 전환 시 DB 상태 Race Condition 해결 및 상태 덮어쓰기 버그 완벽 수정
   - 16. [FIX] 수동 로그인 시 이전 여행 기록(activeTripId) 미동기화 버그 수정 및 UI 덜컹거림 수정
+  - 17. [FIX] 앱 재시작/전환 시 비동기 렌더링으로 인한 데이터 증발(초기화) 완벽 차단 및 문서함용 명시적 저장 버튼 추가
   =============================================================================
 */
 
@@ -500,6 +501,19 @@ const MainApp = () => {
     }
   }, [sharedTripId, activeTripId, supabaseClient, appUserId]);
 
+  // 명시적 "문서함 저장" 버튼 함수
+  function handleForceSave() {
+    saveToDb({
+      display_city_name: displayCityName,
+      travel_start_date: travelStartDate,
+      current_restaurants: currentRestaurants,
+      plan_timeline: planTimeline,
+      flights: flights,
+      packing_list: packingList
+    });
+    showToast("💾 일정이 내 여행 목록에 안전하게 저장되었습니다!");
+  }
+
   async function fetchCityRestaurants(shortName) {
     if (!shortName) return;
     const cleanName = S(shortName).split(',')[0].trim();
@@ -606,7 +620,6 @@ const MainApp = () => {
         setTripToDelete(null);
         return;
     }
-    setIsMobileMenuOpen(false); // 휴지통 클릭 후 메뉴 닫기 추가
     const updatedTrips = trips.filter(t => t.id !== tripToDelete);
     setTrips(updatedTrips);
     
@@ -1193,60 +1206,52 @@ const MainApp = () => {
   
   useEffect(() => {
     if (appUserId === "Guest") {
-      let ignore = false;
-      setDisplayCityName("선택된 지역 없음");
-      setCurrentRestaurants([]);
-      setPlanTimeline([]);
-      setFlights({ outbound: null, inbound: null });
-      setPackingList([]);
-      setTravelStartDate(new Date().toISOString().split('T')[0]);
-
-      setTimeout(() => {
-        if (ignore) return;
-        try {
-          const targetId = S(activeTripId);
-          const allStatesStr = localStorage.getItem('my_travel_states');
-          if (allStatesStr) {
-            const allStates = JSON.parse(allStatesStr);
-            if (allStates && typeof allStates === 'object' && allStates[targetId]) {
-              const data = allStates[targetId];
-              if (data && typeof data === 'object') {
-                if (data.display_city_name) {
-                   setDisplayCityName(S(data.display_city_name));
-                   syncCountryRegionFromCityName(S(data.display_city_name), data.plan_timeline);
-                }
-                if (data.travel_start_date) setTravelStartDate(S(data.travel_start_date));
-                if (data.flights) setFlights(data.flights);
-                if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
-                if (data.shared_users && Array.isArray(data.shared_users)) setSharedUsers(data.shared_users);
-                else setSharedUsers([]);
-                
-                if (Array.isArray(data.current_restaurants)) {
-                  const cleanRests = data.current_restaurants.map(r => {
-                    if (!r || typeof r !== 'object') return null;
-                    return { id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) };
-                  }).filter(Boolean);
-                  setCurrentRestaurants(cleanRests);
-                }
-                if (Array.isArray(data.plan_timeline)) {
-                  const cleanPlans = data.plan_timeline.map(p => {
-                    if (!p || typeof p !== 'object') return null;
-                    return { id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) };
-                  }).filter(Boolean);
-                  setPlanTimeline(cleanPlans);
-                }
-              }
+      try {
+        const targetId = S(activeTripId);
+        const allStatesStr = localStorage.getItem('my_travel_states');
+        let loaded = false;
+        
+        if (allStatesStr) {
+          const allStates = JSON.parse(allStatesStr);
+          if (allStates && typeof allStates === 'object' && allStates[targetId]) {
+            const data = allStates[targetId];
+            if (data && typeof data === 'object') {
+              setDisplayCityName(data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음");
+              syncCountryRegionFromCityName(data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음", data.plan_timeline);
+              setTravelStartDate(data.travel_start_date ? S(data.travel_start_date) : new Date().toISOString().split('T')[0]);
+              setFlights(data.flights || { outbound: null, inbound: null });
+              setPackingList(Array.isArray(data.packing_list) ? data.packing_list : []);
+              setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
+              
+              if (Array.isArray(data.current_restaurants)) {
+                setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) })));
+              } else { setCurrentRestaurants([]); }
+              
+              if (Array.isArray(data.plan_timeline)) {
+                setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) })));
+              } else { setPlanTimeline([]); }
+              
+              loaded = true;
             }
           }
-        } catch (e) {
-          console.error("Local data load error", e);
-          try { localStorage.removeItem('my_travel_states'); } catch(err){}
+        }
+
+        if (!loaded) {
+          setDisplayCityName("선택된 지역 없음");
           setCurrentRestaurants([]);
           setPlanTimeline([]);
+          setFlights({ outbound: null, inbound: null });
+          setPackingList([]);
+          setTravelStartDate(new Date().toISOString().split('T')[0]);
         }
-      }, 0);
-      
-      return () => { ignore = true; };
+      } catch (e) {
+        console.error("Local data load error", e);
+        setDisplayCityName("선택된 지역 없음");
+        setCurrentRestaurants([]);
+        setPlanTimeline([]);
+        setFlights({ outbound: null, inbound: null });
+        setPackingList([]);
+      }
     }
   }, [appUserId, activeTripId, syncCountryRegionFromCityName]);
 
@@ -1410,13 +1415,6 @@ const MainApp = () => {
 
     const targetId = sharedTripId || activeTripId;
     
-    setDisplayCityName("선택된 지역 없음");
-    setCurrentRestaurants([]);
-    setPlanTimeline([]);
-    setFlights({ outbound: null, inbound: null });
-    setPackingList([]);
-    setTravelStartDate(new Date().toISOString().split('T')[0]);
-
     let ignore = false;
     const fetchTrip = async () => {
       try {
@@ -1426,21 +1424,25 @@ const MainApp = () => {
           const cName = data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음";
           setDisplayCityName(cName);
           syncCountryRegionFromCityName(cName, data.plan_timeline);
-
           setTravelStartDate(data.travel_start_date ? S(data.travel_start_date) : new Date().toISOString().split('T')[0]);
-          if (data.flights) setFlights(data.flights);
-          if (data.packing_list && Array.isArray(data.packing_list)) setPackingList(data.packing_list);
-          if (data.shared_users && Array.isArray(data.shared_users)) setSharedUsers(data.shared_users); 
-          else setSharedUsers([]);
+          setFlights(data.flights || { outbound: null, inbound: null });
+          setPackingList(Array.isArray(data.packing_list) ? data.packing_list : []);
+          setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
           
           if (Array.isArray(data.current_restaurants)) {
-            const cleanRests = data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) }));
-            setCurrentRestaurants(cleanRests);
-          }
+            setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) })));
+          } else { setCurrentRestaurants([]); }
+          
           if (Array.isArray(data.plan_timeline)) {
-            const cleanPlans = data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) }));
-            setPlanTimeline(cleanPlans);
-          }
+            setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) })));
+          } else { setPlanTimeline([]); }
+        } else {
+           setDisplayCityName("선택된 지역 없음");
+           setCurrentRestaurants([]);
+           setPlanTimeline([]);
+           setFlights({ outbound: null, inbound: null });
+           setPackingList([]);
+           setTravelStartDate(new Date().toISOString().split('T')[0]);
         }
       } catch(e) { console.error(e); }
     };
@@ -2532,6 +2534,9 @@ const MainApp = () => {
           </div>
           
           <div className="flex items-center space-x-1 sm:space-x-2">
+            <button onClick={handleForceSave} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 bg-emerald-500 text-white shadow-sm hover:bg-emerald-600 active:scale-95 flex items-center mr-1`}>
+              <span className="mr-1">💾</span> <span className="hidden sm:inline">저장</span>
+            </button>
             <button onClick={() => changeTab('dashboard')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
               <span className="hidden sm:inline">대쉬보드 </span>🌍
             </button>
@@ -2893,6 +2898,9 @@ const MainApp = () => {
                   </div>
                   
                   <div className={`mt-3 pt-3 border-t transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                     <button onClick={handleForceSave} className={`w-full mb-2 flex items-center justify-center p-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold transition-all duration-300 active:scale-95 shadow-md`}>
+                        💾 일정 저장하기
+                     </button>
                      <button onClick={() => setIsPackingModalOpen(true)} className={`w-full flex items-center justify-center p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[11px] font-bold transition-all duration-300 active:scale-95 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700`}>
                         🎒 준비물 체크리스트 열기
                      </button>
