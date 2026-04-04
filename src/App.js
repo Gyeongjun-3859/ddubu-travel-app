@@ -16,11 +16,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 11. 클립보드 이미지 Paste 전역 지원 및 여행 간 전환/생성 시 데이터 꼬임 방지 로직 적용
   - 12. 메뉴 창 유지 및 더블클릭 생성 버그 차단, 전역 모션 스무딩(최적화)
   - 13. 교통편 상태 완벽 분리, 항공권 병렬 배치 및 좌석 번호 표시, 잘림 오류 완벽 복구
-  - 14. [FIX] 새 여행 모달 Z-index 최상위 확보 및 오픈 시 메뉴 닫힘 방지 처리
-  - 15. [FIX] 여행 전환 시 DB 상태 Race Condition 해결 및 상태 덮어쓰기 버그 완벽 수정
-  - 16. [FIX] 수동 로그인 시 이전 여행 기록(activeTripId) 미동기화 버그 수정 및 UI 덜컹거림 수정
-  - 17. [FIX] 앱 재시작/전환 시 비동기 렌더링으로 인한 데이터 증발(초기화) 완벽 차단 및 문서함용 명시적 저장 버튼 추가
-  - 18. [FIX] 로컬(Guest) 모드 Trips 배열 영구 보존 로직 추가 및 메뉴 UI 닫힘 방지 완벽 통제 적용
+  - 14. [FIX] 윈도우 사용자 배려 폰트(맑은 고딕 등) 설정 기능 추가
+  - 15. [FIX] 모바일 가로모드(Landscape) 대응 동적 스크롤(min-h) 최적화
+  - 16. [FIX] 공유 여행 영구 리스트업 및 '내 일정으로 가져오기(복사/업데이트)' 기능 추가
+  - 17. [FIX] 공유 참여자 '강퇴(중지)' 기능 및 커스텀 확인 모달 구현 완료
+  - 18. [FIX] 일정 탭 불필요한 저장 버튼 제거 및 여행 시작일 기반 D-Day 자동 선택 로직 고도화
+  - 19. [FIX] 사진 첨부 UI 병렬 분리 (붙여넣기/파일 선택) 및 렌더링 듀얼 이미지 완벽 지원
+  - 20. [FIX] 탭 중복 렌더링 코드 제거 및 안정화 처리 (Unexpected end of file 해결)
+  - 21. [OPT] 반복되는 데이터 매핑 코드 통합 및 최적화 완료
   =============================================================================
 */
 
@@ -92,6 +95,17 @@ function compressImage(file, callback) {
   };
 }
 
+// [OPT] 중복 코드 제거를 위한 파싱 유틸리티 함수 추가
+const parseRestaurants = (list) => {
+  if (!Array.isArray(list)) return [];
+  return list.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) }));
+};
+
+const parseTimeline = (list) => {
+  if (!Array.isArray(list)) return [];
+  return list.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), pastedPhoto: S(p.pastedPhoto), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) }));
+};
+
 const SelectOrInput = ({ value, manualValue, onChangeSelect, onChangeManual, onCancelManual, options, placeholder, isDarkMode, appTheme, inputId }) => {
   let textColorClass = "text-slate-900";
   let placeholderClass = "placeholder-slate-400";
@@ -161,6 +175,7 @@ const MainApp = () => {
   const [inviteIdInput, setInviteIdInput] = useState("");
   const [sharedUsers, setSharedUsers] = useState([]);
   const [isSubmittingTrip, setIsSubmittingTrip] = useState(false); 
+  const [kickUserTarget, setKickUserTarget] = useState(null);
 
   const [weather, setWeather] = useState(null);
   const [forecast, setForecast] = useState([]);
@@ -213,6 +228,7 @@ const MainApp = () => {
   const [newLocalName, setNewLocalName] = useState("");
   const [newFeatures, setNewFeatures] = useState("");
   const [newPhoto, setNewPhoto] = useState("");
+  const [newPastedPhoto, setNewPastedPhoto] = useState(""); 
   const [newIsAccommodation, setNewIsAccommodation] = useState(false);
   const [planCountry, setPlanCountry] = useState("");
   const [planRegion, setPlanRegion] = useState("");
@@ -273,7 +289,7 @@ const MainApp = () => {
     bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }
   });
 
-  const [panelRatio, setPanelRatio] = useState(50); // 모바일 병렬 배치 비율
+  const [panelRatio, setPanelRatio] = useState(50);
   const dragRef = useRef(false);
 
   const [activeMobileCard, setActiveMobileCard] = useState(null);
@@ -283,7 +299,6 @@ const MainApp = () => {
   const DAY_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#a855f7', '#ec4899', '#06b6d4', '#f97316', '#8b5cf6'];
   const getDayColor = useCallback((day) => DAY_COLORS[(parseInt(day) - 1) % DAY_COLORS.length], [DAY_COLORS]);
 
-  // Paste 이벤트를 위한 최신 상태 참조용
   const activeContextRef = useRef({ editingPlan, isAddPlaceModalOpen, activeTab });
   useEffect(() => {
     activeContextRef.current = { editingPlan, isAddPlaceModalOpen, activeTab };
@@ -313,14 +328,14 @@ const MainApp = () => {
         compressImage(imageFile, (compressedBase64) => {
           const ctx = activeContextRef.current;
           if (ctx.editingPlan) {
-            setEditingPlan(prev => ({...prev, photo: compressedBase64}));
-            showToast("📋 복사된 이미지가 붙여넣기 되었습니다!");
+            setEditingPlan(prev => ({...prev, pastedPhoto: compressedBase64})); 
+            showToast("📋 이미지가 붙여넣기 되었습니다!");
           } else if (ctx.isAddPlaceModalOpen) {
             setNewManualPhoto(compressedBase64);
             showToast("📋 핀 사진에 이미지가 붙여넣어 졌습니다!");
           } else if (ctx.activeTab === 'plan') {
-            setNewPhoto(compressedBase64);
-            showToast("📋 스케줄 사진에 이미지가 붙여넣어 졌습니다!");
+            setNewPastedPhoto(compressedBase64); 
+            showToast("📋 스케줄 캡쳐 이미지가 붙여넣어 졌습니다!");
           }
         });
       }
@@ -483,9 +498,8 @@ const MainApp = () => {
     } catch (e) { console.error("Weather error", e); }
   }, []);
 
-  // [FIX] upsert -> update 변경으로 덮어쓰기 버그 해결 및 완벽한 DB 연동
   const saveToDb = useCallback(async (updates) => {
-    const targetId = sharedTripId || activeTripId;
+    const targetId = activeTripId;
     try {
       const allStr = localStorage.getItem('my_travel_states') || '{}';
       const all = JSON.parse(allStr);
@@ -497,12 +511,21 @@ const MainApp = () => {
 
     if (supabaseClient && appUserId && appUserId !== "Guest") {
       try {
-        await supabaseClient.from('travel_state').update(updates).eq('id', targetId);
+        const { error } = await supabaseClient.from('travel_state').update(updates).eq('id', targetId);
+        if (error && error.code === '42703') {
+           const safeUpdates = {};
+           if ('display_city_name' in updates) safeUpdates.display_city_name = updates.display_city_name;
+           if ('travel_start_date' in updates) safeUpdates.travel_start_date = updates.travel_start_date;
+           if ('current_restaurants' in updates) safeUpdates.current_restaurants = updates.current_restaurants;
+           if ('plan_timeline' in updates) safeUpdates.plan_timeline = updates.plan_timeline;
+           if (Object.keys(safeUpdates).length > 0) {
+              await supabaseClient.from('travel_state').update(safeUpdates).eq('id', targetId);
+           }
+        }
       } catch (err) { console.error(err); }
     }
-  }, [sharedTripId, activeTripId, supabaseClient, appUserId]);
+  }, [activeTripId, supabaseClient, appUserId]);
 
-  // 명시적 "문서함 저장" 버튼 함수
   function handleForceSave() {
     saveToDb({
       display_city_name: displayCityName,
@@ -512,7 +535,43 @@ const MainApp = () => {
       flights: flights,
       packing_list: packingList
     });
-    showToast("💾 일정이 내 여행 목록에 안전하게 저장되었습니다!");
+    showToast("💾 전체 일정이 문서함(내 여행 목록)에 안전하게 저장되었습니다!");
+  }
+
+  // [공유된 여행 복사/가져오기 기능]
+  async function handleCloneSharedTrip() {
+    let cloneTripId = null;
+    const existingClone = trips.find(t => t.cloned_from === activeTripId);
+    
+    if (existingClone) {
+        cloneTripId = existingClone.id;
+    } else {
+        cloneTripId = `trip_${appUserId}_${Date.now()}`;
+        const currentTrip = trips.find(t => t.id === activeTripId);
+        const newName = `[복사본] ${currentTrip ? currentTrip.name.replace('🤝 ', '').split(' (')[0] : '여행'}`;
+        const newTrips = [...trips, { id: cloneTripId, name: newName, cloned_from: activeTripId }];
+        setTrips(newTrips);
+        if(supabaseClient) await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
+    }
+
+    const payload = {
+        id: cloneTripId,
+        display_city_name: displayCityName,
+        travel_start_date: travelStartDate,
+        current_restaurants: currentRestaurants,
+        plan_timeline: planTimeline,
+        flights: flights,
+        packing_list: packingList,
+        shared_users: [] 
+    };
+    
+    if(supabaseClient) {
+       const { error } = await supabaseClient.from('travel_state').upsert(payload);
+       if (error && error.code === '42703') {
+           await supabaseClient.from('travel_state').upsert({ id: cloneTripId, display_city_name: displayCityName, travel_start_date: travelStartDate, current_restaurants: currentRestaurants, plan_timeline: planTimeline });
+       }
+    }
+    showToast("✅ 내 일정(문서함)으로 성공적으로 복사(업데이트) 되었습니다!");
   }
 
   async function fetchCityRestaurants(shortName) {
@@ -567,7 +626,10 @@ const MainApp = () => {
           id: newId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0],
           current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: []
         };
-        await supabaseClient.from('travel_state').insert(insertPayload);
+        const { error: insErr } = await supabaseClient.from('travel_state').insert(insertPayload);
+        if (insErr && insErr.code === '42703') {
+           await supabaseClient.from('travel_state').insert({ id: newId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0], current_restaurants: [], plan_timeline: [] });
+        }
         await supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: newId }).eq('app_user_id', appUserId);
       } else {
         try {
@@ -580,9 +642,7 @@ const MainApp = () => {
         } catch(e) {}
       }
 
-      // 상태 변경 트리거 (중앙 useEffect에서 깨끗하게 fetch 되도록 유도)
       setActiveTripId(newId);
-      setSharedTripId(null);
       showToast(`'${tripModal.name}' 일정을 시작합니다.`);
     } else {
       const updatedTrips = safeTrips.map(t => t && S(t.id) === S(activeTripId) ? { ...t, name: S(tripModal.name) } : t);
@@ -602,20 +662,15 @@ const MainApp = () => {
   async function handleSwitchTrip(tripId) {
     if (!supabaseClient || appUserId === "Guest") {
       setActiveTripId(S(tripId));
-      setSharedTripId(null);
       localStorage.setItem('my_travel_guest_active_trip', tripId);
       showToast("여행 일정을 불러왔습니다.");
       return;
     }
 
-    if (activeTripId === tripId && !sharedTripId) return; // 중복 클릭 차단
+    if (activeTripId === tripId) return; 
     
-    // [FIX] 동기화/초기화는 activeTripId를 감지하는 useEffect에 위임 (Race Condition 해결)
     setActiveTripId(S(tripId));
-    setSharedTripId(null);
     showToast("여행 일정을 불러왔습니다.");
-
-    // DB 업데이트 대기
     await supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId);
   }
 
@@ -625,13 +680,24 @@ const MainApp = () => {
         setTripToDelete(null);
         return;
     }
+    
+    const tripToRemove = trips.find(t => t.id === tripToDelete);
     const updatedTrips = trips.filter(t => t.id !== tripToDelete);
     setTrips(updatedTrips);
     
     try {
         if (supabaseClient && appUserId !== "Guest") {
             await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
-            await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
+            
+            if (tripToRemove?.isShared) {
+               const { data } = await supabaseClient.from('travel_state').select('shared_users').eq('id', tripToDelete).single();
+               if (data && Array.isArray(data.shared_users)) {
+                  const newShared = data.shared_users.filter(u => u !== appUserId);
+                  await supabaseClient.from('travel_state').update({ shared_users: newShared }).eq('id', tripToDelete);
+               }
+            } else {
+               await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
+            }
         } else {
             localStorage.setItem('my_travel_guest_trips', JSON.stringify(updatedTrips));
         }
@@ -649,7 +715,7 @@ const MainApp = () => {
     }
     
     setTripToDelete(null);
-    showToast("여행이 정상적으로 삭제되었습니다.");
+    showToast(tripToRemove?.isShared ? "공유된 여행 목록에서 나갔습니다." : "여행이 정상적으로 삭제되었습니다.");
   }
 
   function handleElementScaleChange(e) {
@@ -759,7 +825,10 @@ const MainApp = () => {
           id: defaultTripId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0], 
           current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [] 
         };
-        await supabaseClient.from('travel_state').insert(insertPayload);
+        const { error: insErr } = await supabaseClient.from('travel_state').insert(insertPayload);
+        if (insErr && insErr.code === '42703') {
+           await supabaseClient.from('travel_state').insert({ id: defaultTripId, display_city_name: "선택된 지역 없음", travel_start_date: new Date().toISOString().split('T')[0], current_restaurants: [], plan_timeline: [] });
+        }
         
         handleLoginSuccess(cleanId, S(pwInput));
       }
@@ -826,29 +895,43 @@ const MainApp = () => {
   async function handleAcceptInvite() {
     if (pendingInvite) {
       const targetTripId = S(pendingInvite.trip_id);
-      setSharedTripId(targetTripId);
-      await supabaseClient.from('invites').delete().eq('target_id', appUserId);
+      const ownerId = S(pendingInvite.from_id);
+
+      let tripName = "공유된 여행";
+      try {
+         const { data } = await supabaseClient.from('profiles').select('trips').eq('app_user_id', ownerId).single();
+         if (data && data.trips) {
+            const ownerTrip = data.trips.find(t => t.id === targetTripId);
+            if (ownerTrip) tripName = ownerTrip.name;
+         }
+      } catch(e) {}
+
+      const newSharedTrip = { id: targetTripId, name: `🤝 ${tripName} (${ownerId})`, isShared: true, owner: ownerId };
+      const updatedTrips = [...trips.filter(t => t.id !== targetTripId), newSharedTrip];
+      setTrips(updatedTrips);
+      
+      await supabaseClient.from('profiles').update({ trips: updatedTrips, activeTripId: targetTripId }).eq('app_user_id', appUserId);
       
       try {
         const { data } = await supabaseClient.from('travel_state').select('shared_users').eq('id', targetTripId).single();
         const currentShared = Array.isArray(data?.shared_users) ? data.shared_users : [];
         if (!currentShared.includes(appUserId)) {
-          await supabaseClient.from('travel_state').update({ shared_users: [...currentShared, appUserId] }).eq('id', targetTripId);
+          const { error } = await supabaseClient.from('travel_state').update({ shared_users: [...currentShared, appUserId] }).eq('id', targetTripId);
+          if (error && error.code === '42703') {} // fallback if column not added
         }
-      } catch(e) { console.error("Failed to update shared users:", e); }
+      } catch(e) { }
 
-      setPendingInvite(null); showToast(`일정에 접속했습니다.`);
+      await supabaseClient.from('invites').delete().eq('target_id', appUserId);
+      
+      setPendingInvite(null); 
+      setActiveTripId(targetTripId);
+      showToast(`공유된 일정에 접속했습니다.`);
     }
   }
 
   async function handleRejectInvite() {
     await supabaseClient.from('invites').delete().eq('target_id', appUserId);
     setPendingInvite(null);
-  }
-
-  function handleExitShare() { 
-    setSharedTripId(null); 
-    showToast("개인 일정으로 복귀했습니다."); 
   }
 
   function handleOpenGoogleTranslate() { window.open(`https://translate.google.com/?sl=auto&tl=ko`, '_blank'); }
@@ -948,7 +1031,9 @@ const MainApp = () => {
     const finalRegion = planRegion === "수동입력" ? manualRegion : planRegion;
 
     const planData = { 
-      id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: newPhoto ? S(newPhoto) : "", 
+      id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), 
+      photo: newPhoto ? S(newPhoto) : "", 
+      pastedPhoto: newPastedPhoto ? S(newPastedPhoto) : "", 
       country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation)
     };
     
@@ -983,7 +1068,7 @@ const MainApp = () => {
     const isStandardCountry = Object.keys(REGIONS_BY_COUNTRY).includes(c) || c === "";
     const isStandardRegion = (isStandardCountry && c && REGIONS_BY_COUNTRY[c]?.includes(r)) || r === "";
     
-    setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || "") });
+    setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || ""), photo: S(p.photo || ""), pastedPhoto: S(p.pastedPhoto || "") });
   }
   
   function handleDeletePlan(id) {
@@ -993,7 +1078,7 @@ const MainApp = () => {
   }
   
   function resetPlanForm() { 
-    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewIsAccommodation(false);
+    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewPastedPhoto(""); setNewIsAccommodation(false);
     setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion); 
     setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : ""); setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
   }
@@ -1084,6 +1169,7 @@ const MainApp = () => {
                localName: S(data.airline), 
                features: `${label} 번호: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} (도착예정: ${data.arrTime}) [${dirLabel}]`, 
                photo: "", 
+               pastedPhoto: "", 
                country: S(globalPlanCountry), 
                region: S(globalPlanRegion), 
                isAccommodation: false,
@@ -1246,13 +1332,9 @@ const MainApp = () => {
               setPackingList(Array.isArray(data.packing_list) ? data.packing_list : []);
               setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
               
-              if (Array.isArray(data.current_restaurants)) {
-                setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) })));
-              } else { setCurrentRestaurants([]); }
-              
-              if (Array.isArray(data.plan_timeline)) {
-                setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) })));
-              } else { setPlanTimeline([]); }
+              // [OPT] 추출된 파싱 함수를 통한 중복 로직 제거
+              setCurrentRestaurants(parseRestaurants(data.current_restaurants));
+              setPlanTimeline(parseTimeline(data.plan_timeline));
               
               loaded = true;
             }
@@ -1332,6 +1414,7 @@ const MainApp = () => {
     }
   }, [activeTab]);
 
+  // [FIX] 여행 일정에 맞춰 Dashboard Day 자동 선택 고도화 로직 적용
   useEffect(() => {
     if (!travelStartDate) return;
     const todayDate = new Date();
@@ -1342,8 +1425,13 @@ const MainApp = () => {
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
     
     const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
-    if (diffDays >= 1 && diffDays <= safeMax) {
+    
+    if (diffDays < 1) {
+      setDashboardDay(1);
+    } else if (diffDays >= 1 && diffDays <= safeMax) {
       setDashboardDay(diffDays);
+    } else {
+      setDashboardDay(safeMax);
     }
   }, [travelStartDate, maxDay]);
 
@@ -1434,7 +1522,7 @@ const MainApp = () => {
         }
       }).subscribe();
 
-    const targetId = sharedTripId || activeTripId;
+    const targetId = activeTripId;
     
     let ignore = false;
     const fetchTrip = async () => {
@@ -1450,13 +1538,9 @@ const MainApp = () => {
           setPackingList(Array.isArray(data.packing_list) ? data.packing_list : []);
           setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
           
-          if (Array.isArray(data.current_restaurants)) {
-            setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) })));
-          } else { setCurrentRestaurants([]); }
-          
-          if (Array.isArray(data.plan_timeline)) {
-            setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) })));
-          } else { setPlanTimeline([]); }
+          // [OPT] 추출된 파싱 함수를 통한 중복 로직 제거
+          setCurrentRestaurants(parseRestaurants(data.current_restaurants));
+          setPlanTimeline(parseTimeline(data.plan_timeline));
         } else {
            setDisplayCityName("선택된 지역 없음");
            setCurrentRestaurants([]);
@@ -1479,15 +1563,27 @@ const MainApp = () => {
           if (payload.new.travel_start_date) setTravelStartDate(S(payload.new.travel_start_date));
           if (payload.new.flights) setFlights(payload.new.flights);
           if (payload.new.packing_list && Array.isArray(payload.new.packing_list)) setPackingList(payload.new.packing_list);
-          if (payload.new.shared_users && Array.isArray(payload.new.shared_users)) setSharedUsers(payload.new.shared_users);
           
-          if (Array.isArray(payload.new.current_restaurants)) {
-            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) }));
-            setCurrentRestaurants(cleanRests);
+          if (payload.new.shared_users && Array.isArray(payload.new.shared_users)) {
+             setSharedUsers(payload.new.shared_users);
+             const isOwner = activeTripId.startsWith(`trip_${appUserId}_`);
+             if (!isOwner && !payload.new.shared_users.includes(appUserId)) {
+                showToast("⚠️ 관리자에 의해 공유가 중단되었습니다.");
+                setTrips(prev => {
+                   const filtered = prev.filter(t => t.id !== activeTripId);
+                   supabaseClient.from('profiles').update({ trips: filtered, activeTripId: filtered[0]?.id }).eq('app_user_id', appUserId).then();
+                   setActiveTripId(filtered[0]?.id || 'default');
+                   return filtered;
+                });
+             }
           }
-          if (Array.isArray(payload.new.plan_timeline)) {
-            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) }));
-            setPlanTimeline(cleanPlans);
+          
+          // [OPT] 추출된 파싱 함수를 통한 중복 로직 제거
+          if (payload.new.current_restaurants) {
+            setCurrentRestaurants(parseRestaurants(payload.new.current_restaurants));
+          }
+          if (payload.new.plan_timeline) {
+            setPlanTimeline(parseTimeline(payload.new.plan_timeline));
           }
         }
       }).subscribe();
@@ -1512,7 +1608,7 @@ const MainApp = () => {
       supabaseClient.removeChannel(tripChannel);
       supabaseClient.removeChannel(inviteChannel);
     };
-  }, [supabaseClient, appUserId, activeTripId, sharedTripId, syncCountryRegionFromCityName]);
+  }, [supabaseClient, appUserId, activeTripId, syncCountryRegionFromCityName]);
 
   useEffect(() => {
     isPinModeRef.current = isPinMode; 
@@ -1626,6 +1722,9 @@ const MainApp = () => {
   const safeMaxDay = (typeof maxDay === 'number' && maxDay > 0 && maxDay < 100) ? maxDay : 4;
   const tripDays = Array.from({length: safeMaxDay}, (_, i) => i + 1);
 
+  const isSharedTripActive = trips.find(t => t.id === activeTripId)?.isShared;
+  const isTripOwner = activeTripId.startsWith(`trip_${appUserId}_`) || trips.find(t => t.id === activeTripId && !t.isShared);
+
   let headerForecastDateStr = "";
   if (travelStartDate) {
     const todayDate = new Date();
@@ -1653,7 +1752,6 @@ const MainApp = () => {
   const renderFlightCards = () => {
     if (!flights.outbound && !flights.inbound) return null;
     
-    // PC/모바일 구분 없이 항시 좌우 반반(50%) 병렬 배치 유지
     const wrapperClass = `flex flex-row gap-1.5 sm:gap-2 mb-2 w-full shrink-0`; 
 
     const getCardUX = (dirId) => {
@@ -1768,11 +1866,11 @@ const MainApp = () => {
   }
 
   return (
-    <div style={{ zoom: finalElementScale, fontFamily: appFont }} className={`flex h-screen w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
+    <div style={{ zoom: finalElementScale, fontFamily: appFont }} className={`flex flex-col h-[100dvh] w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
       
       {/* --- 모달 및 팝업 영역 --- */}
       {toastMsg && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl z-[9999] animate-in fade-in slide-in-from-top-4 duration-300">
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">
           {toastMsg}
         </div>
       )}
@@ -1793,16 +1891,16 @@ const MainApp = () => {
             
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
               <div>
-                <h3 className={`text-xs font-bold mb-3 px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>내 여행 목록 ✈️</h3>
+                <h3 className={`text-xs font-bold mb-3 px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>내 여행 목록(문서함) ✈️</h3>
                 <div className="space-y-1">
                   {trips.map(t => (
                     <button 
                       key={t.id} 
                       onClick={() => { handleSwitchTrip(t.id); }} 
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 truncate flex items-center justify-between group ${activeTripId === t.id && !sharedTripId ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 truncate flex items-center justify-between group ${activeTripId === t.id ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
                     >
                       <span className="truncate">{S(t.name)}</span>
-                      <span onClick={(e) => { e.stopPropagation(); setTripToDelete(t.id); }} className={`text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-[10px] hover:scale-110 p-1`}>🗑️</span>
+                      <span onClick={(e) => { e.stopPropagation(); setTripToDelete(t.id); }} className={`text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-[10px] hover:scale-110 p-1`}>{t.isShared ? '🚪' : '🗑️'}</span>
                     </button>
                   ))}
                 </div>
@@ -1811,14 +1909,6 @@ const MainApp = () => {
                    <button onClick={openRenameTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}>✏️ 이름 변경</button>
                 </div>
               </div>
-
-              {sharedTripId && (
-                <div className="p-3 bg-rose-50 rounded-xl border border-rose-100 animate-in fade-in duration-300">
-                  <h3 className="text-[10px] font-black text-rose-600 mb-1">🤝 공유 일정 참여 중</h3>
-                  <p className="text-[9px] text-rose-500 mb-2 leading-tight">현재 친구의 일정을 함께 보고 있습니다.</p>
-                  <button onClick={handleExitShare} className="w-full bg-white text-rose-600 py-1.5 rounded text-[10px] font-bold shadow-sm border border-rose-100 hover:bg-rose-50 transition-colors">내 일정으로 복귀</button>
-                </div>
-              )}
 
               {pendingInvite && (
                 <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 animate-in fade-in duration-300">
@@ -1862,51 +1952,80 @@ const MainApp = () => {
               
               <div className="space-y-4 max-h-[65vh] overflow-y-auto custom-scrollbar pr-2">
                  <div className="flex flex-col space-y-2">
-                    <label className={`text-xs font-bold ${textMuted}`}>앱 테마</label>
+                    <label className={`text-xs font-bold ${textMuted}`}>앱 테마 설정</label>
                     <div className="flex space-x-2">
                        <button onClick={() => handleThemeChange('light')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'light' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>기본(Light)</button>
                        <button onClick={() => handleThemeChange('dark')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'dark' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'}`}>다크 모드</button>
                        <button onClick={() => handleThemeChange('pastel')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'pastel' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100'}`}>파스텔</button>
                     </div>
                  </div>
+
+                 <div className="flex flex-col space-y-2 mt-3">
+                    <label className={`text-xs font-bold ${textMuted}`}>폰트 (글꼴) 설정</label>
+                    <select value={appFont} onChange={e => { setAppFont(e.target.value); try{localStorage.setItem('my_travel_font', e.target.value)}catch(err){} }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer transition-colors duration-300`}>
+                       <option value="'Pretendard', -apple-system, sans-serif">Pretendard (기본/Mac 추천)</option>
+                       <option value="'Malgun Gothic', '맑은 고딕', sans-serif">맑은 고딕 (Windows 기본)</option>
+                       <option value="'Noto Sans KR', sans-serif">Noto Sans KR (깔끔한 고딕)</option>
+                       <option value="'Nanum Gothic', sans-serif">나눔고딕 (둥근 고딕)</option>
+                    </select>
+                 </div>
                  
-                 <div className="flex flex-col space-y-2">
+                 <div className="flex flex-col space-y-2 pt-2">
                     <label className={`text-xs font-bold ${textMuted}`}>화면/글자 크기 (글꼴: {fontScale}, 요소: {elementScale})</label>
                     <input type="range" min="0.5" max="1.5" step="0.1" value={fontScale} onChange={handleFontScaleChange} className="w-full accent-indigo-600 transition-all duration-300" />
                     <input type="range" min="0.5" max="1.5" step="0.1" value={elementScale} onChange={handleElementScaleChange} className="w-full accent-indigo-600 mt-2 transition-all duration-300" />
                  </div>
 
                  <div className={`flex flex-col space-y-3 border-t pt-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                    <label className={`text-xs font-bold ${textMuted}`}>🤝 일정 공유 및 초대 (실시간 연동)</label>
-                    {sharedTripId ? (
-                      <div className="bg-indigo-50 dark:bg-indigo-900/30 p-3 rounded-xl border border-indigo-100 dark:border-indigo-800 animate-in fade-in duration-300">
-                         <p className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold mb-2">
-                            현재 다른 사용자의 일정에 참여 중입니다.
-                         </p>
-                         <button onClick={handleExitShare} className="w-full py-2 bg-white dark:bg-slate-800 text-rose-500 hover:bg-rose-50 dark:hover:bg-slate-700 rounded-lg text-[10px] font-bold shadow-sm border border-rose-100 dark:border-slate-600 transition-colors">내 일정으로 복귀</button>
-                      </div>
-                    ) : (
-                      <div className="space-y-3 animate-in fade-in duration-300">
-                         <div className="flex space-x-2">
-                            <input type="text" value={inviteIdInput} onChange={e => setInviteIdInput(e.target.value)} placeholder="초대할 친구 아이디 입력" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold rounded-lg outline-none focus:border-indigo-500 transition-colors duration-300`} />
-                            <button onClick={handleSendInvite} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300 whitespace-nowrap">초대장 발송</button>
-                         </div>
-                         <div className={`p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
-                            <p className={`text-[10px] font-bold ${textMuted} mb-2`}>현재 이 일정을 함께 보는 사람</p>
-                            <div className="flex flex-wrap gap-1.5">
-                               <span className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 px-2 py-1 rounded text-[9px] font-bold shadow-sm">👑 나 ({appUserId})</span>
-                               {sharedUsers.filter(u => u !== appUserId).map((user, idx) => (
-                                 <span key={idx} className="bg-white text-slate-600 dark:bg-slate-700 dark:text-slate-300 border dark:border-slate-600 px-2 py-1 rounded text-[9px] font-bold shadow-sm">👤 {user}</span>
-                               ))}
-                               {sharedUsers.filter(u => u !== appUserId).length === 0 && <span className="text-[9px] text-slate-400 py-1 pl-1">아직 초대된 친구가 없습니다.</span>}
-                            </div>
-                         </div>
-                      </div>
-                    )}
+                    <label className={`text-xs font-bold ${textMuted}`}>🤝 일정 공유 및 관리</label>
+                    <div className="space-y-3 animate-in fade-in duration-300">
+                       <div className="flex space-x-2">
+                          <input type="text" value={inviteIdInput} onChange={e => setInviteIdInput(e.target.value)} placeholder="초대할 친구 아이디 입력" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold rounded-lg outline-none focus:border-indigo-500 transition-colors duration-300`} />
+                          <button onClick={handleSendInvite} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300 whitespace-nowrap">초대 발송</button>
+                       </div>
+                       
+                       <div className={`p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
+                          <p className={`text-[10px] font-bold ${textMuted} mb-2`}>현재 이 일정을 함께 보는 사람</p>
+                          <div className="flex flex-wrap gap-1.5">
+                             <span className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 px-2 py-1 rounded text-[9px] font-bold shadow-sm">👑 나 ({appUserId})</span>
+                             {sharedUsers.filter(u => u !== appUserId).map((user, idx) => (
+                               <div key={idx} className="flex items-center bg-white text-slate-600 dark:bg-slate-700 dark:text-slate-300 border dark:border-slate-600 px-2 py-1 rounded shadow-sm">
+                                 <span className="text-[9px] font-bold">👤 {user}</span>
+                                 {isTripOwner && (
+                                   <button onClick={() => setKickUserTarget(user)} className="ml-1.5 pl-1.5 border-l border-slate-200 dark:border-slate-500 text-rose-500 hover:text-rose-600 text-[9px] font-black transition-colors">강퇴</button>
+                                 )}
+                               </div>
+                             ))}
+                             {sharedUsers.filter(u => u !== appUserId).length === 0 && <span className="text-[9px] text-slate-400 py-1 pl-1">아직 참여 중인 친구가 없습니다.</span>}
+                          </div>
+                       </div>
+                    </div>
                  </div>
               </div>
-              
               <button onClick={() => setIsSettingsOpen(false)} className={`w-full mt-6 rounded-xl py-3 text-xs font-bold transition-colors duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}>닫기</button>
+           </div>
+        </div>
+      )}
+
+      {/* 강퇴 확인 모달 (항상 최상위 렌더링) */}
+      {kickUserTarget && (
+        <div className="fixed inset-0 bg-black/60 z-[99999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
+           <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95 duration-300`}>
+              <div className="text-3xl mb-3">⚠️</div>
+              <h3 className={`text-sm font-black mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>공유 중단 확인</h3>
+              <p className={`text-[11px] font-bold mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'} leading-relaxed`}>
+                 <span className="text-indigo-500 font-black">[{kickUserTarget}]</span> 사용자와<br/>공유를 중지하시겠습니까?
+              </p>
+              <div className="flex space-x-2">
+                 <button className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`} onClick={() => setKickUserTarget(null)}>취소</button>
+                 <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600 active:scale-95 transition-all duration-300" onClick={async () => {
+                    const newShared = sharedUsers.filter(u => u !== kickUserTarget);
+                    setSharedUsers(newShared);
+                    if(supabaseClient) await supabaseClient.from('travel_state').update({ shared_users: newShared }).eq('id', activeTripId);
+                    showToast(`${kickUserTarget} 님을 여행에서 내보냈습니다.`);
+                    setKickUserTarget(null);
+                 }}>중지하기</button>
+              </div>
            </div>
         </div>
       )}
@@ -1921,14 +2040,20 @@ const MainApp = () => {
       {tripToDelete && (
         <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
            <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95 duration-300`}>
-              <div className="text-3xl mb-3">🗑️</div>
-              <h3 className={`text-sm font-black mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>여행 삭제</h3>
+              <div className="text-3xl mb-3">{trips.find(t=>t.id===tripToDelete)?.isShared ? '🚪' : '🗑️'}</div>
+              <h3 className={`text-sm font-black mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                 {trips.find(t=>t.id===tripToDelete)?.isShared ? '공유 목록에서 나가기' : '여행 삭제'}
+              </h3>
               <p className={`text-[11px] font-bold mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'} leading-relaxed`}>
-                 정말 이 여행을 삭제하시겠습니까?<br/>삭제된 데이터는 절대 복구할 수 없습니다.
+                 {trips.find(t=>t.id===tripToDelete)?.isShared 
+                   ? '이 공유 여행을 내 문서함 목록에서 지우시겠습니까?' 
+                   : '정말 이 여행을 삭제하시겠습니까?\n삭제된 데이터는 절대 복구할 수 없습니다.'}
               </p>
               <div className="flex space-x-2">
                  <button className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`} onClick={() => setTripToDelete(null)}>취소</button>
-                 <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600 active:scale-95 transition-all duration-300" onClick={confirmDeleteTrip}>삭제하기</button>
+                 <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600 active:scale-95 transition-all duration-300" onClick={confirmDeleteTrip}>
+                    {trips.find(t=>t.id===tripToDelete)?.isShared ? '나가기' : '삭제하기'}
+                 </button>
               </div>
            </div>
         </div>
@@ -2054,10 +2179,11 @@ const MainApp = () => {
       {selectedPlanInfo && (
         <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPlanInfo(null)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
-            {selectedPlanInfo.photo && !selectedPlanInfo.isTransport && (
-              <div className="w-full h-48 relative">
-                <img src={selectedPlanInfo.photo} className="w-full h-full object-cover" alt="" />
-                <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md">
+            {(selectedPlanInfo.photo || selectedPlanInfo.pastedPhoto) && !selectedPlanInfo.isTransport && (
+              <div className="w-full h-48 relative flex">
+                {selectedPlanInfo.pastedPhoto && <div className={`relative h-full ${selectedPlanInfo.photo ? 'w-1/2 border-r border-white/20' : 'w-full'}`}><img src={selectedPlanInfo.pastedPhoto} className="w-full h-full object-cover" alt="" /></div>}
+                {selectedPlanInfo.photo && <div className={`relative h-full ${selectedPlanInfo.pastedPhoto ? 'w-1/2' : 'w-full'}`}><img src={selectedPlanInfo.photo} className="w-full h-full object-cover" alt="" /></div>}
+                <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md z-10">
                   {S(selectedPlanInfo.time)}
                 </div>
               </div>
@@ -2065,7 +2191,7 @@ const MainApp = () => {
             <div className="p-5 flex flex-col">
               <div className="flex justify-between items-start mb-2">
                 <h3 className="text-lg font-black text-slate-900">{S(selectedPlanInfo.place)} {selectedPlanInfo.isAccommodation ? '🏠' : ''}</h3>
-                {(!selectedPlanInfo.photo || selectedPlanInfo.isTransport) && <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-1 rounded shadow-sm">{S(selectedPlanInfo.time)}</span>}
+                {(!selectedPlanInfo.photo && !selectedPlanInfo.pastedPhoto || selectedPlanInfo.isTransport) && <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-1 rounded shadow-sm">{S(selectedPlanInfo.time)}</span>}
               </div>
               
               {selectedPlanInfo.localName && (
@@ -2163,7 +2289,6 @@ const MainApp = () => {
                  <button onClick={() => {setTransType('bus'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'bus' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚌 버스</button>
               </div>
 
-              {/* 모든 수단에 대해 가는편/오는편 탭 적용 */}
               <div className="flex space-x-2 items-center">
                  <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>가는 편 (Outbound)</button>
                  <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'inbound' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>오는 편 (Inbound)</button>
@@ -2216,293 +2341,8 @@ const MainApp = () => {
         </div>
       )}
 
-      {editingPlan && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[6000] flex items-center justify-center p-4 transition-opacity duration-300">
-          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
-            <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-              <div className="flex items-center space-x-2">
-                <span className="text-orange-500 text-sm">✏️</span>
-                <h3 className="text-xs font-bold">일정 수정하기</h3>
-              </div>
-              <button onClick={() => setEditingPlan(null)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}>✕</button>
-            </div>
-            
-            <div className="p-4 space-y-3">
-              <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm`}>
-                {tripDays.map(d => (
-                  <button key={d} onClick={() => setEditingPlan({...editingPlan, day: d})} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 ${editingPlan.day === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
-                ))}
-              </div>
-
-              <div className="flex space-x-2">
-                <div className="flex flex-col space-y-1 w-1/2">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>국가 🌍</label>
-                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center transition-colors duration-300`}>
-                    <SelectOrInput 
-                      inputId="edit-country-input"
-                      value={editingPlan.countrySelect} manualValue={editingPlan.manualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
-                      options={Object.keys(REGIONS_BY_COUNTRY)}
-                      onChangeSelect={e => setEditingPlan({...editingPlan, countrySelect: e.target.value, regionSelect: "", manualCountry: "", manualRegion: ""})}
-                      onChangeManual={val => setEditingPlan({...editingPlan, manualCountry: val})}
-                      onCancelManual={() => setEditingPlan({...editingPlan, countrySelect: "", manualCountry: ""})}
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-col space-y-1 w-1/2">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>지역 📍</label>
-                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center transition-colors duration-300`}>
-                    <SelectOrInput 
-                      inputId="edit-region-input"
-                      value={editingPlan.regionSelect} manualValue={editingPlan.manualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
-                      options={(!editingPlan.countrySelect || editingPlan.countrySelect === '수동입력') ? null : REGIONS_BY_COUNTRY[editingPlan.countrySelect]}
-                      onChangeSelect={e => setEditingPlan({...editingPlan, regionSelect: e.target.value, manualRegion: ""})}
-                      onChangeManual={val => setEditingPlan({...editingPlan, manualRegion: val})}
-                      onCancelManual={() => setEditingPlan({...editingPlan, regionSelect: "", manualRegion: ""})}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex space-x-2 items-end">
-                <div className="flex flex-col space-y-1 w-1/3">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>시간 ⏰</label>
-                  <input type="text" maxLength="5" value={S(editingPlan.time)} onChange={(e) => handleTimeInput(e, (val) => setEditingPlan({...editingPlan, time: val}))} placeholder="09:00" className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
-                </div>
-                <div className="flex flex-col space-y-1 flex-1 relative">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 📍</label>
-                  <input type="text" placeholder="장소 이름 입력" value={S(editingPlan.place)} onChange={(e) => setEditingPlan({...editingPlan, place: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6 transition-all duration-300`} />
-                </div>
-              </div>
-
-              <div className="flex space-x-2 items-end">
-                <div className="flex flex-col space-y-1 flex-1">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어(복사용)</label>
-                  <input type="text" placeholder="현지어 입력" value={S(editingPlan.localName)} onChange={(e) => setEditingPlan({...editingPlan, localName: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
-                </div>
-                <div className="flex flex-col space-y-1 flex-1">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모</label>
-                  <input type="text" placeholder="간단한 메모" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
-                </div>
-              </div>
-
-              <div className="flex flex-col space-y-1 w-full">
-                <input type="file" accept="image/*" ref={editFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, true)} className="hidden" />
-                <button type="button" onClick={() => editFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold border transition-all duration-300 flex items-center justify-center ${editingPlan.photo ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                  <span className="flex items-center">{editingPlan.photo ? "📸 사진 변경 (또는 Ctrl+V로 붙여넣기)" : "📸 사진 선택 (또는 Ctrl+V로 붙여넣기)"}</span>
-                </button>
-              </div>
-
-              <div className="flex items-center space-x-2 my-1.5 px-1">
-                <input type="checkbox" id="editPlanIsAcc" checked={Boolean(editingPlan.isAccommodation)} onChange={e => setEditingPlan({...editingPlan, isAccommodation: e.target.checked})} className="accent-indigo-600 w-3.5 h-3.5 rounded cursor-pointer" />
-                <label htmlFor="editPlanIsAcc" className={`text-[10px] font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
-              </div>
-
-              <div className="pt-2 flex space-x-2">
-                <button onClick={() => {
-                  const finalCountry = editingPlan.countrySelect === "수동입력" ? editingPlan.manualCountry : editingPlan.countrySelect;
-                  const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
-                  const planData = { ...editingPlan, country: finalCountry, region: finalRegion };
-                  
-                  const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-                  let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
-                  setPlanTimeline(updatedTimeline); saveToDb({ plan_timeline: updatedTimeline });
-                  setEditingPlan(null); showToast("일정이 예쁘게 수정됐어요! 📝");
-                  
-                  if (finalRegion && finalRegion !== displayCityName) {
-                    setDisplayCityName(S(finalRegion));
-                    saveToDb({ display_city_name: S(finalRegion) });
-                  }
-                }} className="w-full bg-orange-500 text-white rounded-md py-2 text-[11px] font-bold shadow-sm hover:bg-orange-600 active:scale-95 transition-all duration-300">
-                  수정 내용 저장
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isAddPlaceModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9000] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
-          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
-            <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-              <h3 className="text-sm font-black flex items-center">
-                <span className="mr-2 text-indigo-500 text-lg">📍</span> 
-                {clickedLocation?.id ? '핀 정보 수정' : '새 지도 핀 등록'}
-              </h3>
-              <button onClick={() => setIsAddPlaceModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
-            </div>
-            
-            <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh] custom-scrollbar scroll-smooth">
-              <div className="flex flex-col space-y-1">
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 이름 (필수)</label>
-                <input type="text" placeholder="예: 에펠탑" value={newManualPlaceName} onChange={e => setNewManualPlaceName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
-              </div>
-
-              <div className="flex flex-col space-y-1">
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어 이름 (복사용)</label>
-                <input type="text" placeholder="예: Tour Eiffel" value={newManualLocalName} onChange={e => setNewManualLocalName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
-              </div>
-
-              <div className="flex flex-col space-y-1">
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모 / 특징</label>
-                <input type="text" placeholder="간단한 메모 입력" value={newManualFeature} onChange={e => setNewManualFeature(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
-              </div>
-
-              <div className="flex flex-col space-y-2 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300">
-                <div className="flex space-x-2 items-end">
-                  <div className={`flex flex-col space-y-1 ${pinLinkDay ? 'w-1/3' : 'w-full'} transition-all duration-300`}>
-                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>일정 동기화</label>
-                    <select value={pinLinkDay} onChange={e => {
-                       setPinLinkDay(e.target.value); 
-                       setPinLinkPlanId(""); 
-                       setNewManualTime(""); 
-                    }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[11px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
-                      <option value="">-- 연동 안 함 --</option>
-                      {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
-                    </select>
-                  </div>
-                  {pinLinkDay && (
-                     <div className="flex flex-col space-y-1 w-2/3 animate-in fade-in duration-300">
-                       <label className={`text-[9px] font-bold ${textMuted} px-1`}>기존 일정과 연결 (또는 수동입력)</label>
-                       <select value={pinLinkPlanId} onChange={e => {
-                          const val = e.target.value;
-                          setPinLinkPlanId(val);
-                          if (val !== 'manual' && val !== '') {
-                             const matched = planTimeline.find(p => String(p.id) === String(val));
-                             if (matched) setNewManualTime(matched.time);
-                          } else {
-                             setNewManualTime("");
-                          }
-                       }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
-                          <option value="">-- 일정 선택 --</option>
-                          {planTimeline.filter(p => String(p.day) === String(pinLinkDay)).map(p => (
-                             <option key={p.id} value={p.id}>[{p.time}] {S(p.place)}</option>
-                          ))}
-                          <option value="manual">➕ 수동 입력 (새 일정 추가)</option>
-                       </select>
-                     </div>
-                  )}
-                </div>
-
-                {(!pinLinkDay || pinLinkPlanId === 'manual') && (
-                   <div className="flex flex-col space-y-1 w-1/2 pt-1 animate-in fade-in duration-300">
-                     <label className={`text-[9px] font-bold ${textMuted} px-1`}>방문 시간</label>
-                     <input type="text" placeholder="09:00" maxLength="5" value={newManualTime} onChange={e => handleTimeInput(e, setNewManualTime)} disabled={!pinLinkDay} className={`w-full ${!pinLinkDay ? 'opacity-50 bg-slate-100 cursor-not-allowed' : inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
-                   </div>
-                )}
-              </div>
-
-              <div className="flex flex-col space-y-1 w-full pt-1">
-                <input type="file" accept="image/*" ref={manualFileInputRef} onChange={handleManualPhotoUpload} className="hidden" />
-                <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`w-full py-2.5 text-xs font-bold rounded-lg border transition-all duration-300 flex items-center justify-center ${newManualPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                  {newManualPhoto ? <span className="flex items-center">📸 사진 변경 (또는 Ctrl+V로 붙여넣기)</span> : <span className="flex items-center">📸 사진 첨부 (또는 Ctrl+V로 붙여넣기)</span>}
-                </button>
-              </div>
-
-              <div className="flex items-center space-x-2 my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300">
-                <input type="checkbox" id="manualPlanIsAcc" checked={newManualIsAccommodation} onChange={e => setNewManualIsAccommodation(e.target.checked)} className="accent-indigo-600 w-4 h-4 cursor-pointer" />
-                <label htmlFor="manualPlanIsAcc" className={`text-xs font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
-              </div>
-            </div>
-            
-            <div className="p-4 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-              <button onClick={handleManualPlaceAdd} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">
-                {clickedLocation?.id ? '핀 정보 저장하기' : '지도에 핀 꽂기 📍'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isMyPinsModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[3500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
-          <div className={`${cardBg} w-full max-w-5xl flex flex-col animate-in zoom-in-95 duration-300 max-h-[85vh] rounded-3xl overflow-hidden`}>
-            <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-              <h3 className="text-sm font-black flex items-center"><span className="mr-2 text-indigo-500 text-lg">📍</span> 내 핀/장소 목록</h3>
-              <div className="flex items-center space-x-3">
-                <button onClick={() => {
-                  setIsMyPinsModalOpen(false);
-                  setClickedLocation(null);
-                  setNewManualPlaceName("");
-                  setNewManualLocalName("");
-                  setNewManualFeature("");
-                  setNewManualPhoto("");
-                  setNewManualIsAccommodation(false);
-                  setPinLinkDay("");
-                  setPinLinkPlanId("");
-                  setNewManualTime("");
-                  setIsAddPlaceModalOpen(true);
-                }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-indigo-700 active:scale-95 transition-all duration-300">
-                  <span className="mr-1 text-sm">➕</span> 새 장소 추가
-                </button>
-                <button onClick={() => setIsMyPinsModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
-              </div>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-50/50 dark:bg-slate-900/50 scroll-smooth">
-              {safeCurrentRestaurants.length === 0 ? (
-                <div className="text-center py-20 text-xs font-bold text-slate-400 flex flex-col items-center">
-                  <span className="text-4xl mb-3 opacity-20">📍</span>
-                  등록된 핀이 없습니다.<br/>우측 상단의 '새 장소 추가'를 눌러 장소를 기록해보세요!
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                  {safeCurrentRestaurants.map(pin => (
-                    <div key={pin.id} className={`flex flex-col p-2 border rounded-xl shadow-sm transition-all duration-300 hover:shadow-md ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
-                      
-                      {pin.img && !S(pin.img).includes("unsplash") ? (
-                        <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0">
-                          <img src={pin.img} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
-                          {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm">숙소</div>}
-                        </div>
-                      ) : (
-                        <div className={`w-full h-12 flex items-center justify-center rounded-lg mb-1.5 shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
-                          {pin.isAccommodation ? '🏠 숙소' : '📍 장소'}
-                        </div>
-                      )}
-                      
-                      <div className="flex-1 min-w-0 flex flex-col justify-center">
-                        <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight mb-0.5 transition-colors">{S(pin.name)}</h4>
-                        {pin.localName && (
-                          <p className="text-[9px] font-bold text-indigo-500 truncate cursor-pointer hover:opacity-80 leading-tight mb-0.5 transition-opacity" onClick={(e) => handleCopyLocalName(e, pin.localName)}>
-                            📋 {S(pin.localName)}
-                          </p>
-                        )}
-                      </div>
-                      
-                      <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-700">
-                        <button onClick={() => {
-                          setMovingPinId(pin.id);
-                          setIsPinMode(true);
-                          setIsMyPinsModalOpen(false);
-                          setActiveTab('map');
-                          showToast("🗺️ 지도에서 핀을 꽂을 위치를 클릭해주세요!");
-                        }} className="flex-1 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 py-1 rounded text-[9px] font-bold hover:bg-emerald-100 transition-colors duration-300">
-                          위치 지정
-                        </button>
-                        <button onClick={() => openEditPinModal(pin)} className="flex-1 bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 py-1 rounded text-[9px] font-bold hover:bg-slate-200 transition-colors duration-300">
-                          수정
-                        </button>
-                        <button onClick={() => {
-                           const updated = safeCurrentRestaurants.filter(r => r && S(r.id) !== S(pin.id));
-                           setCurrentRestaurants(updated);
-                           saveToDb({ current_restaurants: updated });
-                           showToast("핀이 삭제되었습니다.");
-                        }} className="w-6 flex items-center justify-center bg-rose-50 text-rose-500 dark:bg-rose-900/30 dark:text-rose-400 py-1 rounded hover:bg-rose-100 transition-colors duration-300">
-                           <span className="text-[10px]">🗑️</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- 메인 컨텐츠 영역 --- */}
-      <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-0">
+      {/* --- 메인 컨텐츠 영역 (수정: 중복 렌더링 삭제 및 정리) --- */}
+      <main className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto overflow-x-hidden relative z-0">
         <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors duration-300`}>
           <div className="flex items-center flex-1 space-x-2 sm:space-x-4">
             <button className={`p-1.5 rounded-lg ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'} transition-all duration-300 active:scale-95`} onClick={() => setIsMobileMenuOpen(true)}>
@@ -2555,6 +2395,11 @@ const MainApp = () => {
           </div>
           
           <div className="flex items-center space-x-1 sm:space-x-2">
+            {isSharedTripActive && (
+              <button onClick={handleCloneSharedTrip} className={`hidden md:flex px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 bg-orange-500 text-white shadow-sm hover:bg-orange-600 active:scale-95 items-center mr-1`}>
+                <span className="mr-1">💾</span> 내 일정으로 복사(가져오기)
+              </button>
+            )}
             <button onClick={() => changeTab('dashboard')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
               <span className="hidden sm:inline">대쉬보드 </span>🌍
             </button>
@@ -2567,10 +2412,10 @@ const MainApp = () => {
           </div>
         </header>
 
-        <div className="flex-1 p-2 sm:p-4 pt-3 sm:pt-4 pb-4 overflow-hidden relative w-full h-full z-0">
+        <div className="flex-1 w-full flex flex-col relative z-0 min-h-max">
           
           {/* --- Dashboard Tab --- */}
-          <div className={`absolute inset-0 p-2 sm:p-4 pt-3 sm:pt-4 pb-4 flex flex-col gap-3 overflow-hidden transition-opacity duration-300 ${activeTab === 'dashboard' ? 'opacity-100 z-10' : 'opacity-0 -z-10 pointer-events-none'}`}>
+          <div className={`p-2 sm:p-4 pt-3 sm:pt-4 pb-4 flex flex-col gap-3 transition-opacity duration-300 ${activeTab === 'dashboard' ? 'block opacity-100 z-10 flex-1' : 'hidden opacity-0 -z-10 pointer-events-none'}`}>
             <div className="flex items-end justify-between px-1 flex-shrink-0">
               <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight transition-colors duration-300 ${textMain}`}>
                 💸 실시간 동시 환율
@@ -2583,7 +2428,7 @@ const MainApp = () => {
               <div className="flex items-center space-x-1.5 ml-auto">
                 <button onClick={handleForceSave} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-emerald-900/50 text-emerald-400 border border-emerald-700 hover:bg-emerald-900/70' : 'bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100'}`}>
                   <span className="text-xs">💾</span>
-                  <span>일정 저장</span>
+                  <span>저장</span>
                 </button>
                 <button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
                   <span className="text-xs">🌐</span>
@@ -2611,10 +2456,10 @@ const MainApp = () => {
             {/* 모바일에서만 렌더링되는 항공권 */}
             {renderFlightCards()}
 
-            <div className="flex-1 flex flex-row gap-1 sm:gap-4 overflow-hidden min-h-0 h-full w-full relative" style={{"--mob-left": `${panelRatio}%`}}>
+            <div className="flex-1 flex flex-col md:flex-row gap-1 sm:gap-4 min-h-[450px] w-full relative" style={{"--mob-left": `${panelRatio}%`}}>
               
               {/* Left Panel */}
-              <div className={`max-md:w-[var(--mob-left)] md:w-[40%] ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-2xl sm:rounded-3xl shrink-0 transition-colors duration-300`}>
+              <div className={`max-md:w-[var(--mob-left)] md:w-[40%] ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full relative rounded-2xl sm:rounded-3xl shrink-0 transition-colors duration-300`}>
                 <div className={`flex flex-col mb-1.5 sm:mb-3 flex-shrink-0 border-b pb-1.5 relative z-10 transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                   <div className={`flex items-center justify-between space-x-1.5 mb-1 sm:mb-2 transition-colors duration-300 ${textMuted}`}>
                     <div className="flex items-center space-x-1.5">
@@ -2686,7 +2531,7 @@ const MainApp = () => {
               </div>
 
               {/* Right Panel */}
-              <div className={`flex-1 ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full overflow-hidden relative rounded-2xl sm:rounded-3xl transition-colors duration-300`}>
+              <div className={`flex-1 ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full relative rounded-2xl sm:rounded-3xl transition-colors duration-300`}>
                 <div className="flex items-center justify-between mb-1.5 sm:mb-3 flex-shrink-0 relative z-30">
                   <h3 className={`text-[10px] sm:text-sm font-bold tracking-tight flex items-center transition-colors duration-300 ${textMain}`}>
                     <span className="truncate max-w-[100px] sm:max-w-none">✈️ 여행 리스트({S(displayCityName)})</span>
@@ -2720,14 +2565,28 @@ const MainApp = () => {
                           className={`rounded-lg border shadow-sm overflow-hidden flex flex-col transition-all duration-300 group relative hover:shadow-md ${cardBorder} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-white'}`}
                         >
                           {/* 교통편의 경우 사진 영역 아예 생략 */}
-                          {!(plan.isTransport) && (
-                            <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} 
-                                 onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                              <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
+                          {!(plan.isTransport) && (plan.photo || plan.pastedPhoto) ? (
+                            <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b flex overflow-hidden transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
+                              {plan.pastedPhoto && (
+                                <div className={`relative h-full ${plan.photo ? 'w-1/2 border-r border-slate-200 dark:border-slate-700' : 'w-full'}`}>
+                                  <img src={plan.pastedPhoto} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
+                                </div>
+                              )}
+                              {plan.photo && (
+                                <div className={`relative h-full ${plan.pastedPhoto ? 'w-1/2' : 'w-full'}`}>
+                                  <img src={plan.photo} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
+                                </div>
+                              )}
                               <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">{S(plan.time)}</div>
                               <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
                             </div>
-                          )}
+                          ) : (!(plan.isTransport) && (
+                            <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
+                              <img src="https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80" className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500 opacity-50" alt="" />
+                              <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">{S(plan.time)}</div>
+                              <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
+                            </div>
+                          ))}
                           <div className={`flex flex-col p-1.5 flex-1 cursor-pointer justify-start min-w-0 transition-colors duration-300 ${isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50/50'}`} 
                                onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                             {plan.isTransport && <span className="text-indigo-500 font-bold text-[7px] mb-0.5">{S(plan.time)}</span>}
@@ -2738,7 +2597,7 @@ const MainApp = () => {
                             {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-auto transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
                           </div>
                           
-                          {/* 모바일 탭 & PC 호버 메뉴 분리 오버레이 */}
+                          {/* 모바일 탭 & PC 호버 수정/삭제 메뉴 */}
                           <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
                              <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1 transition-colors"><span className="text-xs">✏️</span></button>
                              <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1 transition-colors"><span className="text-xs">🗑️</span></button>
@@ -2753,15 +2612,17 @@ const MainApp = () => {
           </div>
 
           {/* --- Plan Tab --- */}
-          <div className={`absolute inset-0 p-2 sm:p-4 pt-3 pb-4 flex flex-col animate-in slide-in-from-bottom-4 transition-opacity duration-300 overflow-hidden ${activeTab === 'plan' ? 'visible opacity-100 z-10' : 'invisible opacity-0 -z-10 pointer-events-none'}`}>
+          <div className={`p-2 sm:p-4 pt-3 pb-4 flex flex-col transition-opacity duration-300 ${activeTab === 'plan' ? 'block opacity-100 z-10 flex-1' : 'hidden opacity-0 -z-10 pointer-events-none'}`}>
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 sm:mb-3 px-1 gap-2 flex-shrink-0">
               <h2 className={`text-xs sm:text-sm font-bold flex items-center tracking-tight transition-colors duration-300 ${textMain}`}>
                 📝 꼼꼼하게 채우는 여행 일기
               </h2>
               <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap sm:flex-nowrap gap-y-1 ml-auto">
-                <button onClick={handleForceSave} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-emerald-900/40 text-emerald-300 border-emerald-500/50 hover:bg-emerald-900/60' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}>
-                   💾 저장
-                </button>
+                {isSharedTripActive && (
+                   <button onClick={handleCloneSharedTrip} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 bg-orange-500 text-white hover:bg-orange-600`}>
+                      💾 내 일정으로 복사
+                   </button>
+                )}
                 <button onClick={() => {
                   setTransType('flight'); setTransDir('outbound'); setModalTransData({ flight: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } } });
                   setIsTransportModalOpen(true);
@@ -2826,8 +2687,8 @@ const MainApp = () => {
             </div>
             
             {/* 전체 스크롤을 위해 컨테이너에 overflow-y-auto 적용 (모바일) */}
-            <div className={`flex-1 flex flex-col sm:flex-row overflow-y-auto sm:overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar transition-colors duration-300 ${cardBg}`}>
-              <div className={`w-full sm:w-56 p-3 sm:p-4 border-b sm:border-b-0 sm:border-r flex flex-col flex-shrink-0 sm:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
+            <div className={`flex-1 flex flex-col md:flex-row overflow-visible sm:overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar transition-colors duration-300 ${cardBg}`}>
+              <div className={`w-full md:w-64 p-3 sm:p-4 border-b md:border-b-0 md:border-r flex flex-col flex-shrink-0 md:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
                 <div className="space-y-2 mt-1">
                   <div className="flex items-center justify-between mb-1">
                     <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>일차 선택</label>
@@ -2906,11 +2767,38 @@ const MainApp = () => {
                     </div>
                   </div>
 
-                  <div className="flex flex-col space-y-1 w-full pt-1">
-                    <input type="file" accept="image/*" ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
-                    <button type="button" onClick={() => planFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold rounded border transition-all duration-300 flex items-center justify-center ${newPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                      {newPhoto ? <span className="flex items-center">📸 첨부 완료 (변경하려면 클릭 또는 붙여넣기)</span> : <span className="flex items-center">📸 사진 선택 (또는 Ctrl+V로 붙여넣기)</span>}
-                    </button>
+                  <div className="flex space-x-2 w-full pt-1 h-14">
+                    <div className={`flex-1 relative border border-dashed rounded-lg flex flex-col items-center justify-center overflow-hidden transition-all duration-300 ${newPastedPhoto ? 'bg-indigo-50 border-indigo-300' : (isDarkMode ? 'bg-slate-700 border-slate-500' : 'bg-white border-slate-300')}`}>
+                      {newPastedPhoto ? (
+                        <>
+                          <img src={newPastedPhoto} className="w-full h-full object-cover opacity-50" alt="" />
+                          <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-indigo-700">📋 완료</span>
+                          <button type="button" onClick={() => setNewPastedPhoto("")} className="absolute top-1 right-1 bg-rose-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[8px] z-10">✕</button>
+                        </>
+                      ) : (
+                        <>
+                          <span className={`text-[12px] mb-0.5 ${textMuted}`}>📋</span>
+                          <span className={`text-[8px] font-bold ${textMuted}`}>캡쳐 붙여넣기</span>
+                        </>
+                      )}
+                    </div>
+                    <div className={`flex-1 relative border border-dashed rounded-lg flex flex-col items-center justify-center overflow-hidden transition-all duration-300 ${newPhoto ? 'bg-indigo-50 border-indigo-300' : (isDarkMode ? 'bg-slate-700 border-slate-500' : 'bg-white border-slate-300')}`}>
+                      <input type="file" accept="image/*" ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
+                      <button type="button" onClick={() => planFileInputRef.current?.click()} className="w-full h-full flex flex-col items-center justify-center z-0">
+                        {newPhoto ? (
+                          <>
+                            <img src={newPhoto} className="w-full h-full object-cover absolute inset-0 opacity-50 z-[-1]" alt="" />
+                            <span className="text-[10px] font-bold text-indigo-700">📸 파일 변경</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className={`text-[12px] mb-0.5 ${textMuted}`}>📸</span>
+                            <span className={`text-[8px] font-bold ${textMuted}`}>사진 첨부</span>
+                          </>
+                        )}
+                      </button>
+                      {newPhoto && <button type="button" onClick={(e) => { e.stopPropagation(); setNewPhoto(""); }} className="absolute top-1 right-1 bg-rose-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[8px] z-10">✕</button>}
+                    </div>
                   </div>
 
                   <div className="flex items-center space-x-2 my-1.5 px-1 pb-1">
@@ -2971,9 +2859,11 @@ const MainApp = () => {
                                         )}
                                         {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
                                       </div>
-                                      {plan.photo && !plan.isTransport && (
-                                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500">
-                                          <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
+                                      {/* [FIX] 플랜 탭 타임라인 우측 듀얼 이미지 렌더링 */}
+                                      {(!plan.isTransport && (plan.photo || plan.pastedPhoto)) && (
+                                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 flex group-hover:scale-105 transition-transform duration-500">
+                                          {plan.pastedPhoto && <div className={`relative h-full ${plan.photo ? 'w-1/2 border-r border-slate-200 dark:border-slate-700' : 'w-full'}`}><img src={plan.pastedPhoto} className="w-full h-full object-cover" alt="" /></div>}
+                                          {plan.photo && <div className={`relative h-full ${plan.pastedPhoto ? 'w-1/2' : 'w-full'}`}><img src={plan.photo} className="w-full h-full object-cover" alt="" /></div>}
                                         </div>
                                       )}
                                     </div>
