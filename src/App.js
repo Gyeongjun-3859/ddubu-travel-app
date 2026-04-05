@@ -1942,8 +1942,8 @@ const MainApp = () => {
                     {flights.outbound.flightNum || '편명미상'} {flights.outbound.seatNum ? `| ${flights.outbound.seatNum}` : ''}
                  </span>
                  <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity duration-300 absolute right-0 top-0 ${ux.hoverLogic}`}>
-                   <button onClick={(e) => { e.stopPropagation(); handleEditFlight('outbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
-                   <button onClick={(e) => { e.stopPropagation(); handleDeleteFlight('outbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleEditFlight('outbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleDeleteFlight('outbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
                  </div>
                </div>
             </div>
@@ -1972,8 +1972,8 @@ const MainApp = () => {
                     {flights.inbound.flightNum || '편명미상'} {flights.inbound.seatNum ? `| ${flights.inbound.seatNum}` : ''}
                  </span>
                  <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity duration-300 absolute right-0 top-0 ${ux.hoverLogic}`}>
-                   <button onClick={(e) => { e.stopPropagation(); handleEditFlight('inbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
-                   <button onClick={(e) => { e.stopPropagation(); handleDeleteFlight('inbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
+                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleEditFlight('inbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleDeleteFlight('inbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]">🗑️</span></button>
                  </div>
                </div>
             </div>
@@ -3044,8 +3044,8 @@ const MainApp = () => {
                               </div>
                             </div>
                             <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                               <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
-                               <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
+                               <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
+                               <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
                             </div>
                           </div>
                         )
@@ -3142,10 +3142,10 @@ const MainApp = () => {
                             {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-auto transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
                           </div>
                           
-                          {/* 모바일 탭 & PC 호버 메뉴 분리 오버레이 */}
-                          <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
-                             <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1 transition-colors"><span className="text-xs">✏️</span></button>
-                             <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1 transition-colors"><span className="text-xs">🗑️</span></button>
+                          {/* 모바일 탭 & PC 호버 수정/삭제 메뉴 */}
+                          <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
+                             <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1 transition-colors"><span className="text-xs">✏️</span></button>
+                             <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1 transition-colors"><span className="text-xs">🗑️</span></button>
                           </div>
                         </div>
                       )})
@@ -3364,8 +3364,8 @@ const MainApp = () => {
                                <div className="flex justify-between items-start mb-1">
                                  <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 연박 숙소</span>
                                  <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-opacity duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                                   <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
-                                   <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
+                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
+                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
                                  </div>
                                </div>
                                <div className="flex gap-1.5 items-start mt-1">
@@ -3417,8 +3417,8 @@ const MainApp = () => {
                                     </div>
                                   </div>
                                   <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                                     <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
-                                     <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
+                                     <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
+                                     <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
                                   </div>
                                 </div>
                               )
@@ -3429,8 +3429,8 @@ const MainApp = () => {
                               <div className="flex justify-between items-start mb-1">
                                 <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>
                                 <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                                  <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
-                                  <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
+                                  <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
+                                  <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
                                 </div>
                               </div>
                               <div className="flex gap-1.5 items-start mt-1">
