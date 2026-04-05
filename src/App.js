@@ -235,6 +235,7 @@ const MainApp = () => {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
+  const polylinesRef = useRef([]);
   const [isPinMode, setIsPinMode] = useState(false);
   const isPinModeRef = useRef(isPinMode);
   
@@ -245,6 +246,7 @@ const MainApp = () => {
   const [markerSearchQuery, setMarkerSearchQuery] = useState("");
   const [showMapLabels, setShowMapLabels] = useState(false); 
   const [showMapPhotos, setShowMapPhotos] = useState(false); 
+  const [showMapRoute, setShowMapRoute] = useState(false);
   const [mapActiveDays, setMapActiveDays] = useState(['all']);
   const [myPinsFilter, setMyPinsFilter] = useState('all'); 
 
@@ -1021,31 +1023,55 @@ const MainApp = () => {
 
   function handleFindMyLocation() {
     if (!navigator.geolocation) { showToast("위치 기능을 지원하지 않습니다."); return; }
-    showToast("현재 위치를 확인 중입니다...");
+    showToast("현재 위치를 확인 중입니다... (최초 권한 동의가 필요할 수 있습니다)");
+    
     navigator.geolocation.getCurrentPosition((pos) => {
       const { latitude, longitude, heading } = pos.coords;
       if (mapInstanceRef.current && window.L) {
         mapInstanceRef.current.flyTo([latitude, longitude], 16);
         
-        if (window.myLocMarker) window.myLocMarker.remove();
+        const renderLocMarker = (lat, lng, head) => {
+           if (window.myLocMarker) window.myLocMarker.remove();
+           const rot = (head !== null && !isNaN(head)) ? `transform: rotate(${head}deg);` : '';
+           const arrowHtml = (head !== null && !isNaN(head))
+              ? `<div style="position:absolute; top:-14px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:14px solid #ef4444;"></div>` 
+              : '';
+           const html = `
+              <div style="position:relative; width:24px; height:24px; ${rot} transition: transform 0.2s;">
+                  ${arrowHtml}
+                  <div style="background-color:#ef4444;width:16px;height:16px;border-radius:50%;border:3px solid white;box-shadow:0 0 8px rgba(0,0,0,0.6); position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index: 2;"></div>
+                  <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); width:40px; height:40px; border-radius:50%; background-color:#ef4444; opacity:0.3; animation: myloc-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; z-index: 1;"></div>
+              </div>
+              <style>@keyframes myloc-ping { 75%, 100% { transform: translate(-50%, -50%) scale(2); opacity: 0; } }</style>
+           `;
+           const myLocIcon = window.L.divIcon({ html, className: '', iconSize: [24, 24], iconAnchor: [12, 12] });
+           window.myLocMarker = window.L.marker([lat, lng], { icon: myLocIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current).bindPopup(`<b>현재 내 위치</b>`);
+        };
+
+        renderLocMarker(latitude, longitude, heading);
         
-        const rot = heading ? `transform: rotate(${heading}deg);` : '';
-        const arrowHtml = heading !== null && !isNaN(heading) 
-            ? `<div style="position:absolute; top:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:12px solid #3b82f6;"></div>` 
-            : '';
-            
-        const html = `
-            <div style="position:relative; width:24px; height:24px; ${rot}">
-                ${arrowHtml}
-                <div style="background-color:#3b82f6;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 0 3px rgba(59, 130, 246, 0.4); position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index: 2;"></div>
-                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); width:30px; height:30px; border-radius:50%; background-color:#3b82f6; opacity:0.5; animation: myloc-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; z-index: 1;"></div>
-            </div>
-            <style>@keyframes myloc-ping { 75%, 100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; } }</style>
-        `;
-        const myLocIcon = window.L.divIcon({ html, className: '', iconSize: [24, 24], iconAnchor: [12, 12] });
-        window.myLocMarker = window.L.marker([latitude, longitude], { icon: myLocIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current).bindPopup(`<b>현재 내 위치</b>`).openPopup();
+        if (window.DeviceOrientationEvent) {
+          const handleOrientation = (e) => {
+             let h = e.webkitCompassHeading || Math.abs(e.alpha - 360);
+             if (h !== null && h !== undefined) {
+                renderLocMarker(latitude, longitude, h);
+             }
+          };
+          if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+             DeviceOrientationEvent.requestPermission().then(res => {
+                if (res === 'granted') window.addEventListener('deviceorientation', handleOrientation);
+             }).catch(err => console.error(err));
+          } else {
+             window.addEventListener('deviceorientation', handleOrientation);
+          }
+        }
       }
-    }, () => showToast("위치 접근 권한이 필요하거나 시간이 초과되었습니다."), { enableHighAccuracy: true, timeout: 10000 });
+    }, (error) => {
+      if (error.code === 1) showToast("위치 권한이 거부되었습니다. 스마트폰/브라우저의 위치 권한을 허용해주세요.");
+      else if (error.code === 2) showToast("위치 정보를 사용할 수 없습니다. GPS를 켜주세요.");
+      else if (error.code === 3) showToast("위치 요청 시간이 초과되었습니다.");
+      else showToast("위치 접근 중 알 수 없는 오류가 발생했습니다.");
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
   }
 
   function handleMarkerSearchSelect(marker) {
@@ -1726,11 +1752,44 @@ const MainApp = () => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
     
+    polylinesRef.current.forEach(p => p.remove());
+    polylinesRef.current = [];
     markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
 
     const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+
+    const routeMap = {}; 
+    const coordsByDay = {};
+
+    tripDays.forEach(d => {
+      const dayPlans = safePlanTimeline.filter(p => !p.isAccommodation && parseInt(p.day) === d && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
+      coordsByDay[d] = [];
+      let routeIndex = 1;
+      dayPlans.forEach((p) => {
+        const rest = safeCurrentRestaurants.find(r => r && S(r.name) === S(p.place));
+        if (rest && rest.lat && rest.lng) {
+           coordsByDay[d].push([rest.lat, rest.lng]);
+           const key = `${S(p.place)}_${d}`;
+           if (!routeMap[key]) {
+              routeMap[key] = routeIndex; 
+              routeIndex++;
+           }
+        }
+      });
+    });
+
+    if (showMapRoute) {
+       tripDays.forEach(d => {
+          if (mapActiveDays.includes('all') || mapActiveDays.includes(d)) {
+             if (coordsByDay[d] && coordsByDay[d].length > 1) {
+                const polyline = window.L.polyline(coordsByDay[d], { color: getDayColor(d), weight: 3, opacity: 0.8, dashArray: '5, 8' }).addTo(map);
+                polylinesRef.current.push(polyline);
+             }
+          }
+       });
+    }
 
     const filteredRestaurants = safeCurrentRestaurants.filter(rest => {
       if (mapActiveDays.includes('all')) return true;
@@ -1741,8 +1800,21 @@ const MainApp = () => {
 
     filteredRestaurants.forEach((rest) => {
       if (!rest || !rest.lat || !rest.lng) return;
-      const linkedPlans = safePlanTimeline.filter(p => p && S(p.place) === S(rest.name));
-      const primaryPlan = linkedPlans[0];
+      const linkedPlans = safePlanTimeline.filter(p => p && S(p.place) === S(rest.name) && !p.isTransport);
+      
+      let primaryPlan = null;
+      if (mapActiveDays.includes('all')) {
+         primaryPlan = linkedPlans[0];
+      } else {
+         primaryPlan = linkedPlans.find(p => mapActiveDays.includes(parseInt(p.day)));
+      }
+
+      let routeNumberStr = '';
+      if (primaryPlan) {
+         const rNum = routeMap[`${S(rest.name)}_${primaryPlan.day}`];
+         routeNumberStr = rNum ? String(rNum) : '📌';
+      }
+
       const isAcc = Boolean(rest.isAccommodation) || linkedPlans.some(p => Boolean(p.isAccommodation));
       const isLand = Boolean(rest.isLandmark);
       
@@ -1752,14 +1824,14 @@ const MainApp = () => {
       if (isLand) {
         html = `<div style="background-color:#fbbf24;width:32px;height:32px;border-radius:50%;border:3px solid #b45309;box-shadow:0 0 10px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;transition:transform 0.2s; position:relative;"><span style="font-size:16px; filter: drop-shadow(1px 1px 1px rgba(0,0,0,0.5));">👑</span><div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:10px solid #b45309;"></div></div>`;
       } else {
-        html = `<div style="background-color:${pinColor};width:${isAcc?'24px':'18px'};height:${isAcc?'24px':'18px'};border-radius:50%;border:2px solid white;box-shadow:0 0 6px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;transition:transform 0.2s;">${isAcc?'<span style="font-size:12px;">🏠</span>':(primaryPlan?`<span style="color:white;font-size:10px;font-weight:bold;">${primaryPlan.day}</span>`:'')}</div>`;
+        html = `<div style="background-color:${pinColor};width:${isAcc?'24px':'18px'};height:${isAcc?'24px':'18px'};border-radius:50%;border:2px solid white;box-shadow:0 0 6px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;transition:transform 0.2s;">${isAcc?'<span style="font-size:12px;">🏠</span>':(primaryPlan?`<span style="color:white;font-size:10px;font-weight:bold;">${routeNumberStr}</span>`:'')}</div>`;
       }
 
       if (showMapPhotos && rest.img && !S(rest.img).includes("unsplash")) {
         if (isLand) {
             html = `<div style="width:44px;height:44px;border-radius:50%;border:4px solid #fbbf24;background-image:url(${S(rest.img)});background-size:cover;background-position:center;position:relative;box-shadow:0 0 10px rgba(0,0,0,0.6);"><div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:white;border-radius:50%;font-size:14px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center; z-index:10;">👑</div><div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:10px solid #fbbf24;"></div></div>`;
         } else {
-            html = `<div style="width:34px;height:34px;border-radius:50%;border:3px solid ${pinColor};background-image:url(${S(rest.img)});background-size:cover;background-position:center;position:relative;box-shadow:0 0 6px rgba(0,0,0,0.5);">${isAcc?'<div style="position:absolute;bottom:-6px;right:-6px;background:white;border-radius:50%;font-size:12px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center;">🏠</div>':(primaryPlan?`<div style="position:absolute;top:-6px;left:-6px;background:${pinColor};color:white;border-radius:50%;font-size:8px;font-weight:bold;width:14px;height:14px;display:flex;align-items:center;justify-content:center;border:1px solid white;">${primaryPlan.day}</div>`:'')}</div>`;
+            html = `<div style="width:34px;height:34px;border-radius:50%;border:3px solid ${pinColor};background-image:url(${S(rest.img)});background-size:cover;background-position:center;position:relative;box-shadow:0 0 6px rgba(0,0,0,0.5);">${isAcc?'<div style="position:absolute;bottom:-6px;right:-6px;background:white;border-radius:50%;font-size:12px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center;">🏠</div>':(primaryPlan?`<div style="position:absolute;top:-6px;left:-6px;background:${pinColor};color:white;border-radius:50%;font-size:8px;font-weight:bold;width:14px;height:14px;display:flex;align-items:center;justify-content:center;border:1px solid white;">${routeNumberStr}</div>`:'')}</div>`;
         }
       }
       try {
@@ -1779,7 +1851,7 @@ const MainApp = () => {
         markersRef.current.push(marker);
       } catch (err) {}
     });
-  }, [isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, isPinMode, movingPinId, mapActiveDays, getDayColor]);
+  }, [isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, showMapRoute, isPinMode, movingPinId, mapActiveDays, getDayColor]);
 
   /* ===================== UI 및 변수 계산 ===================== */
 
@@ -1849,7 +1921,7 @@ const MainApp = () => {
       const baseBorder = isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white';
       const activeBorder = dirId === 'outbound' ? 'border-indigo-400' : 'border-rose-400';
       const finalBorder = isActive ? activeBorder : baseBorder;
-      const hoverLogic = isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100';
+      const hoverLogic = isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto';
       return { finalBorder, hoverLogic, isActive };
     };
 
@@ -2971,7 +3043,7 @@ const MainApp = () => {
                                  {plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>}
                               </div>
                             </div>
-                            <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                            <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
                                <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
                                <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
                             </div>
@@ -2996,9 +3068,9 @@ const MainApp = () => {
                         </div>
                         
                         {/* 모바일 탭 & PC 호버 수정/삭제 메뉴 */}
-                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
-                           <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
-                           <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
+                        <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
+                           <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1 transition-colors"><span className="text-xs">✏️</span></button>
+                           <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1 transition-colors"><span className="text-xs">🗑️</span></button>
                         </div>
                       </div>
                     )})
@@ -3291,7 +3363,7 @@ const MainApp = () => {
                                  onClick={(e) => { e.stopPropagation(); if(isActive){setSelectedPlanInfo(plan); setActiveMobileCard(null);}else setActiveMobileCard(plan.id); }}>
                                <div className="flex justify-between items-start mb-1">
                                  <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 연박 숙소</span>
-                                 <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                                 <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-opacity duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
                                    <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
                                    <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
                                  </div>
@@ -3344,7 +3416,8 @@ const MainApp = () => {
                                        {plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>}
                                     </div>
                                   </div>
-                                  <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                                  <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
+                                     <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
                                      <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
                                   </div>
                                 </div>
@@ -3355,7 +3428,7 @@ const MainApp = () => {
                             <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                               <div className="flex justify-between items-start mb-1">
                                 <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>
-                                <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                                <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
                                   <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
                                   <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
                                 </div>
@@ -3437,6 +3510,10 @@ const MainApp = () => {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1.5">
+                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
+                      <input type="checkbox" checked={showMapRoute} onChange={e => setShowMapRoute(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
+                      <span>루트표기 🗺️</span>
+                   </label>
                    <button onClick={() => setIsMyPinsModalOpen(true)} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-all duration-300 shadow-sm active:scale-95 ${isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}>
                       <span className="text-xs mr-1">📍</span><span>내 핀 목록</span>
                    </button>
