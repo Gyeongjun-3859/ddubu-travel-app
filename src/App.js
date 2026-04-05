@@ -2991,9 +2991,6 @@ const MainApp = () => {
                 📝 꼼꼼하게 채우는 여행 일기
               </h2>
               <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap sm:flex-nowrap gap-y-1 ml-auto">
-                <button onClick={() => { setIsArchiveModalOpen(true); setShowArchiveAddForm(false); }} className={`flex items-center shadow-sm px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 bg-slate-700 text-white hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-700`}>
-                   📦 보관함 열기
-                </button>
                 {isSharedTripActive && (
                    <button onClick={handleCloneSharedTrip} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 bg-orange-500 text-white hover:bg-orange-600`}>
                       💾 내 일정으로 복사
