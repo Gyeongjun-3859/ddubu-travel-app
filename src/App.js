@@ -20,6 +20,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
   - 15. [FIX] 모바일 가로모드(Landscape) 대응 동적 스크롤(min-h) 최적화
   - 16. [FIX] 공유 여행 영구 리스트업 및 '내 일정으로 가져오기(복사/업데이트)' 기능 추가
   - 17. [FIX] 공유 참여자 '강퇴(중지)' 기능 및 커스텀 확인 모달 구현 완료
+  - 18. [NEW] 숙박 일정 모든 일차 최상단 연박 고정 렌더링 및 개별 수정 적용
+  - 19. [NEW] 핀 기존 일정 연동 시 데이터 자동 채움 및 수동입력 UI 스무딩 적용
+  - 20. [NEW] 내 핀 목록 Day별 / 미지정 필터 탭 추가 및 [일단 저장하기] 분리
+  - 21. [NEW] ResizeObserver 기반 Leaflet 지도 탭 전환 잔상 오류 100% 최적화
+  - 22. [NEW] 미지정 일정 [보관함(Day 0)] 등록 기능 및 3열 팝업 모달 적용
+  - 23. [NEW] 사진 등록 영역 (URL/복붙창 vs 파일첨부버튼) 반반 분할 UI 적용
+  - 24. [NEW] 항공권 타임라인 자동 등록 및 모든 교통편(버스/기차) 출/도착 시간 반영
+  - 25. [NEW] 교통편 타임라인 상세 조회(Click) 및 개별 자유 수정(Edit) 활성화
   =============================================================================
 */
 
@@ -160,7 +168,7 @@ const MainApp = () => {
   const [inviteIdInput, setInviteIdInput] = useState("");
   const [sharedUsers, setSharedUsers] = useState([]);
   const [isSubmittingTrip, setIsSubmittingTrip] = useState(false); 
-  const [kickUserTarget, setKickUserTarget] = useState(null); // 강퇴 모달 타겟
+  const [kickUserTarget, setKickUserTarget] = useState(null); 
 
   const [weather, setWeather] = useState(null);
   const [forecast, setForecast] = useState([]);
@@ -238,6 +246,7 @@ const MainApp = () => {
   const [showMapLabels, setShowMapLabels] = useState(false); 
   const [showMapPhotos, setShowMapPhotos] = useState(false); 
   const [mapActiveDay, setMapActiveDay] = useState('all');
+  const [myPinsFilter, setMyPinsFilter] = useState('all'); 
 
   const [isAddPlaceModalOpen, setIsAddPlaceModalOpen] = useState(false);
   const [isMyPinsModalOpen, setIsMyPinsModalOpen] = useState(false);
@@ -273,29 +282,27 @@ const MainApp = () => {
     bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }
   });
 
-  const [panelRatio, setPanelRatio] = useState(50); // 모바일 병렬 배치 비율
+  const [panelRatio, setPanelRatio] = useState(50); 
   const dragRef = useRef(false);
 
   const [activeMobileCard, setActiveMobileCard] = useState(null);
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false); 
+  const [showArchiveAddForm, setShowArchiveAddForm] = useState(false); 
 
   const isDarkMode = appTheme === 'dark';
 
   const DAY_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#a855f7', '#ec4899', '#06b6d4', '#f97316', '#8b5cf6'];
   const getDayColor = useCallback((day) => DAY_COLORS[(parseInt(day) - 1) % DAY_COLORS.length], [DAY_COLORS]);
 
-  // Paste 이벤트를 위한 최신 상태 참조용
   const activeContextRef = useRef({ editingPlan, isAddPlaceModalOpen, activeTab });
   useEffect(() => {
     activeContextRef.current = { editingPlan, isAddPlaceModalOpen, activeTab };
   }, [editingPlan, isAddPlaceModalOpen, activeTab]);
 
-  /* ===================== 2. 함수 호이스팅 및 로직 ===================== */
-
   useEffect(() => {
     currentRestaurantsRef.current = currentRestaurants;
   }, [currentRestaurants]);
 
-  // 클립보드 붙여넣기 기능 전역 리스너
   useEffect(() => {
     const handlePaste = (e) => {
       const items = e.clipboardData?.items;
@@ -384,6 +391,7 @@ const MainApp = () => {
   }
 
   function getDayDateString(dayNum) {
+    if (dayNum === 0) return "미지정 (보관함)";
     if (!travelStartDate) return "";
     const date = new Date(travelStartDate);
     date.setDate(date.getDate() + (parseInt(dayNum) - 1));
@@ -523,7 +531,6 @@ const MainApp = () => {
     showToast("💾 전체 일정이 문서함(내 여행 목록)에 안전하게 저장되었습니다!");
   }
 
-  // [공유된 여행 복사/가져오기 기능]
   async function handleCloneSharedTrip() {
     let cloneTripId = null;
     const existingClone = trips.find(t => t.cloned_from === activeTripId);
@@ -920,7 +927,7 @@ const MainApp = () => {
 
   function handleOpenGoogleTranslate() { window.open(`https://translate.google.com/?sl=auto&tl=ko`, '_blank'); }
 
-  function handleManualPlaceAdd() {
+  function handleManualPlaceAdd(isFromMap = true) {
     if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
     
     let pLat = clickedLocation?.lat || null;
@@ -974,15 +981,21 @@ const MainApp = () => {
 
     saveToDb({ current_restaurants: updatedRests, plan_timeline: updatedTimeline });
 
-    if (pLat && pLng && mapInstanceRef.current) {
-      mapInstanceRef.current.flyTo([pLat, pLng], 16);
-      showToast("지도에 핀이 등록/수정 되었습니다.");
+    if (isFromMap) {
+       if (pLat && pLng && mapInstanceRef.current) {
+         mapInstanceRef.current.flyTo([pLat, pLng], 16);
+         showToast("지도에 핀이 등록/수정 되었습니다.");
+       } else {
+         showToast("핀 목록에 저장되었습니다. 나중에 위치를 지정해주세요."); 
+       }
+       setClickedLocation(null); setIsAddPlaceModalOpen(false); 
     } else {
-      showToast("핀 목록에 저장되었습니다. 나중에 위치를 지정해주세요."); 
+       showToast("📍 장소가 핀 보관함에 일단 저장되었습니다!");
+       setIsAddPlaceModalOpen(false);
     }
     
     setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualTime(""); setNewManualIsAccommodation(false);
-    setPinLinkDay(""); setPinLinkPlanId(""); setClickedLocation(null); setIsAddPlaceModalOpen(false); 
+    setPinLinkDay(""); setPinLinkPlanId(""); 
   }
 
   function handleManualPhotoUpload(e) {
@@ -1009,18 +1022,22 @@ const MainApp = () => {
   }
 
   function handleSavePlan() {
-    if (!newTime.trim() || !newPlace.trim()) { showToast("시간과 장소를 적어주세요."); return; }
+    if (!newTime.trim() && !newIsAccommodation) { showToast("시간을 적어주세요."); return; }
+    if (!newPlace.trim()) { showToast("장소를 적어주세요."); return; }
     
     const finalCountry = planCountry === "수동입력" ? manualCountry : planCountry;
     const finalRegion = planRegion === "수동입력" ? manualRegion : planRegion;
+
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    let updatedTimeline = [...safePlanTimeline];
 
     const planData = { 
       id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: newPhoto ? S(newPhoto) : "", 
       country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation)
     };
-    
-    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-    let updatedTimeline = [...safePlanTimeline, planData];
+    updatedTimeline.push(planData);
+    showToast(newIsAccommodation ? "🏠 전 일정 숙소로 등록되었습니다!" : "스케줄에 등록 성공! ✨");
+
     updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
     setPlanTimeline(updatedTimeline); 
     
@@ -1032,7 +1049,6 @@ const MainApp = () => {
     }
     saveToDb(updates); 
     resetPlanForm();
-    showToast("스케줄에 등록 성공! ✨");
   }
   
   function handlePlanPhotoUpload(e, isEdit = false) {
@@ -1139,6 +1155,21 @@ const MainApp = () => {
           hasAnyData = true;
           if (type === 'flight') {
              newFlights[dir] = { ...data };
+             const dirLabel = dir === 'outbound' ? '가는 편' : '오는 편';
+             const planData = { 
+               id: Date.now().toString() + Math.random().toString(), 
+               day: parseInt(data.day), 
+               time: S(data.depTime), 
+               place: `✈️ ${data.dep} ➔ ${data.arr}`, 
+               localName: S(data.airline), 
+               features: `항공편: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} | 도착: ${data.arrTime} [${dirLabel}]`, 
+               photo: "", 
+               country: S(globalPlanCountry), 
+               region: S(globalPlanRegion), 
+               isAccommodation: false,
+               isTransport: true
+             };
+             updatedTimeline.push(planData);
           } else {
              const emoji = type === 'train' ? '🚆' : '🚌';
              const label = type === 'train' ? '기차' : '버스';
@@ -1147,9 +1178,9 @@ const MainApp = () => {
                id: Date.now().toString() + Math.random().toString(), 
                day: parseInt(data.day), 
                time: S(data.depTime), 
-               place: `${emoji} ${data.dep} -> ${data.arr}`, 
+               place: `${emoji} ${data.dep} ➔ ${data.arr}`, 
                localName: S(data.airline), 
-               features: `${label} 번호: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} (도착예정: ${data.arrTime}) [${dirLabel}]`, 
+               features: `${label} 번호: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} | 도착: ${data.arrTime} [${dirLabel}]`, 
                photo: "", 
                country: S(globalPlanCountry), 
                region: S(globalPlanRegion), 
@@ -1393,9 +1424,13 @@ const MainApp = () => {
     document.head.appendChild(script);
   }, []);
 
+  // [NEW] 지도 탭 전환 시 잔상 해결을 위해 다중 타이머로 리사이즈 완벽 동기화
   useEffect(() => {
     if (activeTab === 'map' && mapInstanceRef.current) {
-      setTimeout(() => { mapInstanceRef.current.invalidateSize(); }, 200);
+      const map = mapInstanceRef.current;
+      map.invalidateSize(true);
+      const timers = [10, 50, 150, 350, 500].map(t => setTimeout(() => map.invalidateSize(true), t));
+      return () => timers.forEach(clearTimeout);
     }
   }, [activeTab]);
 
@@ -1692,7 +1727,16 @@ const MainApp = () => {
 
   const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
   const filteredMarkers = markerSearchQuery 
-    ? safeCurrentRestaurants.filter(r => r && S(r.name).toLowerCase().includes(S(markerSearchQuery).toLowerCase())) : [];
+    ? safeCurrentRestaurants.filter(r => r && S(r.name).toLowerCase().includes(S(markerSearchQuery).toLowerCase())) : safeCurrentRestaurants;
+  
+  // [NEW] 내 핀 목록 탭 필터링 로직
+  const filteredMyPins = filteredMarkers.filter(pin => {
+    if (myPinsFilter === 'all') return true;
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(pin.name));
+    if (myPinsFilter === 'unlinked') return !linkedPlan;
+    return linkedPlan && parseInt(linkedPlan.day) === parseInt(myPinsFilter);
+  });
 
   let appBg = "bg-slate-50", textMain = "text-slate-900", textMuted = "text-slate-500", cardBg = "bg-white border-slate-200 shadow-sm", inputBg = "bg-white text-slate-900 border-slate-200";
   if (appTheme === 'dark') { appBg = "bg-slate-900"; textMain = "text-slate-100"; textMuted = "text-slate-400"; cardBg = "bg-slate-800 border-slate-700"; inputBg = "bg-slate-700 text-white border-slate-600"; }
@@ -1701,7 +1745,11 @@ const MainApp = () => {
 
   const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
   const safeDashboardDay = (typeof dashboardDay === 'number' && dashboardDay > 0) ? dashboardDay : 1;
-  const todayPlans = safePlanTimeline.filter(p => p && parseInt(p.day || 1) === safeDashboardDay).sort((a,b) => S(a?.time).localeCompare(S(b?.time)));
+  
+  // [NEW] 데일리 일정 필터링 방식 혁신: 숙소 연박 무조건 포함 + 일반일정 시간순 정렬
+  const dayAccoms = safePlanTimeline.filter(p => p && p.isAccommodation);
+  const dayPlans = safePlanTimeline.filter(p => p && !p.isAccommodation && parseInt(p.day || 1) === safeDashboardDay).sort((a,b) => S(a?.time).localeCompare(S(b?.time)));
+  const todayPlans = [...dayAccoms, ...dayPlans];
   
   const safeMaxDay = (typeof maxDay === 'number' && maxDay > 0 && maxDay < 100) ? maxDay : 4;
   const tripDays = Array.from({length: safeMaxDay}, (_, i) => i + 1);
@@ -1850,7 +1898,7 @@ const MainApp = () => {
   }
 
   return (
-    <div style={{ zoom: finalElementScale, fontFamily: appFont }} className={`flex flex-col h-[100dvh] w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
+    <div style={{ zoom: finalElementScale }} className={`flex flex-col h-[100dvh] w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
       
       {/* --- 모달 및 팝업 영역 --- */}
       {toastMsg && (
@@ -1991,7 +2039,7 @@ const MainApp = () => {
         </div>
       )}
 
-      {/* 강퇴 확인 모달 (항상 최상위 렌더링) */}
+      {/* 강퇴 확인 모달 */}
       {kickUserTarget && (
         <div className="fixed inset-0 bg-black/60 z-[99999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
            <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95 duration-300`}>
@@ -2160,6 +2208,7 @@ const MainApp = () => {
         </div>
       )}
 
+      {/* 일정 상세 모달 */}
       {selectedPlanInfo && (
         <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPlanInfo(null)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
@@ -2173,24 +2222,26 @@ const MainApp = () => {
             )}
             <div className="p-5 flex flex-col">
               <div className="flex justify-between items-start mb-2">
-                <h3 className="text-lg font-black text-slate-900">{S(selectedPlanInfo.place)} {selectedPlanInfo.isAccommodation ? '🏠' : ''}</h3>
-                {(!selectedPlanInfo.photo || selectedPlanInfo.isTransport) && <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-1 rounded shadow-sm">{S(selectedPlanInfo.time)}</span>}
+                <h3 className="text-lg font-black text-slate-900 dark:text-slate-100 leading-tight">
+                   {S(selectedPlanInfo.place)} {selectedPlanInfo.isAccommodation ? '🏠' : ''}
+                </h3>
+                {(!selectedPlanInfo.photo || selectedPlanInfo.isTransport) && <span className="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold px-2 py-1 rounded shadow-sm shrink-0 whitespace-nowrap ml-2">{S(selectedPlanInfo.time)}</span>}
               </div>
               
               {selectedPlanInfo.localName && (
                 <div className="flex items-center text-sm font-bold text-indigo-500 mb-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, selectedPlanInfo.localName)}>
                   <span className="mr-2">📍 {S(selectedPlanInfo.localName)}</span>
-                  <span className="text-[10px] bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">복사</span>
+                  <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800">복사</span>
                 </div>
               )}
               
               {selectedPlanInfo.features ? (
-                <p className="text-sm text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">{S(selectedPlanInfo.features)}</p>
+                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">{S(selectedPlanInfo.features)}</p>
               ) : (
                 <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
               )}
               
-              <button onClick={() => setSelectedPlanInfo(null)} className="mt-5 w-full bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors duration-300">닫기</button>
+              <button onClick={() => setSelectedPlanInfo(null)} className="mt-5 w-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors duration-300">닫기</button>
             </div>
           </div>
         </div>
@@ -2278,14 +2329,12 @@ const MainApp = () => {
                  <button onClick={() => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...initialTransState}}}))} className="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-500 rounded border hover:bg-slate-200 transition-colors duration-300">초기화</button>
               </div>
 
-              {transType !== 'flight' && (
-                <div className="flex flex-col space-y-1 animate-in fade-in duration-300">
-                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택 (Day)</label>
-                   <select value={modalTransData[transType][transDir].day} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], day: parseInt(e.target.value)}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer transition-all duration-300`}>
-                      {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
-                   </select>
-                </div>
-              )}
+              <div className="flex flex-col space-y-1 animate-in fade-in duration-300">
+                 <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택 (Day)</label>
+                 <select value={modalTransData[transType][transDir].day} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], day: parseInt(e.target.value)}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer transition-all duration-300`}>
+                    {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
+                 </select>
+              </div>
 
               <div className="flex space-x-2">
                 <div className="flex flex-col space-y-1 w-1/3">
@@ -2467,44 +2516,71 @@ const MainApp = () => {
                     }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[11px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
                       <option value="">-- 연동 안 함 --</option>
                       {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
+                      <option value="0">보관함</option>
                     </select>
                   </div>
                   {pinLinkDay && (
                      <div className="flex flex-col space-y-1 w-2/3 animate-in fade-in duration-300">
-                       <label className={`text-[9px] font-bold ${textMuted} px-1`}>기존 일정과 연결 (또는 수동입력)</label>
-                       <select value={pinLinkPlanId} onChange={e => {
-                          const val = e.target.value;
-                          setPinLinkPlanId(val);
-                          if (val !== 'manual' && val !== '') {
-                             const matched = planTimeline.find(p => String(p.id) === String(val));
-                             if (matched) setNewManualTime(matched.time);
-                          } else {
-                             setNewManualTime("");
-                          }
-                       }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
-                          <option value="">-- 일정 선택 --</option>
-                          {planTimeline.filter(p => String(p.day) === String(pinLinkDay)).map(p => (
-                             <option key={p.id} value={p.id}>[{p.time}] {S(p.place)}</option>
-                          ))}
-                          <option value="manual">➕ 수동 입력 (새 일정 추가)</option>
-                       </select>
+                       <label className={`text-[9px] font-bold ${textMuted} px-1`}>기존 일정 연동 (또는 직접 입력)</label>
+                       
+                       {pinLinkPlanId === 'manual' ? (
+                          <div className="relative w-full">
+                            <input 
+                              type="text" 
+                              placeholder="시간 입력 (예: 09:00)" 
+                              maxLength="5"
+                              value={newManualTime} 
+                              onChange={e => handleTimeInput(e, setNewManualTime)} 
+                              autoFocus
+                              className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-indigo-300 ring-1 ring-indigo-500'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg transition-all duration-300 pr-6`} 
+                            />
+                            <button onClick={() => setPinLinkPlanId("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold">✕</button>
+                          </div>
+                       ) : (
+                          <select value={pinLinkPlanId} onChange={e => {
+                             const val = e.target.value;
+                             setPinLinkPlanId(val);
+                             if (val !== 'manual' && val !== '') {
+                                const matched = planTimeline.find(p => String(p.id) === String(val));
+                                if (matched) {
+                                   setNewManualTime(matched.time);
+                                   setNewManualPlaceName(matched.place);
+                                   if(matched.localName) setNewManualLocalName(matched.localName);
+                                   if(matched.features) setNewManualFeature(matched.features);
+                                   if(matched.photo) setNewManualPhoto(matched.photo);
+                                   setNewManualIsAccommodation(matched.isAccommodation);
+                                   showToast("✨ 선택한 일정의 데이터가 쏙 채워졌어요!");
+                                }
+                             } else {
+                                setNewManualTime("");
+                             }
+                          }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
+                             <option value="">-- 일정 선택 --</option>
+                             {planTimeline.filter(p => String(p.day) === String(pinLinkDay)).map(p => (
+                                <option key={p.id} value={p.id}>[{p.time}] {S(p.place)}</option>
+                             ))}
+                             <option value="manual">➕ 새 일정으로 (시간 수동 입력)</option>
+                          </select>
+                       )}
                      </div>
                   )}
                 </div>
-
-                {(!pinLinkDay || pinLinkPlanId === 'manual') && (
-                   <div className="flex flex-col space-y-1 w-1/2 pt-1 animate-in fade-in duration-300">
-                     <label className={`text-[9px] font-bold ${textMuted} px-1`}>방문 시간</label>
-                     <input type="text" placeholder="09:00" maxLength="5" value={newManualTime} onChange={e => handleTimeInput(e, setNewManualTime)} disabled={!pinLinkDay} className={`w-full ${!pinLinkDay ? 'opacity-50 bg-slate-100 cursor-not-allowed' : inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
-                   </div>
-                )}
               </div>
 
               <div className="flex flex-col space-y-1 w-full pt-1">
                 <input type="file" accept="image/*" ref={manualFileInputRef} onChange={handleManualPhotoUpload} className="hidden" />
-                <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`w-full py-2.5 text-xs font-bold rounded-lg border transition-all duration-300 flex items-center justify-center ${newManualPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                  {newManualPhoto ? <span className="flex items-center">📸 사진 변경 (또는 Ctrl+V로 붙여넣기)</span> : <span className="flex items-center">📸 사진 첨부 (또는 Ctrl+V로 붙여넣기)</span>}
-                </button>
+                <div className="flex gap-2">
+                  <input 
+                     type="text" 
+                     placeholder="이미지 URL 입력 / 복붙" 
+                     value={newManualPhoto} 
+                     onChange={e => setNewManualPhoto(e.target.value)} 
+                     className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-2 text-[9px] font-bold outline-none rounded transition-all duration-300`} 
+                  />
+                  <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`flex-1 py-2 text-[9px] font-bold rounded-lg border transition-all duration-300 flex items-center justify-center ${newManualPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
+                    <span className="flex items-center">📸 파일 첨부</span>
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center space-x-2 my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300">
@@ -2513,9 +2589,12 @@ const MainApp = () => {
               </div>
             </div>
             
-            <div className="p-4 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-              <button onClick={handleManualPlaceAdd} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">
-                {clickedLocation?.id ? '핀 정보 저장하기' : '지도에 핀 꽂기 📍'}
+            <div className="p-4 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex gap-2">
+              <button onClick={() => handleManualPlaceAdd(false)} className={`flex-1 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'} rounded-xl py-3 text-xs font-bold shadow-sm active:scale-95 transition-all duration-300`}>
+                일단 저장하기 💾
+              </button>
+              <button onClick={() => handleManualPlaceAdd(true)} className="flex-1 bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">
+                지도에 핀 꽂기 📍
               </button>
             </div>
           </div>
@@ -2525,9 +2604,18 @@ const MainApp = () => {
       {isMyPinsModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[3500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
           <div className={`${cardBg} w-full max-w-5xl flex flex-col animate-in zoom-in-95 duration-300 max-h-[85vh] rounded-3xl overflow-hidden`}>
-            <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-              <h3 className="text-sm font-black flex items-center"><span className="mr-2 text-indigo-500 text-lg">📍</span> 내 핀/장소 목록</h3>
-              <div className="flex items-center space-x-3">
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 border-b gap-3 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
+              <h3 className="text-sm font-black flex items-center shrink-0"><span className="mr-2 text-indigo-500 text-lg">📍</span> 내 핀/장소 목록</h3>
+              
+              <div className="flex items-center space-x-1 overflow-x-auto custom-scrollbar flex-1 pb-1 sm:pb-0 scroll-smooth">
+                 <button onClick={() => setMyPinsFilter('all')} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors ${myPinsFilter === 'all' ? 'bg-indigo-600 text-white shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-200 text-slate-500 hover:bg-slate-300')}`}>전체보기</button>
+                 {tripDays.map(d => (
+                    <button key={d} onClick={() => setMyPinsFilter(d)} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors ${myPinsFilter === d ? 'bg-indigo-600 text-white shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-200 text-slate-500 hover:bg-slate-300')}`}>Day {d}</button>
+                 ))}
+                 <button onClick={() => setMyPinsFilter('unlinked')} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors border ${myPinsFilter === 'unlinked' ? 'bg-slate-600 text-white border-slate-600 shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400 border-transparent' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
+              </div>
+
+              <div className="flex items-center space-x-3 shrink-0">
                 <button onClick={() => {
                   setIsMyPinsModalOpen(false);
                   setClickedLocation(null);
@@ -2548,14 +2636,14 @@ const MainApp = () => {
             </div>
             
             <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-50/50 dark:bg-slate-900/50 scroll-smooth">
-              {safeCurrentRestaurants.length === 0 ? (
+              {filteredMyPins.length === 0 ? (
                 <div className="text-center py-20 text-xs font-bold text-slate-400 flex flex-col items-center">
                   <span className="text-4xl mb-3 opacity-20">📍</span>
                   등록된 핀이 없습니다.<br/>우측 상단의 '새 장소 추가'를 눌러 장소를 기록해보세요!
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                  {safeCurrentRestaurants.map(pin => (
+                  {filteredMyPins.map(pin => (
                     <div key={pin.id} className={`flex flex-col p-2 border rounded-xl shadow-sm transition-all duration-300 hover:shadow-md ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
                       
                       {pin.img && !S(pin.img).includes("unsplash") ? (
@@ -2764,16 +2852,45 @@ const MainApp = () => {
                       const isActive = activeMobileCard === plan.id;
                       const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-600 md:hover:border-indigo-400' : 'border-slate-100 md:hover:border-indigo-400');
                       
+                      // [NEW] 교통/항공권 렌더링 로직 강화
+                      if (plan.isTransport) {
+                        return (
+                          <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group`}
+                               onClick={(e) => { 
+                                 e.stopPropagation(); 
+                                 if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
+                                 else setActiveMobileCard(plan.id);
+                               }}>
+                            <div className="bg-indigo-500 text-white font-black text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{S(plan.time)}</div>
+                            <div className="flex-1 min-w-0 flex flex-col px-0.5">
+                              <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
+                                {S(plan.place)}
+                              </span>
+                              <div className="flex flex-col sm:flex-row sm:items-center mt-0.5 gap-0.5 sm:gap-2">
+                                 {plan.localName && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">🏢 {S(plan.localName)}</span>}
+                                 {plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>}
+                              </div>
+                            </div>
+                            <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                               <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
+                               <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
+                            </div>
+                          </div>
+                        )
+                      }
+
                       return (
                       <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1 sm:p-2 rounded-lg border cursor-pointer shadow-sm transition-all duration-300 group relative ${cardBorder} ${isDarkMode ? 'bg-slate-700 hover:bg-slate-600' : 'bg-white hover:bg-slate-50'}`} onClick={(e) => { 
                          e.stopPropagation(); 
                          if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                          else setActiveMobileCard(plan.id);
                       }}>
-                        <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{S(plan.time)}</div>
+                        <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">
+                          {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
+                        </div>
                         <div className="flex-1 min-w-0 flex flex-col px-0.5">
                           <span className={`text-[8px] sm:text-[11px] font-bold truncate transition-colors duration-300 ${textMain}`}>
-                            {S(plan.place)} {plan.localName ? <span className="text-indigo-500 text-[8px] sm:text-[9px]">({S(plan.localName)})</span> : ''} {plan.isAccommodation && '🏠'}
+                            {S(plan.place)} {plan.isAccommodation && '🏠'}
                           </span>
                           {plan.features && <span className={`text-[6px] sm:text-[9px] truncate mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</span>}
                         </div>
@@ -2837,7 +2954,9 @@ const MainApp = () => {
                             <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} 
                                  onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                               <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
-                              <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">{S(plan.time)}</div>
+                              <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">
+                                {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
+                              </div>
                               <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
                             </div>
                           )}
@@ -2872,6 +2991,9 @@ const MainApp = () => {
                 📝 꼼꼼하게 채우는 여행 일기
               </h2>
               <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap sm:flex-nowrap gap-y-1 ml-auto">
+                <button onClick={() => { setIsArchiveModalOpen(true); setShowArchiveAddForm(false); }} className={`flex items-center shadow-sm px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 bg-slate-700 text-white hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-700`}>
+                   📦 보관함 열기
+                </button>
                 {isSharedTripActive && (
                    <button onClick={handleCloneSharedTrip} className={`flex items-center border shadow-sm px-1.5 sm:px-2 py-1 h-7 sm:h-8 rounded-lg text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 bg-orange-500 text-white hover:bg-orange-600`}>
                       💾 내 일정으로 복사
@@ -2940,9 +3062,8 @@ const MainApp = () => {
               </div>
             </div>
             
-            {/* 전체 스크롤을 위해 컨테이너에 overflow-y-auto 적용 (모바일) */}
             <div className={`flex-1 flex flex-col md:flex-row overflow-visible sm:overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar transition-colors duration-300 ${cardBg}`}>
-              <div className={`w-full md:w-64 p-3 sm:p-4 border-b md:border-b-0 md:border-r flex flex-col flex-shrink-0 md:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
+              <div className={`w-full md:w-[22rem] lg:w-96 p-3 sm:p-4 border-b md:border-b-0 md:border-r flex flex-col flex-shrink-0 md:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
                 <div className="space-y-2 mt-1">
                   <div className="flex items-center justify-between mb-1">
                     <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>일차 선택</label>
@@ -2951,6 +3072,8 @@ const MainApp = () => {
                       {maxDay > 4 && <button onClick={removeDay} className="bg-rose-50 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-rose-100 transition-colors duration-300">- 삭제</button>}
                     </div>
                   </div>
+                  
+                  {/* [NEW] 4칸씩 줄바꿈(접힘) 처리되는 그리드 */}
                   <div className={`grid grid-cols-4 gap-1 border rounded-lg p-1 shadow-sm mb-2 max-h-24 overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200/80'}`}>
                     {tripDays.map(d => (
                       <button key={d} onClick={() => setNewDay(d)} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 ${newDay === d ? 'bg-indigo-600 text-white shadow-md scale-105' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
@@ -3022,10 +3145,20 @@ const MainApp = () => {
                   </div>
 
                   <div className="flex flex-col space-y-1 w-full pt-1">
+                    <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>사진 추가</label>
                     <input type="file" accept="image/*" ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
-                    <button type="button" onClick={() => planFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold rounded border transition-all duration-300 flex items-center justify-center ${newPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                      {newPhoto ? <span className="flex items-center">📸 첨부 완료 (변경하려면 클릭 또는 붙여넣기)</span> : <span className="flex items-center">📸 사진 선택 (또는 Ctrl+V로 붙여넣기)</span>}
-                    </button>
+                    <div className="flex gap-2">
+                       <input 
+                         type="text" 
+                         placeholder="URL 입력 / 이미지 복붙" 
+                         value={newPhoto} 
+                         onChange={e => setNewPhoto(e.target.value)} 
+                         className={`flex-1 w-1/2 border p-1.5 text-[9px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`} 
+                       />
+                       <button type="button" onClick={() => planFileInputRef.current?.click()} className={`flex-1 w-1/2 py-1.5 text-[9px] font-bold rounded border transition-all duration-300 flex items-center justify-center ${newPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
+                         <span className="flex items-center">📸 파일 첨부</span>
+                       </button>
+                    </div>
                   </div>
 
                   <div className="flex items-center space-x-2 my-1.5 px-1 pb-1">
@@ -3038,69 +3171,118 @@ const MainApp = () => {
                       <span>스케줄에 등록! ✨</span>
                     </button>
                   </div>
-                  
-                  <div className={`mt-3 pt-3 border-t transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                     <button onClick={handleForceSave} className={`w-full mb-2 flex items-center justify-center p-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold transition-all duration-300 active:scale-95 shadow-md`}>
-                        💾 현재 일정 문서함에 완벽 저장하기
-                     </button>
-                     <button onClick={() => setIsPackingModalOpen(true)} className={`w-full flex items-center justify-center p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[11px] font-bold transition-all duration-300 active:scale-95 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700`}>
-                        🎒 준비물 체크리스트 열기
-                     </button>
-                  </div>
                 </div>
               </div>
 
               <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 w-full overflow-visible sm:overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
-                <div className="flex-1 grid grid-cols-4 gap-1 sm:gap-3 h-auto sm:h-full pb-2 min-h-max sm:min-h-0">
-                  {[0, 1, 2, 3].map(colIndex => (
-                    <div key={colIndex} className="flex flex-col gap-2 sm:gap-3 h-full overflow-visible sm:overflow-y-auto custom-scrollbar sm:pr-1 scroll-smooth">
-                      {tripDays
-                        .filter(day => (day - 1) % 4 === colIndex)
-                        .map(day => (
-                          <div key={day} className={`flex-1 flex flex-col rounded-xl border min-h-[150px] overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
-                            <div className={`py-1.5 flex flex-col items-center border-b flex-shrink-0 transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
-                              <span className={`text-[10px] sm:text-[11px] font-bold leading-tight transition-colors duration-300 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Day {day}</span>
-                              <span className={`text-[7px] sm:text-[8px] mt-0.5 transition-colors duration-300 ${textMuted}`}>{getDayDateString(day)}</span>
-                            </div>
-                            <div className={`flex-1 overflow-visible sm:overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-                              {planTimeline.filter(p => parseInt(p.day || 1) === day).length === 0 ? (
-                                 <div className={`flex flex-col items-center justify-center h-full min-h-[100px] text-[8px] sm:text-[9px] transition-colors duration-300 ${textMuted}`}>
-                                   <span>일정 없음</span>
+                <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 h-auto sm:h-full pb-2 min-h-max sm:min-h-0">
+                  {tripDays.map(day => (
+                    <div key={day} className={`flex-1 flex flex-col rounded-xl border min-h-[150px] overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
+                      <div className={`py-1.5 flex flex-col items-center border-b flex-shrink-0 transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
+                        <span className={`text-[10px] sm:text-[11px] font-bold leading-tight transition-colors duration-300 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                          Day {day}
+                        </span>
+                        <span className={`text-[7px] sm:text-[8px] mt-0.5 transition-colors duration-300 ${textMuted}`}>{getDayDateString(day)}</span>
+                      </div>
+                      <div className={`flex-1 overflow-visible sm:overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+                        
+                        {/* 숙소(isAccommodation) 아이템 상단 고정 렌더링 로직 추가 */}
+                        {planTimeline.filter(p => p && p.isAccommodation).map(plan => {
+                          const isActive = activeMobileCard === plan.id;
+                          return (
+                            <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border shadow-sm bg-yellow-50/50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 relative group cursor-pointer transition-all duration-300 hover:shadow-md ${isActive ? 'border-indigo-400' : ''}`}
+                                 onClick={(e) => { e.stopPropagation(); if(isActive){setSelectedPlanInfo(plan); setActiveMobileCard(null);}else setActiveMobileCard(plan.id); }}>
+                               <div className="flex justify-between items-start mb-1">
+                                 <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 연박 숙소</span>
+                                 <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                                   <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
+                                   <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
                                  </div>
-                              ) : (
-                                planTimeline.filter(p => parseInt(p.day || 1) === day).map((plan) => {
-                                  const isActive = activeMobileCard === plan.id;
-                                  return (
-                                  <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                                    <div className="flex justify-between items-start mb-1">
-                                      <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>
-                                      <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
-                                        <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
-                                        <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
-                                      </div>
-                                    </div>
-                                    <div className="flex gap-1.5 items-start mt-1">
-                                      <div className="flex-1 min-w-0 flex flex-col cursor-pointer" >
-                                        <p className={`text-[9px] sm:text-[10px] font-bold leading-tight line-clamp-2 transition-colors duration-300 ${textMain}`}>{S(plan.place)} {plan.isAccommodation && '🏠'}</p>
-                                        {plan.localName && (
-                                          <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70 transition-opacity">
-                                            📋 {S(plan.localName)}
-                                          </p>
-                                        )}
-                                        {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
-                                      </div>
-                                      {plan.photo && !plan.isTransport && (
-                                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500">
-                                          <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
-                                        </div>
-                                      )}
+                               </div>
+                               <div className="flex gap-1.5 items-start mt-1">
+                                 <div className="flex-1 min-w-0 flex flex-col cursor-pointer" >
+                                   <p className={`text-[9px] sm:text-[10px] font-bold leading-tight line-clamp-2 transition-colors duration-300 ${textMain}`}>{S(plan.place)}</p>
+                                   {plan.localName && (
+                                     <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70 transition-opacity" onClick={(e) => handleCopyLocalName(e, plan.localName)}>
+                                       📋 {S(plan.localName)}
+                                     </p>
+                                   )}
+                                   {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
+                                 </div>
+                                 {plan.photo && (
+                                   <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500" onClick={(e) => { e.stopPropagation(); setViewPhoto(plan.photo); }}>
+                                     <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
+                                   </div>
+                                 )}
+                               </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* 일반 일정 렌더링 로직 */}
+                        {planTimeline.filter(p => !p.isAccommodation && parseInt(p.day || 1) === day).length === 0 && planTimeline.filter(p => p && p.isAccommodation).length === 0 ? (
+                           <div className={`flex flex-col items-center justify-center h-full min-h-[100px] text-[8px] sm:text-[9px] transition-colors duration-300 ${textMuted}`}>
+                             <span>일정 없음</span>
+                           </div>
+                        ) : (
+                          planTimeline.filter(p => !p.isAccommodation && parseInt(p.day || 1) === day).map((plan) => {
+                            const isActive = activeMobileCard === plan.id;
+
+                            // 교통/항공권 렌더링
+                            if (plan.isTransport) {
+                              return (
+                                <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group cursor-pointer ${isActive ? 'border-indigo-400' : ''}`}
+                                     onClick={(e) => { 
+                                       e.stopPropagation(); 
+                                       if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
+                                       else setActiveMobileCard(plan.id);
+                                     }}>
+                                  <div className="bg-indigo-500 text-white font-black text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{S(plan.time)}</div>
+                                  <div className="flex-1 min-w-0 flex flex-col px-0.5">
+                                    <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
+                                      {S(plan.place)}
+                                    </span>
+                                    <div className="flex flex-col sm:flex-row sm:items-center mt-0.5 gap-0.5 sm:gap-2">
+                                       {plan.localName && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">🏢 {S(plan.localName)}</span>}
+                                       {plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>}
                                     </div>
                                   </div>
-                                )})
-                              )}
+                                  <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                                     <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">🗑️</span></button>
+                                  </div>
+                                </div>
+                              )
+                            }
+
+                            return (
+                            <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
+                              <div className="flex justify-between items-start mb-1">
+                                <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>
+                                <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+                                  <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
+                                  <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
+                                </div>
+                              </div>
+                              <div className="flex gap-1.5 items-start mt-1">
+                                <div className="flex-1 min-w-0 flex flex-col cursor-pointer" >
+                                  <p className={`text-[9px] sm:text-[10px] font-bold leading-tight line-clamp-2 transition-colors duration-300 ${textMain}`}>{S(plan.place)}</p>
+                                  {plan.localName && (
+                                    <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70 transition-opacity" onClick={(e) => handleCopyLocalName(e, plan.localName)}>
+                                      📋 {S(plan.localName)}
+                                    </p>
+                                  )}
+                                  {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
+                                </div>
+                                {plan.photo && !plan.isTransport && (
+                                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500" onClick={(e) => { e.stopPropagation(); setViewPhoto(plan.photo); }}>
+                                    <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          )})
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
