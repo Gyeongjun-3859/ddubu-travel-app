@@ -245,8 +245,22 @@ const MainApp = () => {
   const [markerSearchQuery, setMarkerSearchQuery] = useState("");
   const [showMapLabels, setShowMapLabels] = useState(false); 
   const [showMapPhotos, setShowMapPhotos] = useState(false); 
-  const [mapActiveDay, setMapActiveDay] = useState('all');
+  const [mapActiveDays, setMapActiveDays] = useState(['all']);
   const [myPinsFilter, setMyPinsFilter] = useState('all'); 
+
+  const toggleMapDay = useCallback((day) => {
+    setMapActiveDays(prev => {
+      if (day === 'all') return ['all'];
+      let newDays = prev.filter(d => d !== 'all');
+      if (newDays.includes(day)) {
+        newDays = newDays.filter(d => d !== day);
+      } else {
+        newDays.push(day);
+      }
+      if (newDays.length === 0) return ['all'];
+      return newDays;
+    });
+  }, []);
 
   const [isAddPlaceModalOpen, setIsAddPlaceModalOpen] = useState(false);
   const [isMyPinsModalOpen, setIsMyPinsModalOpen] = useState(false);
@@ -257,6 +271,7 @@ const MainApp = () => {
   const [newManualPhoto, setNewManualPhoto] = useState("");
   const [newManualTime, setNewManualTime] = useState(""); 
   const [newManualIsAccommodation, setNewManualIsAccommodation] = useState(false);
+  const [newManualIsLandmark, setNewManualIsLandmark] = useState(false);
   const [pinLinkDay, setPinLinkDay] = useState("");
   const [pinLinkPlanId, setPinLinkPlanId] = useState("");
   const manualFileInputRef = useRef(null);
@@ -430,6 +445,7 @@ const MainApp = () => {
     setNewManualFeature(pin.signature === "직접 추가한 장소" ? "" : S(pin.signature));
     setNewManualPhoto(pin.img && !S(pin.img).includes("unsplash") ? S(pin.img) : "");
     setNewManualIsAccommodation(Boolean(pin.isAccommodation));
+    setNewManualIsLandmark(Boolean(pin.isLandmark));
     
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(pin.name));
@@ -946,7 +962,7 @@ const MainApp = () => {
       id: S(placeId), lat: pLat, lng: pLng, country: S(displayCityName), city: S(displayCityName),
       name: S(newManualPlaceName), localName: S(newManualLocalName), signature: newManualFeature ? S(newManualFeature) : "직접 추가한 장소",
       img: newManualPhoto ? S(newManualPhoto) : "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
-      rating: 5.0, isAccommodation: Boolean(newManualIsAccommodation)
+      rating: 5.0, isAccommodation: Boolean(newManualIsAccommodation), isLandmark: Boolean(newManualIsLandmark)
     };
 
     let updatedRests;
@@ -994,7 +1010,7 @@ const MainApp = () => {
        setIsAddPlaceModalOpen(false);
     }
     
-    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualTime(""); setNewManualIsAccommodation(false);
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualIsLandmark(false);
     setPinLinkDay(""); setPinLinkPlanId(""); 
   }
 
@@ -1007,13 +1023,29 @@ const MainApp = () => {
     if (!navigator.geolocation) { showToast("위치 기능을 지원하지 않습니다."); return; }
     showToast("현재 위치를 확인 중입니다...");
     navigator.geolocation.getCurrentPosition((pos) => {
-      const { latitude, longitude } = pos.coords;
+      const { latitude, longitude, heading } = pos.coords;
       if (mapInstanceRef.current && window.L) {
-        mapInstanceRef.current.flyTo([latitude, longitude], 15);
-        const myLocIcon = window.L.divIcon({ html: `<div style="background-color:#ef4444;width:18px;height:18px;border-radius:50%;border:3px solid white;box-shadow:0 0 8px rgba(0,0,0,0.6);"></div>`, className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
-        window.L.marker([latitude, longitude], { icon: myLocIcon }).addTo(mapInstanceRef.current).bindPopup(`<b>현재 내 위치</b>`).openPopup();
+        mapInstanceRef.current.flyTo([latitude, longitude], 16);
+        
+        if (window.myLocMarker) window.myLocMarker.remove();
+        
+        const rot = heading ? `transform: rotate(${heading}deg);` : '';
+        const arrowHtml = heading !== null && !isNaN(heading) 
+            ? `<div style="position:absolute; top:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:12px solid #3b82f6;"></div>` 
+            : '';
+            
+        const html = `
+            <div style="position:relative; width:24px; height:24px; ${rot}">
+                ${arrowHtml}
+                <div style="background-color:#3b82f6;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 0 3px rgba(59, 130, 246, 0.4); position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index: 2;"></div>
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); width:30px; height:30px; border-radius:50%; background-color:#3b82f6; opacity:0.5; animation: myloc-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; z-index: 1;"></div>
+            </div>
+            <style>@keyframes myloc-ping { 75%, 100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; } }</style>
+        `;
+        const myLocIcon = window.L.divIcon({ html, className: '', iconSize: [24, 24], iconAnchor: [12, 12] });
+        window.myLocMarker = window.L.marker([latitude, longitude], { icon: myLocIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current).bindPopup(`<b>현재 내 위치</b>`).openPopup();
       }
-    }, () => showToast("위치 접근 권한이 필요합니다."));
+    }, () => showToast("위치 접근 권한이 필요하거나 시간이 초과되었습니다."), { enableHighAccuracy: true, timeout: 10000 });
   }
 
   function handleMarkerSearchSelect(marker) {
@@ -1043,6 +1075,21 @@ const MainApp = () => {
     
     let updates = { plan_timeline: updatedTimeline };
     
+    const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+    const matchedIndex = safeCurrentRestaurants.findIndex(r => r && S(r.name) === S(newPlace));
+    if (matchedIndex !== -1) {
+        const updatedRests = [...safeCurrentRestaurants];
+        updatedRests[matchedIndex] = {
+            ...updatedRests[matchedIndex],
+            localName: newLocalName ? S(newLocalName) : updatedRests[matchedIndex].localName,
+            signature: newFeatures ? S(newFeatures) : updatedRests[matchedIndex].signature,
+            img: newPhoto ? S(newPhoto) : updatedRests[matchedIndex].img,
+            isAccommodation: newIsAccommodation ? true : updatedRests[matchedIndex].isAccommodation
+        };
+        setCurrentRestaurants(updatedRests);
+        updates.current_restaurants = updatedRests;
+    }
+
     if (finalRegion && finalRegion !== displayCityName) {
       setDisplayCityName(S(finalRegion));
       updates.display_city_name = S(finalRegion);
@@ -1345,7 +1392,7 @@ const MainApp = () => {
               setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
               
               if (Array.isArray(data.current_restaurants)) {
-                setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) })));
+                setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark) })));
               } else { setCurrentRestaurants([]); }
               
               if (Array.isArray(data.plan_timeline)) {
@@ -1597,7 +1644,7 @@ const MainApp = () => {
           }
           
           if (Array.isArray(payload.new.current_restaurants)) {
-            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) }));
+            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark) }));
             setCurrentRestaurants(cleanRests);
           }
           if (Array.isArray(payload.new.plan_timeline)) {
@@ -1686,10 +1733,10 @@ const MainApp = () => {
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
 
     const filteredRestaurants = safeCurrentRestaurants.filter(rest => {
-      if (mapActiveDay === 'all') return true;
+      if (mapActiveDays.includes('all')) return true;
       const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(rest.name));
-      if (mapActiveDay === 'unlinked') return !linkedPlan;
-      return linkedPlan && parseInt(linkedPlan.day) === parseInt(mapActiveDay);
+      if (!linkedPlan) return mapActiveDays.includes('unlinked');
+      return mapActiveDays.includes(parseInt(linkedPlan.day));
     });
 
     filteredRestaurants.forEach((rest) => {
@@ -1697,15 +1744,26 @@ const MainApp = () => {
       const linkedPlans = safePlanTimeline.filter(p => p && S(p.place) === S(rest.name));
       const primaryPlan = linkedPlans[0];
       const isAcc = Boolean(rest.isAccommodation) || linkedPlans.some(p => Boolean(p.isAccommodation));
+      const isLand = Boolean(rest.isLandmark);
       
       const pinColor = primaryPlan ? getDayColor(primaryPlan.day) : '#94a3b8'; 
       
-      let html = `<div style="background-color:${pinColor};width:${isAcc?'24px':'18px'};height:${isAcc?'24px':'18px'};border-radius:50%;border:2px solid white;box-shadow:0 0 6px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;transition:transform 0.2s;">${isAcc?'<span style="font-size:12px;">🏠</span>':(primaryPlan?`<span style="color:white;font-size:10px;font-weight:bold;">${primaryPlan.day}</span>`:'')}</div>`;
+      let html = '';
+      if (isLand) {
+        html = `<div style="background-color:#fbbf24;width:32px;height:32px;border-radius:50%;border:3px solid #b45309;box-shadow:0 0 10px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;transition:transform 0.2s; position:relative;"><span style="font-size:16px; filter: drop-shadow(1px 1px 1px rgba(0,0,0,0.5));">👑</span><div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:10px solid #b45309;"></div></div>`;
+      } else {
+        html = `<div style="background-color:${pinColor};width:${isAcc?'24px':'18px'};height:${isAcc?'24px':'18px'};border-radius:50%;border:2px solid white;box-shadow:0 0 6px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;transition:transform 0.2s;">${isAcc?'<span style="font-size:12px;">🏠</span>':(primaryPlan?`<span style="color:white;font-size:10px;font-weight:bold;">${primaryPlan.day}</span>`:'')}</div>`;
+      }
+
       if (showMapPhotos && rest.img && !S(rest.img).includes("unsplash")) {
-        html = `<div style="width:34px;height:34px;border-radius:50%;border:3px solid ${pinColor};background-image:url(${S(rest.img)});background-size:cover;background-position:center;position:relative;box-shadow:0 0 6px rgba(0,0,0,0.5);">${isAcc?'<div style="position:absolute;bottom:-6px;right:-6px;background:white;border-radius:50%;font-size:12px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center;">🏠</div>':(primaryPlan?`<div style="position:absolute;top:-6px;left:-6px;background:${pinColor};color:white;border-radius:50%;font-size:8px;font-weight:bold;width:14px;height:14px;display:flex;align-items:center;justify-content:center;border:1px solid white;">${primaryPlan.day}</div>`:'')}</div>`;
+        if (isLand) {
+            html = `<div style="width:44px;height:44px;border-radius:50%;border:4px solid #fbbf24;background-image:url(${S(rest.img)});background-size:cover;background-position:center;position:relative;box-shadow:0 0 10px rgba(0,0,0,0.6);"><div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:white;border-radius:50%;font-size:14px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center; z-index:10;">👑</div><div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:10px solid #fbbf24;"></div></div>`;
+        } else {
+            html = `<div style="width:34px;height:34px;border-radius:50%;border:3px solid ${pinColor};background-image:url(${S(rest.img)});background-size:cover;background-position:center;position:relative;box-shadow:0 0 6px rgba(0,0,0,0.5);">${isAcc?'<div style="position:absolute;bottom:-6px;right:-6px;background:white;border-radius:50%;font-size:12px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center;">🏠</div>':(primaryPlan?`<div style="position:absolute;top:-6px;left:-6px;background:${pinColor};color:white;border-radius:50%;font-size:8px;font-weight:bold;width:14px;height:14px;display:flex;align-items:center;justify-content:center;border:1px solid white;">${primaryPlan.day}</div>`:'')}</div>`;
+        }
       }
       try {
-        const icon = window.L.divIcon({ html, className: '', iconSize: [24,24], iconAnchor: [12,12] });
+        const icon = window.L.divIcon({ html, className: '', iconSize: isLand ? (showMapPhotos ? [44,44] : [32,32]) : [24,24], iconAnchor: isLand ? (showMapPhotos ? [22,22] : [16,16]) : [12,12] });
         const marker = window.L.marker([rest.lat, rest.lng], { icon }).addTo(map);
         if (showMapLabels) marker.bindTooltip(S(rest.name), { permanent: true, direction: 'bottom', className: 'text-[9px] font-bold bg-white/90 px-1 py-0.5 border rounded shadow-sm', offset: [0, 10] });
         
@@ -1721,7 +1779,7 @@ const MainApp = () => {
         markersRef.current.push(marker);
       } catch (err) {}
     });
-  }, [isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, isPinMode, movingPinId, mapActiveDay, getDayColor]);
+  }, [isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, isPinMode, movingPinId, mapActiveDays, getDayColor]);
 
   /* ===================== UI 및 변수 계산 ===================== */
 
@@ -2462,13 +2520,32 @@ const MainApp = () => {
                   
                   const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
                   let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
-                  setPlanTimeline(updatedTimeline); saveToDb({ plan_timeline: updatedTimeline });
-                  setEditingPlan(null); showToast("일정이 예쁘게 수정됐어요! 📝");
+                  
+                  const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+                  const matchedIndex = safeCurrentRestaurants.findIndex(r => r && S(r.name) === S(editingPlan.place));
+                  let dbUpdates = { plan_timeline: updatedTimeline };
+                  
+                  if (matchedIndex !== -1) {
+                      const updatedRests = [...safeCurrentRestaurants];
+                      updatedRests[matchedIndex] = {
+                          ...updatedRests[matchedIndex],
+                          localName: editingPlan.localName ? S(editingPlan.localName) : updatedRests[matchedIndex].localName,
+                          signature: editingPlan.features ? S(editingPlan.features) : updatedRests[matchedIndex].signature,
+                          img: editingPlan.photo ? S(editingPlan.photo) : updatedRests[matchedIndex].img,
+                          isAccommodation: editingPlan.isAccommodation ? true : updatedRests[matchedIndex].isAccommodation
+                      };
+                      setCurrentRestaurants(updatedRests);
+                      dbUpdates.current_restaurants = updatedRests;
+                  }
+                  
+                  setPlanTimeline(updatedTimeline); 
                   
                   if (finalRegion && finalRegion !== displayCityName) {
                     setDisplayCityName(S(finalRegion));
-                    saveToDb({ display_city_name: S(finalRegion) });
+                    dbUpdates.display_city_name = S(finalRegion);
                   }
+                  saveToDb(dbUpdates);
+                  setEditingPlan(null); showToast("일정이 예쁘게 수정됐어요! 📝");
                 }} className="w-full bg-orange-500 text-white rounded-md py-2 text-[11px] font-bold shadow-sm hover:bg-orange-600 active:scale-95 transition-all duration-300">
                   수정 내용 저장
                 </button>
@@ -2583,9 +2660,15 @@ const MainApp = () => {
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2 my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300">
-                <input type="checkbox" id="manualPlanIsAcc" checked={newManualIsAccommodation} onChange={e => setNewManualIsAccommodation(e.target.checked)} className="accent-indigo-600 w-4 h-4 cursor-pointer" />
-                <label htmlFor="manualPlanIsAcc" className={`text-xs font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+              <div className="flex items-center my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300 flex-wrap gap-y-2">
+                <div className="flex items-center space-x-2 mr-3">
+                  <input type="checkbox" id="manualPlanIsAcc" checked={newManualIsAccommodation} onChange={e => setNewManualIsAccommodation(e.target.checked)} className="accent-indigo-600 w-4 h-4 cursor-pointer" />
+                  <label htmlFor="manualPlanIsAcc" className={`text-xs font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input type="checkbox" id="manualPlanIsLandmark" checked={newManualIsLandmark} onChange={e => setNewManualIsLandmark(e.target.checked)} className="accent-yellow-500 w-4 h-4 cursor-pointer" />
+                  <label htmlFor="manualPlanIsLandmark" className={`text-xs font-bold ${textMuted} cursor-pointer`}>랜드마크 지정 👑</label>
+                </div>
               </div>
             </div>
             
@@ -2644,12 +2727,27 @@ const MainApp = () => {
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                   {filteredMyPins.map(pin => (
-                    <div key={pin.id} className={`flex flex-col p-2 border rounded-xl shadow-sm transition-all duration-300 hover:shadow-md ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
+                    <div key={pin.id} onClick={() => {
+                      if (pin.lat && pin.lng) {
+                        setIsMyPinsModalOpen(false);
+                        setActiveTab('map');
+                        setTimeout(() => {
+                          if (mapInstanceRef.current) {
+                            mapInstanceRef.current.flyTo([pin.lat, pin.lng], 17);
+                            window.dispatchEvent(new CustomEvent('onPinClick', { detail: String(pin.id) }));
+                          }
+                        }, 300);
+                      } else {
+                        showToast("위치가 지정되지 않은 핀입니다. 하단 '위치 지정'을 먼저 해주세요.");
+                      }
+                    }} className={`flex flex-col p-2 border rounded-xl shadow-sm transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
+                      
+                      {pin.isLandmark && <div className="absolute top-1 right-1 bg-yellow-400 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm z-10">👑 랜드마크</div>}
                       
                       {pin.img && !S(pin.img).includes("unsplash") ? (
                         <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0">
                           <img src={pin.img} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
-                          {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm">숙소</div>}
+                          {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm z-10">숙소</div>}
                         </div>
                       ) : (
                         <div className={`w-full h-12 flex items-center justify-center rounded-lg mb-1.5 shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
@@ -2667,7 +2765,8 @@ const MainApp = () => {
                       </div>
                       
                       <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-700">
-                        <button onClick={() => {
+                        <button onClick={(e) => {
+                          e.stopPropagation();
                           setMovingPinId(pin.id);
                           setIsPinMode(true);
                           setIsMyPinsModalOpen(false);
@@ -2676,10 +2775,11 @@ const MainApp = () => {
                         }} className="flex-1 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 py-1 rounded text-[9px] font-bold hover:bg-emerald-100 transition-colors duration-300">
                           위치 지정
                         </button>
-                        <button onClick={() => openEditPinModal(pin)} className="flex-1 bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 py-1 rounded text-[9px] font-bold hover:bg-slate-200 transition-colors duration-300">
+                        <button onClick={(e) => { e.stopPropagation(); openEditPinModal(pin); }} className="flex-1 bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 py-1 rounded text-[9px] font-bold hover:bg-slate-200 transition-colors duration-300">
                           수정
                         </button>
-                        <button onClick={() => {
+                        <button onClick={(e) => {
+                           e.stopPropagation();
                            const updated = safeCurrentRestaurants.filter(r => r && S(r.id) !== S(pin.id));
                            setCurrentRestaurants(updated);
                            saveToDb({ current_restaurants: updated });
@@ -3293,15 +3393,15 @@ const MainApp = () => {
               
               {/* 필터 및 색상 동기화 패널 */}
               <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 w-full max-w-full scroll-smooth">
-                 <button onClick={() => setMapActiveDay('all')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 ${mapActiveDay === 'all' ? (isDarkMode ? 'bg-indigo-500 text-white border-indigo-500 shadow-md' : 'bg-slate-800 text-white shadow-md border-slate-800') : (isDarkMode ? 'bg-slate-800 text-slate-300 border border-slate-600' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50')}`}>전체보기</button>
+                 <button onClick={() => toggleMapDay('all')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 ${mapActiveDays.includes('all') ? (isDarkMode ? 'bg-indigo-500 text-white border-indigo-500 shadow-md' : 'bg-slate-800 text-white shadow-md border-slate-800') : (isDarkMode ? 'bg-slate-800 text-slate-300 border border-slate-600' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50')}`}>전체보기</button>
                  {tripDays.map(d => {
                    const color = getDayColor(d);
-                   const isActive = mapActiveDay === d;
+                   const isActive = mapActiveDays.includes(d);
                    return (
-                     <button key={d} onClick={() => setMapActiveDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all duration-300 ${isActive ? 'shadow-md scale-105' : 'hover:opacity-80'}`}>Day {d}</button>
+                     <button key={d} onClick={() => toggleMapDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all duration-300 ${isActive ? 'shadow-md scale-105' : 'hover:opacity-80'}`}>Day {d}</button>
                    )
                  })}
-                 <button onClick={() => setMapActiveDay('unlinked')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 border ${mapActiveDay === 'unlinked' ? 'bg-slate-500 text-white shadow-md border-slate-500' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-600' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
+                 <button onClick={() => toggleMapDay('unlinked')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 border ${mapActiveDays.includes('unlinked') ? 'bg-slate-500 text-white shadow-md border-slate-500' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-600' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
               </div>
 
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
