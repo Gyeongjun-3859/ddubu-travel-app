@@ -173,6 +173,9 @@ const MainApp = () => {
   const [weather, setWeather] = useState(null);
   const [forecast, setForecast] = useState([]);
   const [isWeatherModalOpen, setIsWeatherModalOpen] = useState(false);
+  const [expandedWeatherDay, setExpandedWeatherDay] = useState(null);
+  const [hourlyWeatherCache, setHourlyWeatherCache] = useState({});
+  const [isLoadingHourly, setIsLoadingHourly] = useState(false);
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -248,7 +251,10 @@ const MainApp = () => {
   const [showMapPhotos, setShowMapPhotos] = useState(false); 
   const [showMapRoute, setShowMapRoute] = useState(false);
   const [mapActiveDays, setMapActiveDays] = useState(['all']);
-  const [myPinsFilter, setMyPinsFilter] = useState('all'); 
+  const [myPinsFilter, setMyPinsFilter] = useState('all');
+  const [myPinsThemeFilter, setMyPinsThemeFilter] = useState('all');
+  const [newManualTheme, setNewManualTheme] = useState('기타');
+ 
 
   const toggleMapDay = useCallback((day) => {
     setMapActiveDays(prev => {
@@ -282,12 +288,26 @@ const MainApp = () => {
   
   const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
   const [selectedPinInfo, setSelectedPinInfo] = useState(null); 
+  const [isSettleMode, setIsSettleMode] = useState(false);
+  const [settleLocal, setSettleLocal] = useState("");
+  const [settleKrw, setSettleKrw] = useState("");
 
   const [flights, setFlights] = useState({ outbound: null, inbound: null });
   const [packingList, setPackingList] = useState([]);
   const [isPackingModalOpen, setIsPackingModalOpen] = useState(false);
   const [isDashboardPackingOpen, setIsDashboardPackingOpen] = useState(false);
-  
+  const [expenseFilterDay, setExpenseFilterDay] = useState('all');
+  const [expenseFilterTheme, setExpenseFilterTheme] = useState('all'); 
+  const [shoppingList, setShoppingList] = useState([]);
+  const [isShoppingModalOpen, setIsShoppingModalOpen] = useState(false);
+  const [newShoppingItem, setNewShoppingItem] = useState("");
+  const [shoppingLinkPlanId, setShoppingLinkPlanId] = useState("");
+  const [shoppingItemDay, setShoppingItemDay] = useState("");
+  const [shoppingItemTheme, setShoppingItemTheme] = useState("쇼핑");
+  const [showAllShopping, setShowAllShopping] = useState(true);
+  const [isDashboardShoppingOpen, setIsDashboardShoppingOpen] = useState(false);
+  const [dashShowAllShopping, setDashShowAllShopping] = useState(false);
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
   const [transType, setTransType] = useState('flight'); 
   const [transDir, setTransDir] = useState('outbound'); 
@@ -448,7 +468,8 @@ const MainApp = () => {
     setNewManualPhoto(pin.img && !S(pin.img).includes("unsplash") ? S(pin.img) : "");
     setNewManualIsAccommodation(Boolean(pin.isAccommodation));
     setNewManualIsLandmark(Boolean(pin.isLandmark));
-    
+    setNewManualTheme(pin.theme ? S(pin.theme) : "기타");
+
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(pin.name));
     
@@ -509,6 +530,47 @@ const MainApp = () => {
     } catch (e) { console.error("Weather error", e); }
   }, []);
 
+    // [NEW] 특정 지역의 시간대별 날씨를 캐싱 및 호출
+  const fetchRegionHourlyWeather = async (regionName) => {
+      if (!regionName || regionName === "수동입력" || regionName === "선택된 지역 없음" || regionName === "글로벌") return null;
+      if (hourlyWeatherCache[regionName]) return hourlyWeatherCache[regionName]; 
+      try {
+          const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(S(regionName))}&limit=1`);
+          const geoData = await geoRes.json();
+          if (!geoData.length) return null;
+          const { lat, lon } = geoData[0];
+          const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=16`);
+          const wData = await wRes.json();
+          setHourlyWeatherCache(prev => ({ ...prev, [regionName]: wData.hourly }));
+          return wData.hourly;
+      } catch (e) { console.error(e); return null; }
+  };
+
+  // [NEW] 날씨 일자 클릭 시, 일정 타임라인을 분석해 여러 지역의 날씨를 동시 로드
+  const handleWeatherDayClick = async (day) => {
+      if (expandedWeatherDay === day) {
+          setExpandedWeatherDay(null);
+          return;
+      }
+      setExpandedWeatherDay(day);
+      setIsLoadingHourly(true);
+
+      const dayPlans = (Array.isArray(planTimeline) ? planTimeline : [])
+          .filter(p => parseInt(p.day) === day && p.region && p.region !== '수동입력')
+          .sort((a, b) => S(a.time).localeCompare(S(b.time)));
+
+      let uniqueRegions = new Set();
+      let defaultRegion = displayCityName;
+      if (dayPlans.length > 0) defaultRegion = dayPlans[0].region;
+      uniqueRegions.add(defaultRegion);
+      dayPlans.forEach(p => uniqueRegions.add(p.region));
+
+      for (const region of uniqueRegions) {
+          await fetchRegionHourlyWeather(region);
+      }
+      setIsLoadingHourly(false);
+  };
+
   const saveToDb = useCallback(async (updates) => {
     const targetId = activeTripId;
     try {
@@ -544,7 +606,7 @@ const MainApp = () => {
       current_restaurants: currentRestaurants,
       plan_timeline: planTimeline,
       flights: flights,
-      packing_list: packingList
+      packing_list: packingList, shopping_list: shoppingList
     });
     showToast("💾 전체 일정이 문서함(내 여행 목록)에 안전하게 저장되었습니다!");
   }
@@ -964,7 +1026,7 @@ const MainApp = () => {
       id: S(placeId), lat: pLat, lng: pLng, country: S(displayCityName), city: S(displayCityName),
       name: S(newManualPlaceName), localName: S(newManualLocalName), signature: newManualFeature ? S(newManualFeature) : "직접 추가한 장소",
       img: newManualPhoto ? S(newManualPhoto) : "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
-      rating: 5.0, isAccommodation: Boolean(newManualIsAccommodation), isLandmark: Boolean(newManualIsLandmark)
+      rating: 5.0, isAccommodation: Boolean(newManualIsAccommodation), isLandmark: Boolean(newManualIsLandmark), theme: S(newManualTheme) || "기타"
     };
 
     let updatedRests;
@@ -979,18 +1041,25 @@ const MainApp = () => {
     let updatedTimeline = [...safePlanTimeline];
     
     if (pinLinkDay) {
+      // [NEW] 핀에 저장된 지역 정보 확인 (없으면 기존 글로벌 설정값 사용)
+      const existingPin = safeCurrentRestaurants.find(r => r && S(r.id) === S(clickedLocation?.id));
+      const targetCountry = existingPin?.country || S(globalPlanCountry);
+      const targetRegion = existingPin?.city || S(globalPlanRegion);
+
       if (pinLinkPlanId && pinLinkPlanId !== 'manual') {
         updatedTimeline = updatedTimeline.map(p => p && String(p.id) === String(pinLinkPlanId) ? {
           ...p, day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
           localName: S(newManualLocalName), features: S(newManualFeature), photo: S(newManualPhoto),
-          isAccommodation: Boolean(newManualIsAccommodation)
+          isAccommodation: Boolean(newManualIsAccommodation),
+          country: targetCountry, region: targetRegion // 핀 정보 연동 업데이트
         } : p).sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
       } else {
         const newPlan = {
           id: Date.now().toString() + "_plan",
           day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
           localName: S(newManualLocalName), features: S(newManualFeature), photo: S(newManualPhoto),
-          country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: Boolean(newManualIsAccommodation)
+          country: targetCountry, region: targetRegion, // 핀 정보로 자동 연동
+          isAccommodation: Boolean(newManualIsAccommodation)
         };
         updatedTimeline = [...updatedTimeline, newPlan].sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
       }
@@ -1012,7 +1081,7 @@ const MainApp = () => {
        setIsAddPlaceModalOpen(false);
     }
     
-    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualIsLandmark(false);
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualIsLandmark(false); setNewManualTheme("기타");
     setPinLinkDay(""); setPinLinkPlanId(""); 
   }
 
@@ -1415,6 +1484,7 @@ const MainApp = () => {
               setTravelStartDate(data.travel_start_date ? S(data.travel_start_date) : new Date().toISOString().split('T')[0]);
               setFlights(data.flights || { outbound: null, inbound: null });
               setPackingList(Array.isArray(data.packing_list) ? data.packing_list : []);
+              setShoppingList(Array.isArray(data.shopping_list) ? data.shopping_list : []);
               setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
               
               if (Array.isArray(data.current_restaurants)) {
@@ -1623,6 +1693,7 @@ const MainApp = () => {
           setTravelStartDate(data.travel_start_date ? S(data.travel_start_date) : new Date().toISOString().split('T')[0]);
           setFlights(data.flights || { outbound: null, inbound: null });
           setPackingList(Array.isArray(data.packing_list) ? data.packing_list : []);
+          setShoppingList(Array.isArray(data.shopping_list) ? data.shopping_list : []);
           setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
           
           if (Array.isArray(data.current_restaurants)) {
@@ -1859,14 +1930,25 @@ const MainApp = () => {
   const filteredMarkers = markerSearchQuery 
     ? safeCurrentRestaurants.filter(r => r && S(r.name).toLowerCase().includes(S(markerSearchQuery).toLowerCase())) : safeCurrentRestaurants;
   
-  // [NEW] 내 핀 목록 탭 필터링 로직
-  const filteredMyPins = filteredMarkers.filter(pin => {
-    if (myPinsFilter === 'all') return true;
+// [NEW] 내 핀 목록 탭 필터링 로직 (Day + Theme 동시 필터 적용)
+const filteredMyPins = filteredMarkers.filter(pin => {
+  // 1. Day 필터 검사
+  let passDay = true;
+  if (myPinsFilter !== 'all') {
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(pin.name));
-    if (myPinsFilter === 'unlinked') return !linkedPlan;
-    return linkedPlan && parseInt(linkedPlan.day) === parseInt(myPinsFilter);
-  });
+    if (myPinsFilter === 'unlinked') passDay = !linkedPlan;
+    else passDay = linkedPlan && parseInt(linkedPlan.day) === parseInt(myPinsFilter);
+  }
+  
+  // 2. 테마 필터 검사
+  let passTheme = true;
+  if (myPinsThemeFilter !== 'all') {
+    passTheme = (pin.theme === myPinsThemeFilter);
+  }
+  
+  return passDay && passTheme;
+});
 
   let appBg = "bg-slate-50", textMain = "text-slate-900", textMuted = "text-slate-500", cardBg = "bg-white border-slate-200 shadow-sm", inputBg = "bg-white text-slate-900 border-slate-200";
   if (appTheme === 'dark') { appBg = "bg-slate-900"; textMain = "text-slate-100"; textMuted = "text-slate-400"; cardBg = "bg-slate-800 border-slate-700"; inputBg = "bg-slate-700 text-white border-slate-600"; }
@@ -2220,12 +2302,77 @@ const MainApp = () => {
            </div>
         </div>
       )}
+      {isExpenseModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsExpenseModalOpen(false)}>
+          <div className={`${cardBg} p-5 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[85vh]`} onClick={e => e.stopPropagation()}>
+            <div className={`flex justify-between items-center mb-4 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h3 className={`font-black text-sm ${textMain}`}>💸 여행 총 지출 내역</h3>
+              <button onClick={() => setIsExpenseModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
+            </div>
 
+            <div className="flex space-x-2 mb-3">
+              <select value={expenseFilterDay} onChange={e => setExpenseFilterDay(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-xs font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
+                <option value="all">모든 일차 (Day 전체)</option>
+                {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
+              </select>
+              <select value={expenseFilterTheme} onChange={e => setExpenseFilterTheme(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-xs font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
+                <option value="all">모든 테마</option>
+                <option value="교통편">교통편</option>
+                <option value="식당">식당</option>
+                <option value="디저트">디저트</option>
+                <option value="관광지">관광지</option>
+                <option value="쇼핑">쇼핑</option>
+                <option value="기타">기타</option>
+              </select>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-2 mb-4 scroll-smooth">
+              {(() => {
+                const expensePlans = (Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : []).filter(p => Number(p.expenseLocal) > 0 || Number(p.expenseKrw) > 0);
+                const dayFiltered = expenseFilterDay === 'all' ? expensePlans : expensePlans.filter(p => String(p.day) === String(expenseFilterDay));
+                const fullyFiltered = expenseFilterTheme === 'all' ? dayFiltered : dayFiltered.filter(p => (p.theme || '기타') === expenseFilterTheme);
+
+                const totalKrw = fullyFiltered.reduce((sum, p) => sum + (Number(p.expenseKrw) || 0), 0);
+                const totalLocal = fullyFiltered.reduce((sum, p) => sum + (Number(p.expenseLocal) || 0), 0);
+
+                return (
+                  <>
+                    <div className={`p-4 rounded-xl mb-3 flex flex-col items-center justify-center border shadow-sm ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-100'}`}>
+                      <span className={`text-[10px] font-bold ${isDarkMode ? 'text-indigo-300' : 'text-indigo-600'} mb-1`}>필터링된 총 지출액</span>
+                      <span className="text-xl font-black text-rose-500 mb-1">{totalKrw.toLocaleString()} <span className="text-sm">원</span></span>
+                      <span className={`text-xs font-bold ${textMuted}`}>현지화: {totalLocal.toLocaleString()}</span>
+                    </div>
+
+                    {fullyFiltered.length === 0 ? (
+                      <p className={`text-xs ${textMuted} text-center py-5 font-bold`}>해당하는 지출 내역이 없습니다.</p>
+                    ) : (
+                      fullyFiltered.map(plan => (
+                        <div key={plan.id} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+                          <div className="flex flex-col min-w-0 pr-2">
+                            <span className={`text-[9px] font-bold ${isDarkMode ? 'text-indigo-400' : 'text-indigo-500'} mb-0.5`}>Day {plan.day} | {plan.theme || '기타'}</span>
+                            <span className={`text-xs font-black truncate ${textMain}`}>{S(plan.place)}</span>
+                          </div>
+                          <div className="flex flex-col items-end shrink-0">
+                            <span className="text-[11px] font-black text-rose-500">{Number(plan.expenseKrw || 0).toLocaleString()}원</span>
+                            <span className={`text-[9px] font-bold ${textMuted}`}>{Number(plan.expenseLocal || 0).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+            <button onClick={() => setIsExpenseModalOpen(false)} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">닫기</button>
+          </div>
+        </div>
+      )}
+      
       {isWeatherModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsWeatherModalOpen(false)}>
            <div className={`${cardBg} p-5 rounded-3xl w-full max-w-xs sm:max-w-sm shadow-2xl animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
               <div className={`flex justify-between items-center mb-4 border-b pb-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                 <h3 className={`font-black text-sm ${textMain}`}>⛅ {S(displayCityName)} 날씨 예보</h3>
+                 <h3 className={`font-black text-sm ${textMain}`}>⛅ 날씨 예보</h3>
                  <button onClick={() => setIsWeatherModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
               </div>
               <div className="space-y-2.5 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1 scroll-smooth">
@@ -2242,7 +2389,7 @@ const MainApp = () => {
                            return (
                               <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all duration-300 ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
                                  <div className="flex flex-col">
-                                    <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} ({targetDateStr.slice(5)})</span>
+                                    <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} - {displayCityName} ({targetDateStr.slice(5)})</span>
                                     <span className={`text-xs font-black mt-0.5 ${textMuted}`}>예보 없음</span>
                                  </div>
                                  <div className="text-right flex flex-col justify-center">
@@ -2252,19 +2399,101 @@ const MainApp = () => {
                            );
                        }
 
-                       const info = getWeatherInfo(f.code);
-                       return (
-                          <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all duration-300 ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
-                             <div className="flex flex-col">
-                                <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} ({f.date.slice(5)})</span>
-                                <span className={`text-xs font-black mt-0.5 ${textMain}`}>{info[0]} {info[1]}</span>
-                             </div>
-                             <div className="text-right flex flex-col">
-                                <span className="text-[11px] font-bold text-rose-500">최고 {f.max}°</span>
-                                <span className="text-[11px] font-bold text-blue-500">최저 {f.min}°</span>
-                             </div>
-                          </div>
-                       );
+                         const info = getWeatherInfo(f.code);
+                         
+                         // --- [NEW] 일정 기반 지역 및 시간 처리 로직 ---
+                         const dPlans = (Array.isArray(planTimeline) ? planTimeline : [])
+                            .filter(p => parseInt(p.day) === d && p.region && p.region !== '수동입력')
+                            .sort((a, b) => S(a.time).localeCompare(S(b.time)));
+                         
+                         let mainRegion = displayCityName;
+                         if (dPlans.length > 0) mainRegion = dPlans[0].region;
+
+                         const getRegionForHour = (hour) => {
+                             let currentReg = mainRegion;
+                             for (const p of dPlans) {
+                                 const pTime = p.time || "00:00";
+                                 const pHour = parseInt(pTime.split(':')[0]);
+                                 if (hour >= pHour) {
+                                     currentReg = p.region;
+                                 }
+                             }
+                             return currentReg;
+                         };
+                         // ----------------------------------------------
+
+                         return (
+                            <div key={d} className="flex flex-col space-y-1">
+                              <div onClick={() => handleWeatherDayClick(d)} className={`cursor-pointer flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all duration-300 hover:shadow-md ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
+                                 <div className="flex flex-col">
+                                    <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} - {mainRegion} ({f.date.slice(5)})</span>
+                                    <span className={`text-xs font-black mt-0.5 ${textMain}`}>{info[0]} {info[1]}</span>
+                                 </div>
+                                 <div className="text-right flex flex-col items-end">
+                                    <div className="flex space-x-2">
+                                      <span className="text-[11px] font-bold text-rose-500">최고 {f.max}°</span>
+                                      <span className="text-[11px] font-bold text-blue-500">최저 {f.min}°</span>
+                                    </div>
+                                    <span className={`text-[8px] mt-1 transition-colors duration-300 ${expandedWeatherDay === d ? 'text-indigo-500 font-bold' : 'text-slate-400'}`}>
+                                      {expandedWeatherDay === d ? '접기 ▲' : '시간대별 보기 ▼'}
+                                    </span>
+                                 </div>
+                              </div>
+                              
+                              {/* 시간대별 날씨 및 지역 동적 변경 (확장 시) */}
+                              {expandedWeatherDay === d && (
+                                <div className={`p-2 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-slate-100 border-slate-200'} max-h-56 overflow-y-auto custom-scrollbar animate-in fade-in duration-300`}>
+                                  {isLoadingHourly ? (
+                                     <div className="text-center py-4 text-[10px] font-bold text-slate-400">
+                                        <span className="animate-spin inline-block mr-1">🔄</span> 시간대별 날씨를 분석중입니다...
+                                     </div>
+                                  ) : (
+                                     Array.from({length: 24}).map((_, hour) => {
+                                        const hRegion = getRegionForHour(hour);
+                                        const prevRegion = hour > 0 ? getRegionForHour(hour - 1) : null;
+                                        
+                                        // 지역 변경 구분선
+                                        const divider = (hour === 0 || hRegion !== prevRegion) ? (
+                                           <div className="w-full my-2.5 text-center relative">
+                                              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-dashed border-slate-300 dark:border-slate-600"></div></div>
+                                              <span className={`relative px-2 py-0.5 rounded-full text-[9px] font-black shadow-sm border ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300 border-indigo-700/50' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
+                                                 📍 여기서부터는 {hRegion}
+                                              </span>
+                                           </div>
+                                        ) : null;
+
+                                        // 해당 지역의 시간대별 데이터 찾기
+                                        const regionData = hourlyWeatherCache[hRegion];
+                                        let hWeatherCode = null;
+                                        let hTemp = null;
+                                        if (regionData && regionData.time) {
+                                            const targetDateStr = getDateStringForDay(d);
+                                            const targetTimeStr = `${targetDateStr}T${String(hour).padStart(2, '0')}:00`;
+                                            const idx = regionData.time.indexOf(targetTimeStr);
+                                            if (idx !== -1) {
+                                                hWeatherCode = regionData.weather_code[idx];
+                                                hTemp = Math.round(regionData.temperature_2m[idx]);
+                                            }
+                                        }
+                                        
+                                        const hInfo = hWeatherCode !== null ? getWeatherInfo(hWeatherCode) : ["-", "☁️"];
+
+                                        return (
+                                           <React.Fragment key={hour}>
+                                             {divider}
+                                             <div className={`flex justify-between items-center px-3 py-1.5 rounded-lg mb-1 transition-colors duration-300 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-white'}`}>
+                                                <span className={`text-[10px] font-bold w-12 ${textMuted}`}>{String(hour).padStart(2, '0')}:00</span>
+                                                <span className={`text-[11px] font-black flex-1 text-center ${textMain}`}>{hInfo[1]} {hInfo[0]}</span>
+                                                <span className={`text-[10px] font-bold w-8 text-right ${hTemp >= 25 ? 'text-rose-500' : hTemp <= 5 ? 'text-blue-500' : textMain}`}>{hTemp !== null ? `${hTemp}°` : '-'}</span>
+                                             </div>
+                                           </React.Fragment>
+                                        );
+                                     })
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                         );
                     })
                  )}
               </div>
@@ -2299,6 +2528,176 @@ const MainApp = () => {
                     </div>
                   )}
                 </div>
+             </div>
+          </div>
+        </div>
+      )}
+      {isShoppingModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsShoppingModalOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
+             <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                <h3 className={`text-sm font-black flex items-center ${textMain}`}><span className="mr-2 text-pink-500">🛍️</span> 쇼핑리스트</h3>
+                <button onClick={() => setIsShoppingModalOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg transition-colors">✕</button>
+             </div>
+             <div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
+                <div className="flex flex-col space-y-2 shrink-0">
+                  <div className="flex space-x-2">
+                    {/* [좌측] Day 선택 콤보박스 */}
+                    <select value={shoppingItemDay} onChange={e => { setShoppingItemDay(e.target.value); setShoppingLinkPlanId("manual"); }} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
+                       <option value="">미지정 (공통)</option>
+                       {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
+                    </select>
+                    {/* [우측] 선택한 Day의 실제 일정(장소) 목록 + 수동 입력 */}
+                    <select value={shoppingLinkPlanId} onChange={e => setShoppingLinkPlanId(e.target.value)} className={`flex-[2] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
+                       <option value="manual">➕ 수동 입력 (새 핀 생성)</option>
+                       {planTimeline.filter(p => !shoppingItemDay || String(p.day) === String(shoppingItemDay)).map(p => (
+                          <option key={p.id} value={p.id}>[{p.time || '종일'}] {S(p.place)}</option>
+                       ))}
+                    </select>
+                  </div>
+                  <div className="flex space-x-2">
+                    <input type="text" placeholder="살 물건 입력 후 엔터키" value={newShoppingItem} onChange={e => setNewShoppingItem(e.target.value)} onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing) return; // 한글 입력 시 엔터 중복 방지 로직 (유지)
+                      if (e.key === 'Enter' && e.target.value.trim()) {
+                        let targetDay = shoppingItemDay;
+                        let targetPlace = null;
+                        let dbUpdates = {};
+                        
+                        // [요구사항 2] 수동 입력 시 미지정 핀으로 자동 생성
+                        if (shoppingLinkPlanId === 'manual' || !shoppingLinkPlanId) {
+                            const itemName = e.target.value.trim();
+                            const newPinName = `🛍️ [쇼핑] ${itemName}`;
+                            const newPin = {
+                                id: `shop-pin-${Date.now()}`, lat: null, lng: null, country: S(displayCityName), city: S(displayCityName),
+                                name: newPinName, localName: "", signature: "쇼핑리스트 수동 등록",
+                                img: "[https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80](https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80)",
+                                rating: 5.0, isAccommodation: false, isLandmark: false, theme: "쇼핑"
+                            };
+                            const updatedRests = [newPin, ...(Array.isArray(currentRestaurants) ? currentRestaurants : [])];
+                            setCurrentRestaurants(updatedRests);
+                            dbUpdates.current_restaurants = updatedRests;
+                            targetPlace = newPinName;
+                        } else {
+                            // 기존 일정 연동 시
+                            const linkedPlan = planTimeline.find(p => String(p.id) === String(shoppingLinkPlanId));
+                            if (linkedPlan) {
+                                targetDay = linkedPlan.day;
+                                targetPlace = linkedPlan.place;
+                            }
+                        }
+
+                        const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false, day: targetDay, theme: "쇼핑", linkedPlace: targetPlace };
+                        const newList = [...shoppingList, newItem];
+                        setShoppingList(newList); 
+                        dbUpdates.shopping_list = newList;
+                        
+                        saveToDb(dbUpdates);
+                        setNewShoppingItem("");
+                      }
+                    }} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-pink-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
+                  </div>
+                  <div className="flex items-center justify-end px-1 mt-1">
+                    <label className="flex items-center space-x-1.5 cursor-pointer group">
+                      <input type="checkbox" checked={showAllShopping} onChange={e => setShowAllShopping(e.target.checked)} className="accent-pink-500 w-3 h-3 cursor-pointer" />
+                      <span className={`text-[10px] font-bold ${textMuted}`}>전체 항목 한 번에 보기</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
+                  {(() => {
+                    // [필터 수정] Day 기준으로 필터링하도록 원상복구
+                    const filteredList = showAllShopping ? shoppingList : shoppingList.filter(item => String(item.day) === String(shoppingItemDay));
+                    
+                    if (shoppingList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">어디서 무엇을 살지 기록해보세요!</p>;
+                    if (filteredList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">선택한 Day에 해당하는 쇼핑 항목이 없습니다!</p>;
+                    
+                    return filteredList.map(item => (
+                       <div key={item.id} className={`group cursor-pointer flex flex-col justify-center px-3 py-1.5 rounded-xl border shadow-sm transition-all duration-300 w-full sm:w-auto ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-pink-900/30 border-pink-500/50 text-pink-300 hover:bg-pink-900/50' : 'bg-pink-50 border-pink-200 text-pink-700 hover:bg-pink-100')}`} onClick={() => {
+                          const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
+                          setShoppingList(newList); saveToDb({ shopping_list: newList });
+                       }}>
+                         <div className="flex items-center justify-between w-full">
+                           <span className={`text-[11px] font-bold truncate max-w-[200px]`}>{item.text}</span>
+                           <button onClick={(e) => { e.stopPropagation(); const newList = shoppingList.filter(s => s.id !== item.id); setShoppingList(newList); saveToDb({ shopping_list: newList }); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-pink-400 hover:text-pink-600'}`}>✕</button>
+                         </div>
+                         <div className="flex items-center space-x-1 mt-0.5">
+                           {/* [수정됨] 미지정이 아닐 경우 Day 대신 '📍 장소명'을 표시하도록 변경 */}
+                           <span className="text-[8px] font-bold opacity-70 bg-black/5 px-1 rounded">{item.linkedPlace ? `📍 ${item.linkedPlace}` : (item.day ? `Day ${item.day}` : '미지정')}</span>
+                           <span className="text-[8px] font-bold opacity-70 bg-black/5 px-1 rounded">{item.theme || '기타'}</span>
+                         </div>
+                       </div>
+                    ));
+                  })()}
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {isDashboardShoppingOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsDashboardShoppingOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
+             <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                <h3 className={`text-sm font-black flex items-center ${textMain}`}><span className="mr-2">🛍️</span> 이번 여행 쇼핑리스트</h3>
+                <button onClick={() => setIsDashboardShoppingOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg transition-colors">✕</button>
+             </div>
+             
+             <div className={`p-2 border-b flex justify-end ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
+                <label className="flex items-center space-x-1.5 cursor-pointer group">
+                  <input type="checkbox" checked={dashShowAllShopping} onChange={e => setDashShowAllShopping(e.target.checked)} className="accent-pink-500 w-3 h-3 cursor-pointer" />
+                  <span className={`text-[10px] font-bold ${textMuted}`}>전체 일정 보기</span>
+                </label>
+             </div>
+
+             <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar flex flex-col min-h-[30vh]">
+                {shoppingList.length === 0 && (
+                  <div className="text-center w-full py-10">
+                     <p className="text-xs text-slate-400 font-bold">등록된 쇼핑 항목이 없습니다.</p>
+                  </div>
+                )}
+                
+                {(() => {
+                  const displayedList = dashShowAllShopping ? shoppingList : shoppingList.filter(item => String(item.day) === String(dashboardDay) || !item.day);
+                  
+                  if (shoppingList.length > 0 && displayedList.length === 0) {
+                     return <p className="text-center text-[10px] text-slate-400 font-bold py-5">현재 일차(Day {dashboardDay})에 등록된 쇼핑 항목이 없습니다.<br/>'전체 일정 보기'를 체크해 보세요.</p>;
+                  }
+
+                  const grouped = displayedList.reduce((acc, item) => {
+                     const d = item.day ? `Day ${item.day}` : '미지정 (공통)';
+                     const t = item.theme || '기타';
+                     if (!acc[d]) acc[d] = {};
+                     if (!acc[d][t]) acc[d][t] = [];
+                     acc[d][t].push(item);
+                     return acc;
+                  }, {});
+
+                  return Object.keys(grouped).sort((a,b) => {
+                     if(a==='미지정 (공통)') return 1; if(b==='미지정 (공통)') return -1;
+                     return a.localeCompare(b);
+                  }).map(dayKey => (
+                     <div key={dayKey} className="mb-4 last:mb-0">
+                        <h4 className={`text-xs font-black mb-2 pb-1 border-b ${isDarkMode ? 'text-indigo-400 border-slate-700' : 'text-indigo-600 border-slate-200'}`}>{dayKey}</h4>
+                        {Object.keys(grouped[dayKey]).sort().map(themeKey => (
+                           <div key={themeKey} className="mb-3 last:mb-0 pl-2">
+                              <h5 className={`text-[10px] font-bold mb-1.5 ${isDarkMode ? 'text-pink-400' : 'text-pink-600'}`}>• {themeKey}</h5>
+                              <div className="flex flex-wrap gap-2">
+                                 {grouped[dayKey][themeKey].map(item => (
+                                    <div key={item.id} onClick={() => {
+                                        const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
+                                        setShoppingList(newList); saveToDb({ shopping_list: newList });
+                                    }} className={`cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-pink-900/20 border-pink-500/30 text-pink-300 hover:bg-pink-900/40' : 'bg-white border-pink-200 text-pink-700 hover:bg-pink-50')}`}>
+                                      <input type="checkbox" checked={item.isChecked} readOnly className="accent-pink-500 w-3 h-3 mr-1.5 pointer-events-none" />
+                                      <span className={`text-[11px] font-bold truncate max-w-[250px]`}>{item.text}</span>
+                                    </div>
+                                 ))}
+                              </div>
+                           </div>
+                        ))}
+                     </div>
+                  ));
+                })()}
              </div>
           </div>
         </div>
@@ -2369,6 +2768,18 @@ const MainApp = () => {
                 <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">{S(selectedPlanInfo.features)}</p>
               ) : (
                 <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
+              )}
+               {(selectedPlanInfo.expenseLocal || selectedPlanInfo.expenseKrw) && (
+                <div className={`mt-3 p-3 rounded-xl border ${isDarkMode ? 'bg-rose-900/20 border-rose-800' : 'bg-rose-50 border-rose-100'}`}>
+                  <h4 className="text-[11px] font-black text-rose-500 mb-1 flex justify-between items-center">
+                    <span>💸 지출 메모</span>
+                    {selectedPlanInfo.theme && <span className="text-[9px] bg-rose-100 text-rose-600 dark:bg-rose-800 dark:text-rose-300 px-1.5 py-0.5 rounded">{selectedPlanInfo.theme}</span>}
+                  </h4>
+                  <div className="flex justify-between items-center text-xs font-bold text-rose-600 dark:text-rose-400">
+                    <span>현지: {selectedPlanInfo.expenseLocal ? Number(selectedPlanInfo.expenseLocal).toLocaleString() : 0}</span>
+                    <span>원화: {selectedPlanInfo.expenseKrw ? Number(selectedPlanInfo.expenseKrw).toLocaleString() + '원' : '0원'}</span>
+                  </div>
+                </div>
               )}
               
               <button onClick={() => setSelectedPlanInfo(null)} className="mt-5 w-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors duration-300">닫기</button>
@@ -2571,6 +2982,28 @@ const MainApp = () => {
                   <input type="text" placeholder="간단한 메모" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
                 </div>
               </div>
+                            {/* 지출 및 테마 입력란 (신규) */}
+              <div className="flex space-x-2 items-end">
+                <div className="flex flex-col space-y-1 w-1/3">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>테마</label>
+                  <select value={S(editingPlan.theme || "기타")} onChange={e => setEditingPlan({...editingPlan, theme: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`}>
+                    <option value="교통편">교통편</option>
+                    <option value="식당">식당</option>
+                    <option value="디저트">디저트</option>
+                    <option value="관광지">관광지</option>
+                    <option value="쇼핑">쇼핑</option>
+                    <option value="기타">기타</option>
+                  </select>
+                </div>
+                <div className="flex flex-col space-y-1 w-1/3">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지 지출액</label>
+                  <input type="number" placeholder="예: 100" value={editingPlan.expenseLocal || ""} onChange={e => setEditingPlan({...editingPlan, expenseLocal: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
+                </div>
+                <div className="flex flex-col space-y-1 w-1/3">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>원화 환산액</label>
+                  <input type="number" placeholder="예: 15000" value={editingPlan.expenseKrw || ""} onChange={e => setEditingPlan({...editingPlan, expenseKrw: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
+                </div>
+              </div>
 
               <div className="flex flex-col space-y-1 w-full">
                 <input type="file" accept="image/*" ref={editFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, true)} className="hidden" />
@@ -2640,6 +3073,17 @@ const MainApp = () => {
             
             <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh] custom-scrollbar scroll-smooth">
               <div className="flex flex-col space-y-1">
+              <div className="flex flex-col space-y-1 mb-3">
+                <label className={`text-[9px] font-bold ${textMuted} px-1`}>테마 분류</label>
+                <select value={newManualTheme} onChange={e => setNewManualTheme(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`}>
+                  <option value="교통편">교통편 🚌</option>
+                  <option value="식당">식당 🍽️</option>
+                  <option value="디저트">디저트 🍰</option>
+                  <option value="관광지">관광지 📸</option>
+                  <option value="쇼핑">쇼핑 🛍️</option>
+                  <option value="기타">기타 📌</option>
+                </select>
+              </div>
                 <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 이름 (필수)</label>
                 <input type="text" placeholder="예: 에펠탑" value={newManualPlaceName} onChange={e => setNewManualPlaceName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
               </div>
@@ -2768,6 +3212,15 @@ const MainApp = () => {
                     <button key={d} onClick={() => setMyPinsFilter(d)} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors ${myPinsFilter === d ? 'bg-indigo-600 text-white shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-200 text-slate-500 hover:bg-slate-300')}`}>Day {d}</button>
                  ))}
                  <button onClick={() => setMyPinsFilter('unlinked')} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors border ${myPinsFilter === 'unlinked' ? 'bg-slate-600 text-white border-slate-600 shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400 border-transparent' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
+                 <select value={myPinsThemeFilter} onChange={e => setMyPinsThemeFilter(e.target.value)} className={`ml-2 px-2 py-1 rounded-full text-[10px] font-bold outline-none cursor-pointer transition-colors border ${isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
+                    <option value="all">테마 전체</option>
+                    <option value="교통편">교통편 🚌</option>
+                    <option value="식당">식당 🍽️</option>
+                    <option value="디저트">디저트 🍰</option>
+                    <option value="관광지">관광지 📸</option>
+                    <option value="쇼핑">쇼핑 🛍️</option>
+                    <option value="기타">기타 📌</option>
+                 </select>
               </div>
 
               <div className="flex items-center space-x-3 shrink-0">
@@ -2962,6 +3415,11 @@ const MainApp = () => {
                   <span className="text-xs">🌐</span>
                   <span>AI 번역기</span>
                 </button>
+                <button onClick={() => setIsExpenseModalOpen(true)} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-rose-900/50 text-rose-400 border border-rose-700 hover:bg-rose-900/70' : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'}`}>
+                  <span className="text-xs">💸</span>
+                  <span className="hidden sm:inline">총 지출 내역</span>
+                  <span className="sm:hidden">지출</span>
+                </button>
               </div>
             </div>
 
@@ -2998,9 +3456,13 @@ const MainApp = () => {
                   <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-1.5">
                     <div className="flex items-center justify-between w-full">
                       <h3 className={`text-[10px] sm:text-xs font-bold tracking-tight leading-tight truncate mr-1 transition-colors duration-300 ${textMain}`}>🎒 오늘의 계획</h3>
-                      <button onClick={() => setIsDashboardPackingOpen(true)} className={`px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold flex-shrink-0 transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>🎒 준비물</button>
+                      <div className="flex space-x-1 flex-shrink-0">
+                        <button onClick={() => setIsDashboardPackingOpen(true)} className={`px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>🎒 준비물</button>
+                        <button onClick={() => setIsDashboardShoppingOpen(true)} className={`px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-pink-900/30 border-pink-700/50 text-pink-300' : 'bg-pink-50 border-pink-200 text-pink-600 hover:bg-pink-100'}`}>🛍️ 쇼핑</button>
+                      </div>
                     </div>
                     <div className={`grid grid-cols-4 gap-0.5 p-0.5 rounded-md w-full xl:w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
+
                       {tripDays.map(d => {
                          const wInfo = getWeatherForDay(d);
                          return (
@@ -3075,6 +3537,44 @@ const MainApp = () => {
                       </div>
                     )})
                   )}
+                </div>
+                                {/* --- 준비물 & 쇼핑리스트 대시보드 뷰 --- */}
+                <div className="grid grid-cols-2 gap-2 mt-2 flex-shrink-0">
+                  <div className={`p-2 rounded-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                    <h4 className="text-[10px] font-black mb-1.5 flex justify-between items-center text-emerald-500">
+                      <span>🎒 준비물</span>
+                    </h4>
+                    <div className="max-h-24 overflow-y-auto custom-scrollbar space-y-1 pr-1">
+                      {packingList.length === 0 && <p className="text-[8px] text-slate-400">등록된 항목이 없습니다.</p>}
+                      {packingList.map(item => (
+                        <label key={item.id} className="flex items-center space-x-1.5 cursor-pointer group">
+                          <input type="checkbox" checked={item.isChecked} onChange={() => togglePackingItem(item.id)} className="accent-emerald-500 w-3 h-3 flex-shrink-0 cursor-pointer" />
+                          <span className={`text-[9px] font-bold truncate transition-all ${item.isChecked ? 'line-through text-slate-400' : (isDarkMode ? 'text-slate-300' : 'text-slate-600')}`}>{item.text}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className={`p-2 rounded-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                    <h4 className="text-[10px] font-black mb-1.5 flex justify-between items-center text-pink-500">
+                      <span>🛍️ 쇼핑리스트</span>
+                    </h4>
+                    <div className="max-h-24 overflow-y-auto custom-scrollbar space-y-1 pr-1">
+                      {shoppingList.length === 0 && <p className="text-[8px] text-slate-400">등록된 항목이 없습니다.</p>}
+                      {shoppingList.map(item => (
+                        <label key={item.id} className="flex items-center space-x-1.5 cursor-pointer group">
+                          <input type="checkbox" checked={item.isChecked} onChange={() => {
+                            const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
+                            setShoppingList(newList); saveToDb({ shopping_list: newList });
+                          }} className="accent-pink-500 w-3 h-3 flex-shrink-0 cursor-pointer" />
+                          <span className={`text-[9px] font-bold truncate transition-all flex flex-col ${item.isChecked ? 'line-through text-slate-400' : (isDarkMode ? 'text-slate-300' : 'text-slate-600')}`}>
+                            <span>{item.text}</span>
+                            {item.linkedPlace && <span className="text-[7px] text-pink-400 truncate">@{item.linkedPlace}</span>}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -3340,6 +3840,15 @@ const MainApp = () => {
                       <span>스케줄에 등록! ✨</span>
                     </button>
                   </div>
+                    <div className="flex space-x-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                     <button onClick={() => setIsPackingModalOpen(true)} className="flex-1 bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-400 rounded-lg py-2.5 text-[11px] font-bold shadow-sm hover:bg-emerald-100 transition-colors duration-300 flex justify-center items-center">
+                      🎒 준비물 입력
+                    </button>
+                     <button onClick={() => setIsShoppingModalOpen(true)} className="flex-1 bg-pink-50 text-pink-600 border border-pink-200 dark:bg-pink-900/30 dark:border-pink-800 dark:text-pink-400 rounded-lg py-2.5 text-[11px] font-bold shadow-sm hover:bg-pink-100 transition-colors duration-300 flex justify-center items-center">
+                      🛍️ 쇼핑리스트
+                     </button>
+                  </div>
+
                 </div>
               </div>
 
