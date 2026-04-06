@@ -289,6 +289,7 @@ const MainApp = () => {
   const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
   const [selectedPinInfo, setSelectedPinInfo] = useState(null); 
   const [isSettleMode, setIsSettleMode] = useState(false);
+  const [newTheme, setNewTheme] = useState("기타");
   const [settleLocal, setSettleLocal] = useState("");
   const [settleKrw, setSettleKrw] = useState("");
 
@@ -305,8 +306,10 @@ const MainApp = () => {
   const [shoppingItemDay, setShoppingItemDay] = useState("");
   const [shoppingItemTheme, setShoppingItemTheme] = useState("쇼핑");
   const [showAllShopping, setShowAllShopping] = useState(true);
+  const [shoppingFilterTheme, setShoppingFilterTheme] = useState("all");
   const [isDashboardShoppingOpen, setIsDashboardShoppingOpen] = useState(false);
   const [dashShowAllShopping, setDashShowAllShopping] = useState(false);
+  const [dashShoppingFilterTheme, setDashShoppingFilterTheme] = useState("all");
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
   const [transType, setTransType] = useState('flight'); 
@@ -324,7 +327,8 @@ const MainApp = () => {
 
   const [activeMobileCard, setActiveMobileCard] = useState(null);
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false); 
-  const [showArchiveAddForm, setShowArchiveAddForm] = useState(false); 
+  const [archiveFilterYear, setArchiveFilterYear] = useState('all');
+  const [archiveFilterLocation, setArchiveFilterLocation] = useState('all'); // 국내/해외 필터
 
   const isDarkMode = appTheme === 'dark';
 
@@ -1160,8 +1164,9 @@ const MainApp = () => {
 
     const planData = { 
       id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: newPhoto ? S(newPhoto) : "", 
-      country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation)
+      country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), theme: S(newTheme)
     };
+
     updatedTimeline.push(planData);
     showToast(newIsAccommodation ? "🏠 전 일정 숙소로 등록되었습니다!" : "스케줄에 등록 성공! ✨");
 
@@ -2135,19 +2140,101 @@ const filteredMyPins = filteredMarkers.filter(pin => {
             
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
               <div>
-                <h3 className={`text-xs font-bold mb-3 px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>내 여행 목록(문서함) ✈️</h3>
+<h3 className={`text-xs font-bold mb-3 px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>나의 활성 여행 목록 ✈️</h3>
                 <div className="space-y-1">
-                  {trips.map(t => (
-                    <button 
-                      key={t.id} 
-                      onClick={() => { handleSwitchTrip(t.id); }} 
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 truncate flex items-center justify-between group ${activeTripId === t.id ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
-                    >
-                      <span className="truncate">{S(t.name)}</span>
-                      <span onClick={(e) => { e.stopPropagation(); setTripToDelete(t.id); }} className={`text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-[10px] hover:scale-110 p-1`}>{t.isShared ? '🚪' : '🗑️'}</span>
-                    </button>
-                  ))}
+                  {trips.filter(t => !t.archived).map(t => {
+                    {/* [여행 완료 자동 감지 로직] */}
+                    const isTripFinished = travelStartDate && new Date(travelStartDate).getTime() + (maxDay * 24 * 60 * 60 * 1000) < Date.now();
+                    
+                    return (
+                      <div key={t.id} className="flex flex-col mb-1">
+                        <button 
+                          onClick={() => { handleSwitchTrip(t.id); }} 
+                          className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 truncate flex items-center justify-between group ${activeTripId === t.id ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
+                        >
+                          <span className="truncate flex items-center">
+                            {t.isShared && <span className="mr-1.5 text-[10px]">🤝</span>}
+                            {S(t.name)}
+                          </span>
+                          <div className="flex items-center">
+                            <span onClick={(e) => { e.stopPropagation(); setTripToDelete(t.id); }} className={`text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-[10px] hover:scale-110 p-1`}>{t.isShared ? '🚪' : '🗑️'}</span>
+                          </div>
+                        </button>
+                        
+                        {/* 여행 완료 배지/버튼: 활성화된 여행일 때만 표시 */}
+                        {isTripFinished && activeTripId === t.id && (
+                          <button 
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const newTrips = trips.map(item => item.id === t.id ? { ...item, archived: true, finishDate: new Date().toISOString() } : item);
+                              setTrips(newTrips);
+                              if(supabaseClient) {
+                                await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
+                                await supabaseClient.from('travel_state').update({ shared_users: [] }).eq('id', t.id); // 공유 자동 해제
+                              }
+                              showToast("축하합니다! 여행이 '여행기록'으로 소중히 저장되었습니다. 📸");
+                            }}
+                            className="mt-1 mx-2 bg-emerald-500 hover:bg-emerald-600 text-white text-[9px] py-1 rounded-lg font-black shadow-sm transition-all animate-bounce"
+                          >
+                            🎉 여행 완료! 기록하기
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
+
+                <div className="mt-6 pt-4 border-t border-dashed border-slate-200 dark:border-slate-700">
+                  <button 
+                    onClick={() => setIsArchiveModalOpen(true)}
+                    className={`w-full flex items-center justify-between px-3 py-3 rounded-xl text-xs font-black transition-all duration-300 ${isDarkMode ? 'bg-indigo-900/30 text-indigo-300' : 'bg-indigo-50 text-indigo-700 shadow-inner'}`}
+                  >
+                    <span>📷 소중한 여행기록</span>
+                    <span className="text-lg">📂</span>
+                  </button>
+                </div>
+
+                {isArchiveModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsArchiveModalOpen(false)}>
+           <div className={`${cardBg} p-6 rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[80vh]`} onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-4">
+                 <h3 className={`font-black text-sm ${textMain}`}>📁 나의 여행기록 아카이브</h3>
+                 <button onClick={() => setIsArchiveModalOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+              </div>
+
+              {/* 필터링 섹션 */}
+              <div className="flex space-x-2 mb-4">
+                <select value={archiveFilterYear} onChange={e => setArchiveFilterYear(e.target.value)} className={`flex-1 ${inputBg} border p-2 text-[10px] font-bold rounded-lg outline-none`}>
+                  <option value="all">모든 연도</option>
+                  <option value="2026">2026년</option>
+                  <option value="2025">2025년</option>
+                  <option value="2024">2024년</option>
+                </select>
+                <select value={archiveFilterLocation} onChange={e => setArchiveFilterLocation(e.target.value)} className={`flex-1 ${inputBg} border p-2 text-[10px] font-bold rounded-lg outline-none`}>
+                  <option value="all">국내/해외 전체</option>
+                  <option value="domestic">국내 여행 🇰🇷</option>
+                  <option value="overseas">해외 여행 ✈️</option>
+                </select>
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+                {trips.filter(t => t.archived).length === 0 ? (
+                  <div className="text-center py-20 text-slate-400 text-xs font-bold">아직 완료된 여행 기록이 없습니다.</div>
+                ) : (
+                  trips.filter(t => t.archived).map(t => (
+                    <div key={t.id} className={`p-3 rounded-xl border flex justify-between items-center ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
+                      <div>
+                        <p className={`text-[11px] font-black ${textMain}`}>{S(t.name)}</p>
+                        <p className="text-[9px] text-slate-500 font-bold mt-1">완료일: {t.finishDate?.split('T')[0] || '기록없음'}</p>
+                      </div>
+                      <button onClick={() => { setActiveTripId(t.id); setIsArchiveModalOpen(false); showToast("과거 여행을 불러왔습니다. (조회 모드)"); }} className="bg-white dark:bg-slate-800 px-3 py-1.5 rounded-lg text-[9px] font-bold shadow-sm border border-slate-200 dark:border-slate-600">열람하기</button>
+                    </div>
+                  ))
+                )}
+              </div>
+           </div>
+        </div>
+      )}
                 <div className="mt-2 grid grid-cols-2 gap-2">
                    <button onClick={openAddTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}>+ 새 여행</button>
                    <button onClick={openRenameTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}>✏️ 이름 변경</button>
@@ -2306,7 +2393,7 @@ const filteredMyPins = filteredMarkers.filter(pin => {
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsExpenseModalOpen(false)}>
           <div className={`${cardBg} p-5 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[85vh]`} onClick={e => e.stopPropagation()}>
             <div className={`flex justify-between items-center mb-4 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`font-black text-sm ${textMain}`}>💸 여행 총 지출 내역</h3>
+              <h3 className={`font-black text-sm ${textMain}`}>💸 여행정산</h3>
               <button onClick={() => setIsExpenseModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
             </div>
 
@@ -2440,11 +2527,11 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                                  </div>
                               </div>
                               
-                              {/* 시간대별 날씨 및 지역 동적 변경 (확장 시) */}
+{/* 시간대별 날씨 및 지역 동적 변경 (확장 시) - 가로 스크롤 적용 */}
                               {expandedWeatherDay === d && (
-                                <div className={`p-2 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-slate-100 border-slate-200'} max-h-56 overflow-y-auto custom-scrollbar animate-in fade-in duration-300`}>
+                                <div className={`p-2 rounded-xl border ${isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-slate-100 border-slate-200'} overflow-x-auto custom-scrollbar animate-in fade-in duration-300 flex space-x-2 snap-x`}>
                                   {isLoadingHourly ? (
-                                     <div className="text-center py-4 text-[10px] font-bold text-slate-400">
+                                     <div className="text-center py-4 w-full text-[10px] font-bold text-slate-400">
                                         <span className="animate-spin inline-block mr-1">🔄</span> 시간대별 날씨를 분석중입니다...
                                      </div>
                                   ) : (
@@ -2452,17 +2539,14 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                                         const hRegion = getRegionForHour(hour);
                                         const prevRegion = hour > 0 ? getRegionForHour(hour - 1) : null;
                                         
-                                        // 지역 변경 구분선
                                         const divider = (hour === 0 || hRegion !== prevRegion) ? (
-                                           <div className="w-full my-2.5 text-center relative">
-                                              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-dashed border-slate-300 dark:border-slate-600"></div></div>
-                                              <span className={`relative px-2 py-0.5 rounded-full text-[9px] font-black shadow-sm border ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300 border-indigo-700/50' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
-                                                 📍 여기서부터는 {hRegion}
+                                           <div className="flex-shrink-0 flex items-center justify-center px-1">
+                                              <span className={`px-2 py-1 rounded-full text-[9px] font-black shadow-sm border whitespace-nowrap ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300 border-indigo-700/50' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
+                                                 📍 {hRegion}
                                               </span>
                                            </div>
                                         ) : null;
 
-                                        // 해당 지역의 시간대별 데이터 찾기
                                         const regionData = hourlyWeatherCache[hRegion];
                                         let hWeatherCode = null;
                                         let hTemp = null;
@@ -2481,10 +2565,11 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                                         return (
                                            <React.Fragment key={hour}>
                                              {divider}
-                                             <div className={`flex justify-between items-center px-3 py-1.5 rounded-lg mb-1 transition-colors duration-300 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-white'}`}>
-                                                <span className={`text-[10px] font-bold w-12 ${textMuted}`}>{String(hour).padStart(2, '0')}:00</span>
-                                                <span className={`text-[11px] font-black flex-1 text-center ${textMain}`}>{hInfo[1]} {hInfo[0]}</span>
-                                                <span className={`text-[10px] font-bold w-8 text-right ${hTemp >= 25 ? 'text-rose-500' : hTemp <= 5 ? 'text-blue-500' : textMain}`}>{hTemp !== null ? `${hTemp}°` : '-'}</span>
+                                             <div className={`flex flex-col items-center justify-center p-2 w-14 flex-shrink-0 snap-center rounded-lg border shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+                                                <span className={`text-[9px] font-bold mb-1 ${textMuted}`}>{String(hour).padStart(2, '0')}:00</span>
+                                                <span className="text-lg leading-none mb-1">{hInfo[1]}</span>
+                                                <span className={`text-[9px] font-black ${textMain}`}>{hInfo[0]}</span>
+                                                <span className={`text-[10px] font-bold mt-1 ${hTemp >= 25 ? 'text-rose-500' : hTemp <= 5 ? 'text-blue-500' : textMain}`}>{hTemp !== null ? `${hTemp}°` : '-'}</span>
                                              </div>
                                            </React.Fragment>
                                         );
@@ -2516,11 +2601,14 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
-                  {packingList.map(item => (
-                     <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100')}`}>
-                       <span className={`text-[11px] font-bold truncate max-w-[250px]`}>{item.text}</span>
-                     </div>
-                  ))}
+                      {packingList.map(item => (
+                        <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`cursor-pointer flex items-center space-x-2 px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100')}`}>
+                          <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 transition-all duration-300 ${item.isChecked ? 'bg-indigo-500 border-indigo-500 scale-110' : 'border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-800'}`}>
+                            {item.isChecked && <span className="text-white text-[10px] font-black leading-none mt-0.5">✓</span>}
+                          </div>
+                          <span className={`text-[11px] font-bold truncate max-w-[250px]`}>{item.text}</span>
+                        </div>
+                      ))}
                   {packingList.length === 0 && (
                     <div className="text-center w-full py-10">
                        <p className="text-xs text-slate-400 font-bold">등록된 준비물이 없습니다.</p>
@@ -2541,44 +2629,47 @@ const filteredMyPins = filteredMarkers.filter(pin => {
              </div>
              <div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
                 <div className="flex flex-col space-y-2 shrink-0">
-                  <div className="flex space-x-2">
-                    {/* [좌측] Day 선택 콤보박스 */}
-                    <select value={shoppingItemDay} onChange={e => { setShoppingItemDay(e.target.value); setShoppingLinkPlanId("manual"); }} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
-                       <option value="">미지정 (공통)</option>
+<div className="flex space-x-1.5">
+                    <select value={shoppingItemDay} onChange={e => { setShoppingItemDay(e.target.value); setShoppingLinkPlanId("manual"); }} className={`flex-[1] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[10px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
+                       <option value="">미지정</option>
                        {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
                     </select>
-                    {/* [우측] 선택한 Day의 실제 일정(장소) 목록 + 수동 입력 */}
-                    <select value={shoppingLinkPlanId} onChange={e => setShoppingLinkPlanId(e.target.value)} className={`flex-[2] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
-                       <option value="manual">➕ 수동 입력 (새 핀 생성)</option>
+                    <select value={shoppingItemTheme} onChange={e => setShoppingItemTheme(e.target.value)} className={`flex-[1.2] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[10px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
+                       <option value="쇼핑">쇼핑 🛍️</option>
+                       <option value="식당">식당 🍽️</option>
+                       <option value="관광지">관광지 📸</option>
+                       <option value="숙소">숙소 🏠</option>
+                       <option value="기타">기타 📌</option>
+                    </select>
+                    <select value={shoppingLinkPlanId} onChange={e => setShoppingLinkPlanId(e.target.value)} className={`flex-[1.5] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[10px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
+                       <option value="manual">➕ 수동입력</option>
                        {planTimeline.filter(p => !shoppingItemDay || String(p.day) === String(shoppingItemDay)).map(p => (
                           <option key={p.id} value={p.id}>[{p.time || '종일'}] {S(p.place)}</option>
                        ))}
                     </select>
                   </div>
                   <div className="flex space-x-2">
-                    <input type="text" placeholder="살 물건 입력 후 엔터키" value={newShoppingItem} onChange={e => setNewShoppingItem(e.target.value)} onKeyDown={(e) => {
-                      if (e.nativeEvent.isComposing) return; // 한글 입력 시 엔터 중복 방지 로직 (유지)
+                    <input type="text" placeholder="살 물건/계획 입력 후 엔터키" value={newShoppingItem} onChange={e => setNewShoppingItem(e.target.value)} onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing) return;
                       if (e.key === 'Enter' && e.target.value.trim()) {
                         let targetDay = shoppingItemDay;
                         let targetPlace = null;
                         let dbUpdates = {};
                         
-                        // [요구사항 2] 수동 입력 시 미지정 핀으로 자동 생성
                         if (shoppingLinkPlanId === 'manual' || !shoppingLinkPlanId) {
                             const itemName = e.target.value.trim();
-                            const newPinName = `🛍️ [쇼핑] ${itemName}`;
+                            const newPinName = `[${shoppingItemTheme}] ${itemName}`;
                             const newPin = {
                                 id: `shop-pin-${Date.now()}`, lat: null, lng: null, country: S(displayCityName), city: S(displayCityName),
-                                name: newPinName, localName: "", signature: "쇼핑리스트 수동 등록",
-                                img: "[https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80](https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80)",
-                                rating: 5.0, isAccommodation: false, isLandmark: false, theme: "쇼핑"
+                                name: newPinName, localName: "", signature: `${shoppingItemTheme} 수동 등록`,
+                                img: "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
+                                rating: 5.0, isAccommodation: shoppingItemTheme === '숙소', isLandmark: false, theme: shoppingItemTheme
                             };
                             const updatedRests = [newPin, ...(Array.isArray(currentRestaurants) ? currentRestaurants : [])];
                             setCurrentRestaurants(updatedRests);
                             dbUpdates.current_restaurants = updatedRests;
                             targetPlace = newPinName;
                         } else {
-                            // 기존 일정 연동 시
                             const linkedPlan = planTimeline.find(p => String(p.id) === String(shoppingLinkPlanId));
                             if (linkedPlan) {
                                 targetDay = linkedPlan.day;
@@ -2586,7 +2677,7 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                             }
                         }
 
-                        const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false, day: targetDay, theme: "쇼핑", linkedPlace: targetPlace };
+                        const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false, day: targetDay, theme: shoppingItemTheme, linkedPlace: targetPlace };
                         const newList = [...shoppingList, newItem];
                         setShoppingList(newList); 
                         dbUpdates.shopping_list = newList;
@@ -2596,22 +2687,34 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                       }
                     }} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-pink-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
                   </div>
-                  <div className="flex items-center justify-end px-1 mt-1">
+<div className="flex items-center justify-between px-1 mt-2">
+                    <select value={shoppingFilterTheme} onChange={e => setShoppingFilterTheme(e.target.value)} className={`w-24 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1 text-[9px] font-bold outline-none rounded-md shadow-sm transition-colors duration-300`}>
+                       <option value="all">테마 전체</option>
+                       <option value="쇼핑">쇼핑</option>
+                       <option value="식당">식당</option>
+                       <option value="관광지">관광지</option>
+                       <option value="숙소">숙소</option>
+                       <option value="기타">기타</option>
+                    </select>
                     <label className="flex items-center space-x-1.5 cursor-pointer group">
                       <input type="checkbox" checked={showAllShopping} onChange={e => setShowAllShopping(e.target.checked)} className="accent-pink-500 w-3 h-3 cursor-pointer" />
-                      <span className={`text-[10px] font-bold ${textMuted}`}>전체 항목 한 번에 보기</span>
+                      <span className={`text-[10px] font-bold ${textMuted}`}>모든 Day 보기</span>
                     </label>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
+<div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
                   {(() => {
-                    // [필터 수정] Day 기준으로 필터링하도록 원상복구
-                    const filteredList = showAllShopping ? shoppingList : shoppingList.filter(item => String(item.day) === String(shoppingItemDay));
+                    {/* [교차 필터링 핵심 로직] */}
+                    const filteredList = shoppingList.filter(item => {
+                      const dayMatch = showAllShopping || String(item.day) === String(shoppingItemDay || "");
+                      const themeMatch = shoppingFilterTheme === 'all' || item.theme === shoppingFilterTheme;
+                      return dayMatch && themeMatch;
+                    });
                     
-                    if (shoppingList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">어디서 무엇을 살지 기록해보세요!</p>;
-                    if (filteredList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">선택한 Day에 해당하는 쇼핑 항목이 없습니다!</p>;
-                    
+                    if (shoppingList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">기록된 항목이 없습니다.</p>;
+                    if (filteredList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">해당 Day와 테마에 맞는 정보가 없습니다.</p>;
+
                     return filteredList.map(item => (
                        <div key={item.id} className={`group cursor-pointer flex flex-col justify-center px-3 py-1.5 rounded-xl border shadow-sm transition-all duration-300 w-full sm:w-auto ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-pink-900/30 border-pink-500/50 text-pink-300 hover:bg-pink-900/50' : 'bg-pink-50 border-pink-200 text-pink-700 hover:bg-pink-100')}`} onClick={() => {
                           const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
@@ -2643,10 +2746,18 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                 <button onClick={() => setIsDashboardShoppingOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg transition-colors">✕</button>
              </div>
              
-             <div className={`p-2 border-b flex justify-end ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
+<div className={`p-2 border-b flex justify-between items-center ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
+                <select value={dashShoppingFilterTheme} onChange={e => setDashShoppingFilterTheme(e.target.value)} className={`w-24 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1 text-[9px] font-bold outline-none rounded-md shadow-sm transition-colors duration-300`}>
+                   <option value="all">테마 전체</option>
+                   <option value="쇼핑">쇼핑</option>
+                   <option value="식당">식당</option>
+                   <option value="관광지">관광지</option>
+                   <option value="숙소">숙소</option>
+                   <option value="기타">기타</option>
+                </select>
                 <label className="flex items-center space-x-1.5 cursor-pointer group">
                   <input type="checkbox" checked={dashShowAllShopping} onChange={e => setDashShowAllShopping(e.target.checked)} className="accent-pink-500 w-3 h-3 cursor-pointer" />
-                  <span className={`text-[10px] font-bold ${textMuted}`}>전체 일정 보기</span>
+                  <span className={`text-[10px] font-bold ${textMuted}`}>모든 Day 보기</span>
                 </label>
              </div>
 
@@ -2658,8 +2769,8 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                 )}
                 
                 {(() => {
-                  const displayedList = dashShowAllShopping ? shoppingList : shoppingList.filter(item => String(item.day) === String(dashboardDay) || !item.day);
-                  
+                  const baseDisplayedList = dashShowAllShopping ? shoppingList : shoppingList.filter(item => String(item.day) === String(dashboardDay) || !item.day);
+                  const displayedList = dashShoppingFilterTheme === 'all' ? baseDisplayedList : baseDisplayedList.filter(item => item.theme === dashShoppingFilterTheme);
                   if (shoppingList.length > 0 && displayedList.length === 0) {
                      return <p className="text-center text-[10px] text-slate-400 font-bold py-5">현재 일차(Day {dashboardDay})에 등록된 쇼핑 항목이 없습니다.<br/>'전체 일정 보기'를 체크해 보세요.</p>;
                   }
@@ -2688,8 +2799,10 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                                         const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
                                         setShoppingList(newList); saveToDb({ shopping_list: newList });
                                     }} className={`cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-pink-900/20 border-pink-500/30 text-pink-300 hover:bg-pink-900/40' : 'bg-white border-pink-200 text-pink-700 hover:bg-pink-50')}`}>
-                                      <input type="checkbox" checked={item.isChecked} readOnly className="accent-pink-500 w-3 h-3 mr-1.5 pointer-events-none" />
-                                      <span className={`text-[11px] font-bold truncate max-w-[250px]`}>{item.text}</span>
+<div className={`w-4 h-4 mr-1.5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all duration-300 ${item.isChecked ? 'bg-pink-500 border-pink-500 scale-110' : 'border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700'}`}>
+                                        {item.isChecked && <span className="text-white text-[10px] font-black leading-none mt-0.5">✓</span>}
+                                      </div>
+                                      <input type="checkbox" checked={item.isChecked} readOnly className="hidden" />                                      <span className={`text-[11px] font-bold truncate max-w-[250px]`}>{item.text}</span>
                                     </div>
                                  ))}
                               </div>
@@ -2764,11 +2877,78 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                 </div>
               )}
               
-              {selectedPlanInfo.features ? (
-                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">{S(selectedPlanInfo.features)}</p>
-              ) : (
-                <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
-              )}
+<div className="flex justify-between items-center mt-3 mb-1">
+              <span className="text-[11px] font-black text-slate-700 dark:text-slate-300">📝 기록된 메모</span>
+              <button onClick={() => {
+                setIsSettleMode(!isSettleMode);
+                setSettleLocal(selectedPlanInfo.expenseLocal || "");
+                setSettleKrw(selectedPlanInfo.expenseKrw || "");
+              }} className="bg-rose-50 text-rose-500 border border-rose-200 dark:bg-rose-900/30 dark:border-rose-800 dark:text-rose-400 px-2 py-1 rounded-md text-[9px] font-bold shadow-sm hover:bg-rose-100 transition-colors">
+                {isSettleMode ? '취소' : '💸 정산 입력'}
+              </button>
+            </div>
+
+            {selectedPlanInfo.features ? (
+              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">{S(selectedPlanInfo.features)}</p>
+            ) : (
+              <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
+            )}
+
+            {isSettleMode ? (
+              <div className={`mt-3 p-3 rounded-xl border shadow-inner ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex space-x-2 mb-2">
+<div className="flex-1">
+                    <label className="text-[9px] font-bold text-slate-500 mb-1 flex justify-between"><span>현지 지출액</span><span className="text-indigo-400">자동환전 ✨</span></label>
+                    <input type="number" placeholder="예: 100" value={settleLocal} onChange={e => {
+                      const val = e.target.value;
+                      setSettleLocal(val);
+                      if(val && !isNaN(val)) {
+                        let curCode = 'USD';
+                        const c = selectedPlanInfo.country;
+                        if (c === '한국') curCode = 'KRW';
+                        else if (c === '일본') curCode = 'JPY';
+                        else if (['프랑스', '이탈리아', '스페인', '독일'].includes(c)) curCode = 'EUR';
+                        else if (c === '중국') curCode = 'CNY';
+                        else if (c === '영국') curCode = 'GBP';
+                        else if (c === '호주') curCode = 'AUD';
+                        
+                        const rate = rates[curCode] || 1;
+                        const krwRate = rates['KRW'] || 1350;
+                        const krwVal = val * (krwRate / rate);
+                        setSettleKrw(Math.round(krwVal));
+                      } else {
+                        setSettleKrw("");
+                      }
+                    }} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[9px] font-bold text-slate-500 mb-1 block">원화 환산액</label>
+                    <input type="number" placeholder="예: 15000" value={settleKrw} onChange={e => setSettleKrw(e.target.value)} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
+                  </div>
+                </div>
+                <button onClick={() => {
+                  const updatedTimeline = planTimeline.map(p => String(p.id) === String(selectedPlanInfo.id) ? { ...p, expenseLocal: settleLocal, expenseKrw: settleKrw } : p);
+                  setPlanTimeline(updatedTimeline);
+                  saveToDb({ plan_timeline: updatedTimeline });
+                  setSelectedPlanInfo({ ...selectedPlanInfo, expenseLocal: settleLocal, expenseKrw: settleKrw });
+                  setIsSettleMode(false);
+                  showToast("정산 금액이 완벽하게 저장되었습니다! 💸");
+                }} className="w-full bg-rose-500 text-white py-2 rounded-md text-xs font-bold shadow-sm hover:bg-rose-600 transition-colors">저장하기</button>
+              </div>
+            ) : (
+              (selectedPlanInfo.expenseLocal || selectedPlanInfo.expenseKrw) && (
+                <div className={`mt-3 p-3 rounded-xl border ${isDarkMode ? 'bg-rose-900/20 border-rose-800' : 'bg-rose-50 border-rose-100'}`}>
+                  <h4 className="text-[11px] font-black text-rose-500 mb-1 flex justify-between items-center">
+                    <span>💸 지출 내역</span>
+                    {selectedPlanInfo.theme && <span className="text-[9px] bg-rose-100 text-rose-600 dark:bg-rose-800 dark:text-rose-300 px-1.5 py-0.5 rounded">{selectedPlanInfo.theme}</span>}
+                  </h4>
+                  <div className="flex justify-between items-center text-xs font-bold text-rose-600 dark:text-rose-400">
+                    <span>현지: {selectedPlanInfo.expenseLocal ? Number(selectedPlanInfo.expenseLocal).toLocaleString() : 0}</span>
+                    <span>원화: {selectedPlanInfo.expenseKrw ? Number(selectedPlanInfo.expenseKrw).toLocaleString() + '원' : '0원'}</span>
+                  </div>
+                </div>
+              )
+            )}
                {(selectedPlanInfo.expenseLocal || selectedPlanInfo.expenseKrw) && (
                 <div className={`mt-3 p-3 rounded-xl border ${isDarkMode ? 'bg-rose-900/20 border-rose-800' : 'bg-rose-50 border-rose-100'}`}>
                   <h4 className="text-[11px] font-black text-rose-500 mb-1 flex justify-between items-center">
@@ -2982,27 +3162,18 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                   <input type="text" placeholder="간단한 메모" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
                 </div>
               </div>
-                            {/* 지출 및 테마 입력란 (신규) */}
-              <div className="flex space-x-2 items-end">
-                <div className="flex flex-col space-y-1 w-1/3">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>테마</label>
-                  <select value={S(editingPlan.theme || "기타")} onChange={e => setEditingPlan({...editingPlan, theme: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`}>
-                    <option value="교통편">교통편</option>
-                    <option value="식당">식당</option>
-                    <option value="디저트">디저트</option>
-                    <option value="관광지">관광지</option>
-                    <option value="쇼핑">쇼핑</option>
-                    <option value="기타">기타</option>
-                  </select>
-                </div>
-                <div className="flex flex-col space-y-1 w-1/3">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지 지출액</label>
-                  <input type="number" placeholder="예: 100" value={editingPlan.expenseLocal || ""} onChange={e => setEditingPlan({...editingPlan, expenseLocal: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
-                </div>
-                <div className="flex flex-col space-y-1 w-1/3">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>원화 환산액</label>
-                  <input type="number" placeholder="예: 15000" value={editingPlan.expenseKrw || ""} onChange={e => setEditingPlan({...editingPlan, expenseKrw: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
-                </div>
+{/* 테마 필수 지정란 (지출 입력은 상세 팝업으로 분리됨) */}
+              <div className="flex flex-col space-y-1 w-full mb-3">
+                <label className={`text-[9px] font-bold ${textMuted} px-1`}>테마 분류 (필수 📌)</label>
+                <select value={S(editingPlan.theme || "기타")} onChange={e => setEditingPlan({...editingPlan, theme: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`}>
+                  <option value="교통편">교통편 🚌</option>
+                  <option value="식당">식당 🍽️</option>
+                  <option value="디저트">디저트 🍰</option>
+                  <option value="관광지">관광지 📸</option>
+<option value="쇼핑">쇼핑 🛍️</option>
+                <option value="숙소">숙소 🏠</option>
+                <option value="기타">기타 📌</option>
+                </select>
               </div>
 
               <div className="flex flex-col space-y-1 w-full">
@@ -3080,8 +3251,9 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                   <option value="식당">식당 🍽️</option>
                   <option value="디저트">디저트 🍰</option>
                   <option value="관광지">관광지 📸</option>
-                  <option value="쇼핑">쇼핑 🛍️</option>
-                  <option value="기타">기타 📌</option>
+<option value="쇼핑">쇼핑 🛍️</option>
+                <option value="숙소">숙소 🏠</option>
+                <option value="기타">기타 📌</option>
                 </select>
               </div>
                 <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 이름 (필수)</label>
@@ -3218,8 +3390,9 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                     <option value="식당">식당 🍽️</option>
                     <option value="디저트">디저트 🍰</option>
                     <option value="관광지">관광지 📸</option>
-                    <option value="쇼핑">쇼핑 🛍️</option>
-                    <option value="기타">기타 📌</option>
+<option value="쇼핑">쇼핑 🛍️</option>
+                <option value="숙소">숙소 🏠</option>
+                <option value="기타">기타 📌</option>
                  </select>
               </div>
 
@@ -3416,9 +3589,9 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                   <span>AI 번역기</span>
                 </button>
                 <button onClick={() => setIsExpenseModalOpen(true)} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-rose-900/50 text-rose-400 border border-rose-700 hover:bg-rose-900/70' : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'}`}>
-                  <span className="text-xs">💸</span>
-                  <span className="hidden sm:inline">총 지출 내역</span>
-                  <span className="sm:hidden">지출</span>
+                  <span className="text-xs">💸</span> 
+              <span className="hidden sm:inline">여행정산</span>
+              <span className="sm:hidden">정산</span>
                 </button>
               </div>
             </div>
@@ -3454,7 +3627,7 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                     </div>
                   </div>
                   <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-1.5">
-                    <div className="flex items-center justify-between w-full">
+<div className="flex items-center justify-between w-full">
                       <h3 className={`text-[10px] sm:text-xs font-bold tracking-tight leading-tight truncate mr-1 transition-colors duration-300 ${textMain}`}>🎒 오늘의 계획</h3>
                       <div className="flex space-x-1 flex-shrink-0">
                         <button onClick={() => setIsDashboardPackingOpen(true)} className={`px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>🎒 준비물</button>
@@ -3529,53 +3702,16 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                           {plan.features && <span className={`text-[6px] sm:text-[9px] truncate mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</span>}
                         </div>
                         
-                        {/* 모바일 탭 & PC 호버 수정/삭제 메뉴 */}
-                        <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                           <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1 transition-colors"><span className="text-xs">✏️</span></button>
-                           <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1 transition-colors"><span className="text-xs">🗑️</span></button>
+{/* 오늘의 계획 전용: 카드 내부 우측 가로 배치 메뉴 */}
+                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-row space-x-1.5 p-1 rounded-lg border shadow-md bg-white/95 dark:bg-slate-800/95 border-slate-200 dark:border-slate-600 z-10 transition-all duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none'}`}>
+                            <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1.5 transition-colors active:scale-90"><span className="text-[10px]">✏️</span></button>
+                            <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1.5 transition-colors active:scale-90"><span className="text-[10px]">🗑️</span></button>
                         </div>
                       </div>
                     )})
                   )}
                 </div>
-                                {/* --- 준비물 & 쇼핑리스트 대시보드 뷰 --- */}
-                <div className="grid grid-cols-2 gap-2 mt-2 flex-shrink-0">
-                  <div className={`p-2 rounded-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                    <h4 className="text-[10px] font-black mb-1.5 flex justify-between items-center text-emerald-500">
-                      <span>🎒 준비물</span>
-                    </h4>
-                    <div className="max-h-24 overflow-y-auto custom-scrollbar space-y-1 pr-1">
-                      {packingList.length === 0 && <p className="text-[8px] text-slate-400">등록된 항목이 없습니다.</p>}
-                      {packingList.map(item => (
-                        <label key={item.id} className="flex items-center space-x-1.5 cursor-pointer group">
-                          <input type="checkbox" checked={item.isChecked} onChange={() => togglePackingItem(item.id)} className="accent-emerald-500 w-3 h-3 flex-shrink-0 cursor-pointer" />
-                          <span className={`text-[9px] font-bold truncate transition-all ${item.isChecked ? 'line-through text-slate-400' : (isDarkMode ? 'text-slate-300' : 'text-slate-600')}`}>{item.text}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  <div className={`p-2 rounded-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                    <h4 className="text-[10px] font-black mb-1.5 flex justify-between items-center text-pink-500">
-                      <span>🛍️ 쇼핑리스트</span>
-                    </h4>
-                    <div className="max-h-24 overflow-y-auto custom-scrollbar space-y-1 pr-1">
-                      {shoppingList.length === 0 && <p className="text-[8px] text-slate-400">등록된 항목이 없습니다.</p>}
-                      {shoppingList.map(item => (
-                        <label key={item.id} className="flex items-center space-x-1.5 cursor-pointer group">
-                          <input type="checkbox" checked={item.isChecked} onChange={() => {
-                            const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
-                            setShoppingList(newList); saveToDb({ shopping_list: newList });
-                          }} className="accent-pink-500 w-3 h-3 flex-shrink-0 cursor-pointer" />
-                          <span className={`text-[9px] font-bold truncate transition-all flex flex-col ${item.isChecked ? 'line-through text-slate-400' : (isDarkMode ? 'text-slate-300' : 'text-slate-600')}`}>
-                            <span>{item.text}</span>
-                            {item.linkedPlace && <span className="text-[7px] text-pink-400 truncate">@{item.linkedPlace}</span>}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+{/* 대시보드 하단 요약 뷰는 상단 탭 모달로 깔끔하게 통합되었습니다. */}
               </div>
 
               {/* Drag Handle */}
@@ -3643,7 +3779,7 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                           </div>
                           
                           {/* 모바일 탭 & PC 호버 수정/삭제 메뉴 */}
-                          <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
+                          <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-col space-y-1 rounded-lg border shadow-md p-0.5 z-10 transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
                              <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1 transition-colors"><span className="text-xs">✏️</span></button>
                              <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1 transition-colors"><span className="text-xs">🗑️</span></button>
                           </div>
@@ -3778,12 +3914,25 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                     </div>
                   </div>
 
-                  <div className="flex space-x-2 items-end">
-                    <div className="flex flex-col space-y-1 w-1/3">
-                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>시간 ⏰</label>
-                      <input 
-                        type="text" 
-                        maxLength="5" 
+               <div className="flex space-x-2 items-end">
+                <div className="flex flex-col space-y-1 w-1/4">
+                  <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>테마 📌</label>
+                  <select value={newTheme} onChange={e => setNewTheme(e.target.value)} className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}>
+                    <option value="교통편">교통편</option>
+                    <option value="식당">식당</option>
+                    <option value="디저트">디저트</option>
+                    <option value="관광지">관광지</option>
+                    <option value="쇼핑">쇼핑</option>
+                    <option value="숙소">숙소</option>
+                    <option value="기타">기타</option>
+                  </select>
+                </div>
+                <div className="flex flex-col space-y-1 w-1/4">
+                  <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>시간 ⏰</label>
+                  <input 
+                    type="text" 
+                    maxLength="5"
+
                         value={newTime} 
                         onChange={(e) => handleTimeInput(e, setNewTime)} 
                         placeholder="09:00" 
@@ -3872,8 +4021,7 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                                  onClick={(e) => { e.stopPropagation(); if(isActive){setSelectedPlanInfo(plan); setActiveMobileCard(null);}else setActiveMobileCard(plan.id); }}>
                                <div className="flex justify-between items-start mb-1">
                                  <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 연박 숙소</span>
-                                 <div className={`absolute right-1 top-1 flex space-x-1 rounded border shadow-sm bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-opacity duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
+                                  <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-col space-y-1 p-0.5 rounded-lg border shadow-md bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-all duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
                                    <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
                                  </div>
                                </div>
