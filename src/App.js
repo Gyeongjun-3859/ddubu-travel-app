@@ -295,7 +295,6 @@ const MainApp = () => {
 
   const [flights, setFlights] = useState({ outbound: null, inbound: null });
   const [packingList, setPackingList] = useState([]);
-  const [isPackingModalOpen, setIsPackingModalOpen] = useState(false);
   const [isDashboardPackingOpen, setIsDashboardPackingOpen] = useState(false);
   const [expenseFilterDay, setExpenseFilterDay] = useState('all');
   const [expenseFilterTheme, setExpenseFilterTheme] = useState('all'); 
@@ -326,10 +325,12 @@ const MainApp = () => {
   const dragRef = useRef(false);
 
   const [activeMobileCard, setActiveMobileCard] = useState(null);
-  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false); 
+// [정리 완료] 중복 선언을 제거하고 하나로 합쳤습니다.
+// [정리 완료] 중복 선언 에러 해결: 변수들을 하나씩만 정의했습니다.
+  const [isPackingModalOpen, setIsPackingModalOpen] = useState(false);
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [archiveFilterYear, setArchiveFilterYear] = useState('all');
-  const [archiveFilterLocation, setArchiveFilterLocation] = useState('all'); // 국내/해외 필터
-
+  const [archiveFilterLocation, setArchiveFilterLocation] = useState('all');
   const isDarkMode = appTheme === 'dark';
 
   const DAY_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#a855f7', '#ec4899', '#06b6d4', '#f97316', '#8b5cf6'];
@@ -776,8 +777,9 @@ const saveToDb = useCallback(async (updates) => {
     await supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId);
   }
 
-  async function confirmDeleteTrip() {
-    if (trips.length <= 1) {
+async function confirmDeleteTrip() {
+  if (!window.confirm("이 여행 데이터를 내 목록에서 정말 삭제(또는 나가기) 하시겠습니까?")) return;
+  if (trips.length <= 1) {
         showToast("최소 1개의 여행 일정은 남겨두어야 합니다.");
         setTripToDelete(null);
         return;
@@ -1243,10 +1245,12 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
 console.log("✏️ [디버깅] 모달창 열림. 불러온 기존 데이터:", p); // 디버깅 로그 추가
     setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || ""), theme: S(p.theme || "기타") });  }
   
-  function handleDeletePlan(id) {
-    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+function handleDeletePlan(id) {
+  if (!window.confirm("이 일정을 정말 삭제하시겠습니까?")) return;
+  const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     const updated = safePlanTimeline.filter(p => p && S(p.id) !== S(id)); 
     setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+    showToast("일정이 삭제되었습니다.");
   }
   
   function resetPlanForm() { 
@@ -1423,8 +1427,9 @@ function handleAddPackingItem(e) {
     setPackingList(newList);
     saveToDb({ packing_list: newList });
   }
-  function deletePackingItem(id) {
-    const newList = packingList.filter(item => item.id !== id);
+function deletePackingItem(id) {
+  if (!window.confirm("이 준비물을 목록에서 정말 삭제하시겠습니까?")) return;
+  const newList = packingList.filter(item => item.id !== id);
     setPackingList(newList);
     saveToDb({ packing_list: newList });
   }
@@ -1618,10 +1623,16 @@ function handleAddPackingItem(e) {
     const diffTime = todayDate.getTime() - start.getTime();
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
     
-    const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
-    if (diffDays >= 1 && diffDays <= safeMax) {
-      setDashboardDay(diffDays);
+const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
+    // [스마트 Day 자동 인식 로직]
+    if (diffDays < 1) {
+      setDashboardDay(1); // 여행 전이면 무조건 Day 1
+    } else if (diffDays > safeMax) {
+      setDashboardDay(safeMax); // 여행 후면 마지막 Day 고정
+    } else {
+      setDashboardDay(diffDays); // 여행 중이면 해당 일차 표시
     }
+    console.log(`📅 오늘 날짜를 분석하여 Day ${dashboardDay}를 자동으로 활성화했습니다.`);
   }, [travelStartDate, maxDay]);
 
   useEffect(() => {
@@ -1906,12 +1917,8 @@ function handleAddPackingItem(e) {
        });
     }
 
-    const filteredRestaurants = safeCurrentRestaurants.filter(rest => {
-      if (mapActiveDays.includes('all')) return true;
-      const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(rest.name));
-      if (!linkedPlan) return mapActiveDays.includes('unlinked');
-      return mapActiveDays.includes(parseInt(linkedPlan.day));
-    });
+// [지도 마커 필터링 수정] Day와 테마 필터링이 모두 적용된 filteredMyPins 변수를 참조하도록 변경
+    const filteredRestaurants = filteredMyPins;
 
     filteredRestaurants.forEach((rest) => {
       if (!rest || !rest.lat || !rest.lng) return;
@@ -1975,45 +1982,32 @@ function handleAddPackingItem(e) {
     ? safeCurrentRestaurants.filter(r => r && S(r.name).toLowerCase().includes(S(markerSearchQuery).toLowerCase())) : safeCurrentRestaurants;
   
 // [NEW] 내 핀 목록 탭 필터링 로직 (스마트 룩업: 일정표 데이터와 실시간 연동)
+// [교차 필터링 버그 수정 완료] 일정표(Plan)를 실시간으로 역추적하여 테마를 매칭합니다.
 const filteredMyPins = filteredMarkers.filter(pin => {
   const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
   const pinNameClean = S(pin.name).trim();
-  
-  // 이 핀이 일정표의 어떤 일정들과 연결되어 있는지 모두 찾습니다 (장소 이름 기준)
   const linkedPlans = safeTimeline.filter(p => S(p.place).trim() === pinNameClean);
   
-  // 1. [Day 필터링]
+  // 1. [Day 필터]
   let passDay = true;
   if (myPinsFilter !== 'all') {
-    if (myPinsFilter === 'unlinked') {
-      passDay = linkedPlans.length === 0;
-    } else {
-      // 선택한 Day에 이 장소가 포함되어 있는지 확인
-      passDay = linkedPlans.some(p => parseInt(p.day) === parseInt(myPinsFilter));
-    }
+    if (myPinsFilter === 'unlinked') passDay = linkedPlans.length === 0;
+    else passDay = linkedPlans.some(p => parseInt(p.day) === parseInt(myPinsFilter));
   }
 
-  // 2. [테마 필터링 - 스마트 룩업 적용]
+  // 2. [테마 필터 - 스마트 룩업]
   let passTheme = true;
   if (myPinsThemeFilter !== 'all') {
-    // [우선순위] 1. 일정표에 등록된 테마 -> 2. 핀 자체에 저장된 테마 -> 3. 없으면 '기타'
-    let effectiveTheme = "기타";
-    if (linkedPlans.length > 0 && linkedPlans[0].theme) {
-      effectiveTheme = linkedPlans[0].theme;
-    } else if (pin.theme) {
-      effectiveTheme = pin.theme;
-    }
-    
-    // 이모지 및 특수문자 제거 후 순수 글자만 비교 (정확도 100%)
-    const rawEffectiveTheme = S(effectiveTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
+    // 일정표 테마가 1순위, 핀 테마가 2순위
+    const effectiveTheme = linkedPlans[0]?.theme || pin.theme || "기타";
+    const rawPinTheme = S(effectiveTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
     const rawFilterTheme = S(myPinsThemeFilter).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
-    
-    passTheme = (rawEffectiveTheme === rawFilterTheme);
+    passTheme = (rawPinTheme === rawFilterTheme);
   }
 
-  // Day 조건과 테마 조건을 모두 만족(AND)해야만 리스트에 표시합니다.
   return passDay && passTheme;
 });
+console.log("✅ 필터링된 데이터 개수:", filteredMyPins.length, filteredMyPins);
 
 // [개발자 도구 확인용 로그] 현재 불러온 전체 핀과 필터링된 결과 확인
 console.log("✅ 현재 핀 전체 데이터:", currentRestaurants);
@@ -3307,10 +3301,28 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                   <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어(복사용)</label>
                   <input type="text" placeholder="현지어 입력" value={S(editingPlan.localName)} onChange={(e) => setEditingPlan({...editingPlan, localName: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
                 </div>
-                <div className="flex flex-col space-y-1 flex-1">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모</label>
-                  <input type="text" placeholder="간단한 메모" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
+<div className="flex flex-col space-y-1 flex-1">
+                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모 📝</label>
+                  <input type="text" placeholder="메모 입력" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold rounded outline-none transition-all duration-300`} />
                 </div>
+              </div>
+
+              {/* [NEW] 테마 분류 선택 드롭다운 추가 */}
+              <div className="flex flex-col space-y-1 w-full mb-1">
+                <label className={`text-[9px] font-bold ${textMuted} px-1`}>테마 분류 📌</label>
+                <select 
+                  value={S(editingPlan.theme || "기타")} 
+                  onChange={e => setEditingPlan({...editingPlan, theme: e.target.value})} 
+                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg outline-none cursor-pointer transition-all duration-300`}
+                >
+                  <option value="교통">교통 🚌</option>
+                  <option value="식당">식당 🍽️</option>
+                  <option value="디저트">디저트 🍰</option>
+                  <option value="관광지">관광지 📸</option>
+                  <option value="쇼핑">쇼핑 🛍️</option>
+                  <option value="숙소">숙소 🏠</option>
+                  <option value="기타">기타 📌</option>
+                </select>
               </div>
 {/* 테마 필수 지정란 (지출 입력은 상세 팝업으로 분리됨) */}
               <div className="flex flex-col space-y-1 w-full mb-3">
@@ -3342,13 +3354,14 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                 <button onClick={() => {
                   const finalCountry = editingPlan.countrySelect === "수동입력" ? editingPlan.manualCountry : editingPlan.countrySelect;
                   const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
-                  const planData = { ...editingPlan, country: finalCountry, region: finalRegion };
+// [저장 로직 수정] 테마(theme) 데이터가 핀 목록에도 저장되도록 강제 연동합니다.
+                  const planData = { ...editingPlan, country: finalCountry, region: finalRegion, theme: editingPlan.theme || "기타" };
                   
                   const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
                   let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
                   
                   const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
-                  const matchedIndex = safeCurrentRestaurants.findIndex(r => r && S(r.name) === S(editingPlan.place));
+                  const matchedIndex = safeCurrentRestaurants.findIndex(r => r && S(r.name).trim() === S(editingPlan.place).trim());
                   let dbUpdates = { plan_timeline: updatedTimeline };
                   
                   if (matchedIndex !== -1) {
@@ -3358,9 +3371,11 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                           localName: editingPlan.localName ? S(editingPlan.localName) : updatedRests[matchedIndex].localName,
                           signature: editingPlan.features ? S(editingPlan.features) : updatedRests[matchedIndex].signature,
                           img: editingPlan.photo ? S(editingPlan.photo) : updatedRests[matchedIndex].img,
-                          isAccommodation: editingPlan.isAccommodation ? true : updatedRests[matchedIndex].isAccommodation
+                          isAccommodation: editingPlan.isAccommodation || editingPlan.theme === "숙소",
+                          theme: editingPlan.theme || "기타" // 핀 데이터에 테마 저장!
                       };
                       setCurrentRestaurants(updatedRests);
+                      dbUpdates.current_restaurants = updatedRests;
                       dbUpdates.current_restaurants = updatedRests;
                   }
                   
@@ -4279,16 +4294,26 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
             <div className="flex flex-col gap-2 mb-2 flex-shrink-0 relative z-20">
               
               {/* 필터 및 색상 동기화 패널 */}
-              <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 w-full max-w-full scroll-smooth">
-                 <button onClick={() => toggleMapDay('all')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 ${mapActiveDays.includes('all') ? (isDarkMode ? 'bg-indigo-500 text-white border-indigo-500 shadow-md' : 'bg-slate-800 text-white shadow-md border-slate-800') : (isDarkMode ? 'bg-slate-800 text-slate-300 border border-slate-600' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50')}`}>전체보기</button>
-                 {tripDays.map(d => {
-                   const color = getDayColor(d);
-                   const isActive = mapActiveDays.includes(d);
-                   return (
-                     <button key={d} onClick={() => toggleMapDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all duration-300 ${isActive ? 'shadow-md scale-105' : 'hover:opacity-80'}`}>Day {d}</button>
-                   )
-                 })}
-                 <button onClick={() => toggleMapDay('unlinked')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 border ${mapActiveDays.includes('unlinked') ? 'bg-slate-500 text-white shadow-md border-slate-500' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-600' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
+<div className="flex flex-col space-y-2 pb-1">
+                {/* [Day 필터] */}
+                <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
+                   <button onClick={() => toggleMapDay('all')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 ${mapActiveDays.includes('all') ? (isDarkMode ? 'bg-indigo-500 text-white border-indigo-500 shadow-md' : 'bg-slate-800 text-white shadow-md border-slate-800') : (isDarkMode ? 'bg-slate-800 text-slate-300 border border-slate-600' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50')}`}>전체 Day</button>
+                   {tripDays.map(d => {
+                     const color = getDayColor(d);
+                     const isActive = mapActiveDays.includes(d);
+                     return (
+                       <button key={d} onClick={() => toggleMapDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all duration-300 ${isActive ? 'shadow-md scale-105' : 'hover:opacity-80'}`}>Day {d}</button>
+                     )
+                   })}
+                </div>
+                {/* [테마 필터 - 신설] */}
+                <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
+                   {['all', '교통편', '식당', '디저트', '관광지', '쇼핑', '숙소', '기타'].map(t => (
+                     <button key={t} onClick={() => setMyPinsThemeFilter(t)} className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${myPinsThemeFilter === t ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200')}`}>
+                       {t === 'all' ? '테마 전체' : t}
+                     </button>
+                   ))}
+                </div>
               </div>
 
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
