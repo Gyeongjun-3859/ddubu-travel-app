@@ -508,15 +508,34 @@ const MainApp = () => {
     }
   }
 
-  const fetchWeatherData = useCallback(async (cityName) => {
-    if (!cityName || cityName === "선택된 지역 없음" || cityName === "글로벌") {
-      setWeather(null); setForecast([]); return;
+const fetchWeatherData = useCallback(async (cityName) => {
+    console.log("🌤️ [1] 날씨 호출 시작. 타겟 지역:", cityName);
+    
+    // 객체 충돌 방지 및 문자열 변환
+    const safeCityName = typeof cityName === 'string' ? cityName : S(cityName);
+
+    if (!safeCityName || safeCityName === "선택된 지역 없음" || safeCityName === "글로벌" || safeCityName === "수동입력") {
+      setWeather(null); setForecast([]); 
+      console.log("🚨 [2] 유효하지 않은 지역명으로 호출 중단됨.");
+      return;
     }
+
     try {
-      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(S(cityName))}&limit=1`);
+      console.log(`🌤️ [3] '${safeCityName}' 좌표 검색 중...`);
+      // 한/영 인식률을 높이기 위해 accept-language 파라미터 추가
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(safeCityName)}&limit=1&accept-language=ko,en`);
       const geoData = await geoRes.json();
-      if (!geoData.length) return;
+
+      // [핵심 버그 수정] 좌표를 못 찾았을 때 조용히 죽는 문제 해결
+      if (!geoData || geoData.length === 0) {
+          console.warn(`🚨 [4] 에러: '${safeCityName}'의 위도/경도 좌표를 찾을 수 없습니다! (영어로 적거나 지역명을 변경해보세요)`);
+          setWeather(null); 
+          setForecast([]); 
+          return;
+      }
+
       const { lat, lon } = geoData[0];
+      console.log(`🌤️ [5] 좌표 획득 성공! 위도:${lat}, 경도:${lon}. 날씨 API 요청 시작.`);
 
       if (mapInstanceRef.current) {
           mapInstanceRef.current.flyTo([parseFloat(lat), parseFloat(lon)], 13);
@@ -525,13 +544,19 @@ const MainApp = () => {
       const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=16`);
       const wData = await wRes.json();
       
+      console.log("🌤️ [6] 날씨 API 응답 성공 데이터:", wData); 
+      
       if (wData.current) setWeather({ temp: Math.round(wData.current.temperature_2m), code: wData.current.weather_code });
+      
       if (wData.daily && Array.isArray(wData.daily.time)) {
         setForecast(wData.daily.time.map((t, i) => ({
           date: S(t), code: wData.daily.weather_code[i], max: Math.round(wData.daily.temperature_2m_max[i]), min: Math.round(wData.daily.temperature_2m_min[i])
         })));
+        console.log("🌤️ [7] 화면에 날씨 데이터 세팅 완료!");
       }
-    } catch (e) { console.error("Weather error", e); }
+    } catch (e) { 
+      console.error("🚨 [8] 치명적 에러 발생:", e); 
+    }
   }, []);
 
     // [NEW] 특정 지역의 시간대별 날씨를 캐싱 및 호출
@@ -575,7 +600,8 @@ const MainApp = () => {
       setIsLoadingHourly(false);
   };
 
-  const saveToDb = useCallback(async (updates) => {
+const saveToDb = useCallback(async (updates) => {
+    console.log("💾 [DB 저장] Supabase로 전송되는 최종 Payload 데이터:", updates);
     const targetId = activeTripId;
     try {
       const allStr = localStorage.getItem('my_travel_states') || '{}';
@@ -1070,6 +1096,7 @@ const MainApp = () => {
       setPlanTimeline(updatedTimeline);
     }
 
+console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests);
     saveToDb({ current_restaurants: updatedRests, plan_timeline: updatedTimeline });
 
     if (isFromMap) {
@@ -1213,8 +1240,8 @@ const MainApp = () => {
     const isStandardCountry = Object.keys(REGIONS_BY_COUNTRY).includes(c) || c === "";
     const isStandardRegion = (isStandardCountry && c && REGIONS_BY_COUNTRY[c]?.includes(r)) || r === "";
     
-    setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || "") });
-  }
+console.log("✏️ [디버깅] 모달창 열림. 불러온 기존 데이터:", p); // 디버깅 로그 추가
+    setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || ""), theme: S(p.theme || "기타") });  }
   
   function handleDeletePlan(id) {
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
@@ -1379,10 +1406,12 @@ const MainApp = () => {
     showToast(`${dir === 'outbound' ? '가는 편' : '오는 편'} 항공권이 삭제되었습니다.`);
   }
 
-  function handleAddPackingItem(e) {
+function handleAddPackingItem(e) {
     if (e.nativeEvent.isComposing) return; 
     if (e.key === 'Enter' && e.target.value.trim()) {
-      const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false };
+      // 개인용/공동용 여부 확인 (화면에 추가될 select 박스 활용)
+      const isPersonal = document.getElementById('packType')?.value === 'personal';
+      const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false, isPersonal: isPersonal, userId: appUserId };
       const newList = [...packingList, newItem];
       setPackingList(newList);
       saveToDb({ packing_list: newList });
@@ -1493,12 +1522,10 @@ const MainApp = () => {
               setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
               
               if (Array.isArray(data.current_restaurants)) {
-                setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark) })));
-              } else { setCurrentRestaurants([]); }
+              setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타" })));              } else { setCurrentRestaurants([]); }
               
               if (Array.isArray(data.plan_timeline)) {
-                setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) })));
-              } else { setPlanTimeline([]); }
+               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "" })));              } else { setPlanTimeline([]); }
               
               loaded = true;
             }
@@ -1606,8 +1633,22 @@ const MainApp = () => {
     }
   }, [globalPlanCountry, globalPlanRegion, globalManualCountry, globalManualRegion, editingPlan]);
 
-  useEffect(() => { fetchWeatherData(displayCityName); }, [displayCityName, fetchWeatherData]);
-
+// [NEW] 날씨 데이터 호출 트리거 (전역 지역명 + 개별 일정 지역명 하이브리드 연동)
+  useEffect(() => {
+    console.log("💡 날씨 연동 로직 시작. 현재 전역 지역명:", displayCityName);
+    let targetCity = displayCityName;
+    
+    // 전역 지역명이 없거나 초기 상태일 경우, 회원님의 가설대로 '개별 일정(planTimeline)'에서 지역명 추출
+    if (!targetCity || targetCity === "선택된 지역 없음" || targetCity === "수동입력") {
+      const validPlan = Array.isArray(planTimeline) ? planTimeline.find(p => p && p.region && p.region !== "수동입력" && p.region !== "선택된 지역 없음") : null;
+      if (validPlan) {
+        targetCity = validPlan.region;
+        console.log("💡 [자동 복구 완료] 개별 일정 카드에서 지역명을 찾아 대체합니다:", targetCity);
+      }
+    }
+    
+    fetchWeatherData(targetCity); 
+  }, [displayCityName, planTimeline, fetchWeatherData]);
   useEffect(() => {
     fetchRealTimeRates();
     const interval = setInterval(() => fetchRealTimeRates(false), 300000); 
@@ -1702,12 +1743,10 @@ const MainApp = () => {
           setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
           
           if (Array.isArray(data.current_restaurants)) {
-            setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation) })));
-          } else { setCurrentRestaurants([]); }
+          setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타" })));          } else { setCurrentRestaurants([]); }
           
           if (Array.isArray(data.plan_timeline)) {
-            setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) })));
-          } else { setPlanTimeline([]); }
+          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "" })));          } else { setPlanTimeline([]); }
         } else {
            setDisplayCityName("선택된 지역 없음");
            setCurrentRestaurants([]);
@@ -1746,7 +1785,7 @@ const MainApp = () => {
           }
           
           if (Array.isArray(payload.new.current_restaurants)) {
-            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark) }));
+            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || '기타' }));
             setCurrentRestaurants(cleanRests);
           }
           if (Array.isArray(payload.new.plan_timeline)) {
@@ -1935,25 +1974,53 @@ const MainApp = () => {
   const filteredMarkers = markerSearchQuery 
     ? safeCurrentRestaurants.filter(r => r && S(r.name).toLowerCase().includes(S(markerSearchQuery).toLowerCase())) : safeCurrentRestaurants;
   
-// [NEW] 내 핀 목록 탭 필터링 로직 (Day + Theme 동시 필터 적용)
+// [NEW] 내 핀 목록 탭 필터링 로직 (스마트 룩업: 일정표 데이터와 실시간 연동)
 const filteredMyPins = filteredMarkers.filter(pin => {
-  // 1. Day 필터 검사
+  const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+  const pinNameClean = S(pin.name).trim();
+  
+  // 이 핀이 일정표의 어떤 일정들과 연결되어 있는지 모두 찾습니다 (장소 이름 기준)
+  const linkedPlans = safeTimeline.filter(p => S(p.place).trim() === pinNameClean);
+  
+  // 1. [Day 필터링]
   let passDay = true;
   if (myPinsFilter !== 'all') {
-    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-    const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(pin.name));
-    if (myPinsFilter === 'unlinked') passDay = !linkedPlan;
-    else passDay = linkedPlan && parseInt(linkedPlan.day) === parseInt(myPinsFilter);
+    if (myPinsFilter === 'unlinked') {
+      passDay = linkedPlans.length === 0;
+    } else {
+      // 선택한 Day에 이 장소가 포함되어 있는지 확인
+      passDay = linkedPlans.some(p => parseInt(p.day) === parseInt(myPinsFilter));
+    }
   }
-  
-  // 2. 테마 필터 검사
+
+  // 2. [테마 필터링 - 스마트 룩업 적용]
   let passTheme = true;
   if (myPinsThemeFilter !== 'all') {
-    passTheme = (pin.theme === myPinsThemeFilter);
+    // [우선순위] 1. 일정표에 등록된 테마 -> 2. 핀 자체에 저장된 테마 -> 3. 없으면 '기타'
+    let effectiveTheme = "기타";
+    if (linkedPlans.length > 0 && linkedPlans[0].theme) {
+      effectiveTheme = linkedPlans[0].theme;
+    } else if (pin.theme) {
+      effectiveTheme = pin.theme;
+    }
+    
+    // 이모지 및 특수문자 제거 후 순수 글자만 비교 (정확도 100%)
+    const rawEffectiveTheme = S(effectiveTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
+    const rawFilterTheme = S(myPinsThemeFilter).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
+    
+    passTheme = (rawEffectiveTheme === rawFilterTheme);
   }
-  
+
+  // Day 조건과 테마 조건을 모두 만족(AND)해야만 리스트에 표시합니다.
   return passDay && passTheme;
 });
+
+// [개발자 도구 확인용 로그] 현재 불러온 전체 핀과 필터링된 결과 확인
+console.log("✅ 현재 핀 전체 데이터:", currentRestaurants);
+if (currentRestaurants && currentRestaurants.length > 0) {
+  console.log("🔍 데이터 1개 샘플 구조:", currentRestaurants[0]);
+}
+console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
 
   let appBg = "bg-slate-50", textMain = "text-slate-900", textMuted = "text-slate-500", cardBg = "bg-white border-slate-200 shadow-sm", inputBg = "bg-white text-slate-900 border-slate-200";
   if (appTheme === 'dark') { appBg = "bg-slate-900"; textMain = "text-slate-100"; textMuted = "text-slate-400"; cardBg = "bg-slate-800 border-slate-700"; inputBg = "bg-slate-700 text-white border-slate-600"; }
@@ -2194,47 +2261,6 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                   </button>
                 </div>
 
-                {isArchiveModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsArchiveModalOpen(false)}>
-           <div className={`${cardBg} p-6 rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[80vh]`} onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center mb-4">
-                 <h3 className={`font-black text-sm ${textMain}`}>📁 나의 여행기록 아카이브</h3>
-                 <button onClick={() => setIsArchiveModalOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-              </div>
-
-              {/* 필터링 섹션 */}
-              <div className="flex space-x-2 mb-4">
-                <select value={archiveFilterYear} onChange={e => setArchiveFilterYear(e.target.value)} className={`flex-1 ${inputBg} border p-2 text-[10px] font-bold rounded-lg outline-none`}>
-                  <option value="all">모든 연도</option>
-                  <option value="2026">2026년</option>
-                  <option value="2025">2025년</option>
-                  <option value="2024">2024년</option>
-                </select>
-                <select value={archiveFilterLocation} onChange={e => setArchiveFilterLocation(e.target.value)} className={`flex-1 ${inputBg} border p-2 text-[10px] font-bold rounded-lg outline-none`}>
-                  <option value="all">국내/해외 전체</option>
-                  <option value="domestic">국내 여행 🇰🇷</option>
-                  <option value="overseas">해외 여행 ✈️</option>
-                </select>
-              </div>
-
-              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
-                {trips.filter(t => t.archived).length === 0 ? (
-                  <div className="text-center py-20 text-slate-400 text-xs font-bold">아직 완료된 여행 기록이 없습니다.</div>
-                ) : (
-                  trips.filter(t => t.archived).map(t => (
-                    <div key={t.id} className={`p-3 rounded-xl border flex justify-between items-center ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
-                      <div>
-                        <p className={`text-[11px] font-black ${textMain}`}>{S(t.name)}</p>
-                        <p className="text-[9px] text-slate-500 font-bold mt-1">완료일: {t.finishDate?.split('T')[0] || '기록없음'}</p>
-                      </div>
-                      <button onClick={() => { setActiveTripId(t.id); setIsArchiveModalOpen(false); showToast("과거 여행을 불러왔습니다. (조회 모드)"); }} className="bg-white dark:bg-slate-800 px-3 py-1.5 rounded-lg text-[9px] font-bold shadow-sm border border-slate-200 dark:border-slate-600">열람하기</button>
-                    </div>
-                  ))
-                )}
-              </div>
-           </div>
-        </div>
-      )}
                 <div className="mt-2 grid grid-cols-2 gap-2">
                    <button onClick={openAddTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}>+ 새 여행</button>
                    <button onClick={openRenameTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}>✏️ 이름 변경</button>
@@ -2397,6 +2423,59 @@ const filteredMyPins = filteredMarkers.filter(pin => {
               <button onClick={() => setIsExpenseModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
             </div>
 
+{/* [수정됨] 기타 지출 수동 등록 및 스마트 Day 자동 계산 섹션 */}
+            <div className={`p-3 mb-4 rounded-xl border border-dashed shadow-sm ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-slate-50 border-slate-300'}`}>
+              <h4 className="text-[10px] font-black text-indigo-500 mb-2 flex justify-between items-center">
+                <span>기타 지출 💸</span>
+                <span className="text-[8px] opacity-70 bg-indigo-50 dark:bg-indigo-900/50 px-1.5 py-0.5 rounded">오늘 날짜 자동 연동 ✨</span>
+              </h4>
+              <div className="flex space-x-1.5">
+                <input id="manualExpName" type="text" placeholder="지출 내용 (예: 간식)" className={`flex-[2] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`} />
+                <input id="manualExpAmt" type="number" placeholder="금액" className={`flex-[1] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`} />
+                <button onClick={() => {
+const name = document.getElementById('manualExpName').value;
+                  const amt = document.getElementById('manualExpAmt').value;
+                  if(!name || !amt) { showToast("내용과 금액을 입력하세요."); return; }
+                  
+                  // [국가 기반 자동 환전 및 Day 계산 로직]
+                  let autoDay = 1;
+                  if (travelStartDate) {
+                    const today = new Date(); today.setHours(0,0,0,0);
+                    const start = new Date(travelStartDate); start.setHours(0,0,0,0);
+                    const diff = Math.floor((today - start) / (1000 * 60 * 60 * 24)) + 1;
+                    autoDay = diff < 1 ? 1 : (diff > maxDay ? maxDay : diff);
+                  }
+
+                  // 현재 설정된 지역의 국가 찾기
+                  let targetCountry = "";
+                  for (const [country, regions] of Object.entries(REGIONS_BY_COUNTRY)) {
+                    if (regions.includes(displayCityName)) { targetCountry = country; break; }
+                  }
+                  
+                  let curCode = 'USD';
+                  if (targetCountry === '한국') curCode = 'KRW'; 
+                  else if (targetCountry === '일본') curCode = 'JPY'; 
+                  else if (['프랑스','이탈리아','스페인','독일'].includes(targetCountry)) curCode = 'EUR'; 
+                  else if (targetCountry === '중국') curCode = 'CNY'; 
+                  else if (targetCountry === '미국') curCode = 'USD';
+                  else if (targetCountry === '영국') curCode = 'GBP';
+
+                  const krwVal = Math.round(amt * ((rates['KRW']||1350) / (rates[curCode]||1)));
+                  
+                  const newExp = {
+                      id: "manual-exp-" + Date.now(), day: autoDay, time: "상시", place: `[기타] ${name}`, theme: "기타", 
+                      expenseLocal: amt, expenseKrw: krwVal, isAccommodation: false, isTransport: false,
+                      country: targetCountry // 국가 정보 함께 저장하여 화폐 기호 연동
+                  };
+                  const updatedTimeline = [...planTimeline, newExp];
+                  setPlanTimeline(updatedTimeline);
+                  saveToDb({ plan_timeline: updatedTimeline });
+                  showToast(`Day ${autoDay} 지출이 ${targetCountry} 환율로 기록되었습니다! 💸`);
+                  document.getElementById('manualExpName').value = ''; document.getElementById('manualExpAmt').value = '';
+                }} className="bg-indigo-600 text-white px-3 py-1.5 text-[10px] font-bold rounded-md shadow-sm hover:bg-indigo-700 active:scale-95 transition-all">등록</button>
+              </div>
+            </div>
+
             <div className="flex space-x-2 mb-3">
               <select value={expenseFilterDay} onChange={e => setExpenseFilterDay(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-xs font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
                 <option value="all">모든 일차 (Day 전체)</option>
@@ -2422,31 +2501,66 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                 const totalKrw = fullyFiltered.reduce((sum, p) => sum + (Number(p.expenseKrw) || 0), 0);
                 const totalLocal = fullyFiltered.reduce((sum, p) => sum + (Number(p.expenseLocal) || 0), 0);
 
+const getLocalSym = (c) => {
+                  if (c === '한국') return '₩'; if (c === '일본' || c === '중국') return '¥'; if (['프랑스','이탈리아','스페인','독일'].includes(c)) return '€'; if (c === '영국') return '£'; return '$';
+                };
+
                 return (
-                  <>
-                    <div className={`p-4 rounded-xl mb-3 flex flex-col items-center justify-center border shadow-sm ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-100'}`}>
-                      <span className={`text-[10px] font-bold ${isDarkMode ? 'text-indigo-300' : 'text-indigo-600'} mb-1`}>필터링된 총 지출액</span>
-                      <span className="text-xl font-black text-rose-500 mb-1">{totalKrw.toLocaleString()} <span className="text-sm">원</span></span>
-                      <span className={`text-xs font-bold ${textMuted}`}>현지화: {totalLocal.toLocaleString()}</span>
+                  <div className="flex flex-col h-full">
+                    <div className={`p-4 rounded-2xl mb-4 flex flex-col items-center justify-center border shadow-md transition-all ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-100'}`}>
+                      <span className={`text-[10px] font-black ${isDarkMode ? 'text-indigo-300' : 'text-indigo-600'} mb-1 uppercase tracking-wider`}>Total Expense</span>
+                      <span className="text-2xl font-black text-rose-500 mb-1">₩{totalKrw.toLocaleString()}</span>
+                      <span className={`text-[10px] font-bold ${textMuted}`}>필터링된 지출 합계</span>
                     </div>
 
                     {fullyFiltered.length === 0 ? (
-                      <p className={`text-xs ${textMuted} text-center py-5 font-bold`}>해당하는 지출 내역이 없습니다.</p>
+                      <p className={`text-xs ${textMuted} text-center py-10 font-bold`}>기록된 지출 내역이 없습니다.</p>
                     ) : (
-                      fullyFiltered.map(plan => (
-                        <div key={plan.id} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-                          <div className="flex flex-col min-w-0 pr-2">
-                            <span className={`text-[9px] font-bold ${isDarkMode ? 'text-indigo-400' : 'text-indigo-500'} mb-0.5`}>Day {plan.day} | {plan.theme || '기타'}</span>
-                            <span className={`text-xs font-black truncate ${textMain}`}>{S(plan.place)}</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+{fullyFiltered.map(plan => {
+                          const isCardActive = activeMobileCard === plan.id;
+                          return (
+                          <div key={plan.id} 
+                            onClick={(e) => { e.stopPropagation(); setActiveMobileCard(isCardActive ? null : plan.id); }}
+                            className={`flex flex-col p-2.5 rounded-xl border relative transition-all duration-300 cursor-pointer overflow-hidden ${isCardActive ? 'border-indigo-500 ring-1 ring-indigo-500 bg-indigo-50/10' : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-sm')} hover:shadow-md`}
+                          >
+                            <div className="flex flex-row items-center justify-between mb-2 w-full flex-nowrap">
+                               <div className="flex items-center space-x-1 flex-shrink-0 min-w-0">
+                                 <span className={`text-[7px] font-black px-1.5 py-0.5 rounded-md uppercase whitespace-nowrap ${isDarkMode ? 'bg-indigo-900 text-indigo-300' : 'bg-indigo-600 text-white'}`}>D{plan.day}</span>
+                                 <span className={`text-[8px] font-bold truncate opacity-80 ${textMuted}`}>{plan.theme}</span>
+                               </div>
+                               
+                               {/* [수정됨] 이모지 버튼 & 레이아웃 최적화 */}
+                               <div className={`flex space-x-1 flex-shrink-0 transition-all duration-300 ${isCardActive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                                  <button onClick={(e) => { 
+                                      e.stopPropagation(); 
+                                      setSelectedPlanInfo(plan); setIsExpenseModalOpen(false); setActiveMobileCard(null);
+                                  }} className="text-[11px] bg-indigo-100 dark:bg-indigo-900/50 p-1 rounded-md shadow-sm active:scale-75 transition-transform" title="수정">✏️</button>
+                                  <button onClick={(e) => {
+                                      e.stopPropagation();
+                                      const updated = planTimeline.map(p => String(p.id) === String(plan.id) ? { ...p, expenseLocal: "", expenseKrw: "" } : p);
+                                      setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+                                      setActiveMobileCard(null);
+                                      showToast("지출 내역이 삭제되었습니다.");
+                                  }} className="text-[11px] bg-rose-100 dark:bg-rose-900/50 p-1 rounded-md shadow-sm active:scale-75 transition-transform" title="삭제">🗑️</button>
+                               </div>
+                            </div>
+
+                            <h4 className={`text-[10.5px] font-black truncate mb-2 leading-tight ${textMain}`}>{S(plan.place)}</h4>
+
+                            <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-100 dark:border-slate-700 w-full flex-nowrap gap-1">
+                               <span className={`text-[9px] font-bold whitespace-nowrap overflow-hidden text-ellipsis ${textMuted}`}>
+                                 {getLocalSym(plan.country)}{Number(plan.expenseLocal).toLocaleString()}
+                               </span>
+                               <span className="text-[11px] font-black text-rose-500 whitespace-nowrap flex-shrink-0">
+                                 ₩{Number(plan.expenseKrw).toLocaleString()}
+                               </span>
+                            </div>
                           </div>
-                          <div className="flex flex-col items-end shrink-0">
-                            <span className="text-[11px] font-black text-rose-500">{Number(plan.expenseKrw || 0).toLocaleString()}원</span>
-                            <span className={`text-[9px] font-bold ${textMuted}`}>{Number(plan.expenseLocal || 0).toLocaleString()}</span>
-                          </div>
-                        </div>
-                      ))
+                        )})}
+                      </div>
                     )}
-                  </>
+                  </div>
                 );
               })()}
             </div>
@@ -2462,9 +2576,20 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                  <h3 className={`font-black text-sm ${textMain}`}>⛅ 날씨 예보</h3>
                  <button onClick={() => setIsWeatherModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
               </div>
-              <div className="space-y-2.5 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1 scroll-smooth">
+<div className="space-y-2.5 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1 scroll-smooth">
+                 {/* [디버깅] 날씨 창이 열릴 때 현재 지역명과 데이터 상태를 F12 콘솔에 출력합니다 */}
+                 {console.log("🌤️ 날씨 모달이 인식한 지역명:", displayCityName)}
+                 {console.log("🌤️ 날씨 모달이 가진 예보 데이터:", forecast)}
+
                  {forecast.length === 0 ? (
-                    <p className={`text-xs ${textMuted} text-center py-5 font-bold`}>날씨 정보를 불러올 수 없습니다.<br/>(일정 탭에서 지역을 선택해주세요)</p>
+                    <div className="flex flex-col items-center justify-center py-6 space-y-3">
+                       <p className={`text-xs ${textMuted} text-center font-bold`}>
+                         날씨 정보를 불러올 수 없습니다.<br/>(일정 탭에서 지역을 선택해주세요)
+                       </p>
+                       <button onClick={() => fetchWeatherData(displayCityName)} className="bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-400 px-3 py-1.5 rounded-lg text-[10px] font-bold shadow-sm hover:bg-indigo-200 transition-colors active:scale-95">
+                         현재 지역({displayCityName || "없음"}) 날씨 다시 불러오기 🔄
+                       </button>
+                    </div>
                  ) : (
                     tripDays.map((d) => {
                        const targetDateStr = getDateStringForDay(d);
@@ -2641,14 +2766,26 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                        <option value="숙소">숙소 🏠</option>
                        <option value="기타">기타 📌</option>
                     </select>
+{/* [NEW] 쇼핑리스트 세부 일정 콤보박스: Day + Theme 완벽 교차 필터링 적용 */}
                     <select value={shoppingLinkPlanId} onChange={e => setShoppingLinkPlanId(e.target.value)} className={`flex-[1.5] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[10px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
                        <option value="manual">➕ 수동입력</option>
-                       {planTimeline.filter(p => !shoppingItemDay || String(p.day) === String(shoppingItemDay)).map(p => (
+                       {planTimeline.filter(p => {
+                          const matchDay = !shoppingItemDay || String(p.day) === String(shoppingItemDay);
+                          // 이모지나 띄어쓰기로 인한 필터링 누락 방지 (순수 텍스트만 비교)
+                          const rawPlanTheme = S(p.theme || '기타').replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
+                          const rawShopTheme = S(shoppingItemTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
+                          const matchTheme = !shoppingItemTheme || shoppingItemTheme === 'all' || rawPlanTheme === rawShopTheme;
+                          return matchDay && matchTheme;
+                       }).map(p => (
                           <option key={p.id} value={p.id}>[{p.time || '종일'}] {S(p.place)}</option>
                        ))}
                     </select>
                   </div>
-                  <div className="flex space-x-2">
+<div className="flex space-x-1.5">
+                    <select id="shopType" className={`w-20 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-1 py-2.5 text-[10px] font-bold outline-none rounded-lg shadow-sm`}>
+                      <option value="shared">공동용 👨‍👩‍👧‍👦</option>
+                      <option value="personal">개인용 🔒</option>
+                    </select>
                     <input type="text" placeholder="살 물건/계획 입력 후 엔터키" value={newShoppingItem} onChange={e => setNewShoppingItem(e.target.value)} onKeyDown={(e) => {
                       if (e.nativeEvent.isComposing) return;
                       if (e.key === 'Enter' && e.target.value.trim()) {
@@ -2677,8 +2814,8 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                             }
                         }
 
-                        const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false, day: targetDay, theme: shoppingItemTheme, linkedPlace: targetPlace };
-                        const newList = [...shoppingList, newItem];
+const isPersonal = document.getElementById('shopType')?.value === 'personal';
+                        const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false, day: targetDay, theme: shoppingItemTheme, linkedPlace: targetPlace, isPersonal: isPersonal, userId: appUserId };                        const newList = [...shoppingList, newItem];
                         setShoppingList(newList); 
                         dbUpdates.shopping_list = newList;
                         
@@ -2823,8 +2960,13 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                 <h3 className={`text-sm font-black flex items-center ${textMain}`}><span className="mr-2">🎒</span> 준비물 챙기기</h3>
                 <button onClick={() => setIsPackingModalOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg transition-colors">✕</button>
              </div>
-             <div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
+<div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
                 <div className="flex space-x-2 shrink-0">
+                  {/* [NEW] 개인용/공동용 선택 드롭다운 추가 */}
+                  <select id="packType" className={`w-24 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-2 py-2.5 text-[10px] font-bold outline-none rounded-lg shadow-sm`}>
+                    <option value="shared">공동용 👨‍👩‍👧‍👦</option>
+                    <option value="personal">개인용 🔒</option>
+                  </select>
                   <input type="text" placeholder="챙길 물건 입력 후 엔터키" onKeyDown={handleAddPackingItem} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
                 </div>
 
@@ -2835,7 +2977,8 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                 )}
 
                 <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
-                  {packingList.map(item => (
+                  {/* [NEW] 개인용 아이템은 작성자 본인(appUserId)에게만 보이도록 필터링 로직 추가 */}
+                  {packingList.filter(item => !item.isPersonal || item.userId === appUserId).map(item => (
                      <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`group cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100')}`}>
                        <span className={`text-[11px] font-bold truncate max-w-[200px]`}>{item.text}</span>
                        <button onClick={(e) => { e.stopPropagation(); deletePackingItem(item.id); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-indigo-400 hover:text-indigo-600'}`}>✕</button>
@@ -2879,13 +3022,24 @@ const filteredMyPins = filteredMarkers.filter(pin => {
               
 <div className="flex justify-between items-center mt-3 mb-1">
               <span className="text-[11px] font-black text-slate-700 dark:text-slate-300">📝 기록된 메모</span>
-              <button onClick={() => {
-                setIsSettleMode(!isSettleMode);
-                setSettleLocal(selectedPlanInfo.expenseLocal || "");
-                setSettleKrw(selectedPlanInfo.expenseKrw || "");
-              }} className="bg-rose-50 text-rose-500 border border-rose-200 dark:bg-rose-900/30 dark:border-rose-800 dark:text-rose-400 px-2 py-1 rounded-md text-[9px] font-bold shadow-sm hover:bg-rose-100 transition-colors">
-                {isSettleMode ? '취소' : '💸 정산 입력'}
-              </button>
+              <div className="flex space-x-1.5">
+                {/* [삭제 버튼] 입력된 금액이 있을 때만 삭제 버튼 노출 */}
+                {selectedPlanInfo.expenseLocal && !isSettleMode && (
+                   <button onClick={() => {
+                     const updated = planTimeline.map(p => String(p.id) === String(selectedPlanInfo.id) ? { ...p, expenseLocal: "", expenseKrw: "" } : p);
+                     setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+                     setSelectedPlanInfo({ ...selectedPlanInfo, expenseLocal: "", expenseKrw: "" });
+                     showToast("정산 내역이 삭제되었습니다.");
+                   }} className="bg-slate-100 text-slate-400 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 px-2 py-1 rounded-md text-[9px] font-bold hover:text-rose-500 transition-all active:scale-95">🗑️ 삭제</button>
+                )}
+                <button onClick={() => {
+                  setIsSettleMode(!isSettleMode);
+                  setSettleLocal(selectedPlanInfo.expenseLocal || "");
+                  setSettleKrw(selectedPlanInfo.expenseKrw || "");
+                }} className="bg-rose-50 text-rose-500 border border-rose-200 dark:bg-rose-900/30 dark:border-rose-800 dark:text-rose-400 px-2 py-1 rounded-md text-[9px] font-bold shadow-sm hover:bg-rose-100 transition-all active:scale-95">
+                  {isSettleMode ? '취소' : '💸 정산 입력'}
+                </button>
+              </div>
             </div>
 
             {selectedPlanInfo.features ? (
@@ -2895,11 +3049,11 @@ const filteredMyPins = filteredMarkers.filter(pin => {
             )}
 
             {isSettleMode ? (
-              <div className={`mt-3 p-3 rounded-xl border shadow-inner ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+              <div className={`mt-3 p-3 rounded-xl border shadow-inner animate-in slide-in-from-top-2 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="flex space-x-2 mb-2">
-<div className="flex-1">
-                    <label className="text-[9px] font-bold text-slate-500 mb-1 flex justify-between"><span>현지 지출액</span><span className="text-indigo-400">자동환전 ✨</span></label>
-                    <input type="number" placeholder="예: 100" value={settleLocal} onChange={e => {
+                 <div className="flex-1">
+                    <label className="text-[9px] font-bold text-slate-500 mb-1 flex justify-between"><span>현지 지출액</span><span className="text-indigo-400 font-black">자동환전 ✨</span></label>
+                    <input type="number" placeholder="금액 입력" value={settleLocal} onChange={e => {
                       const val = e.target.value;
                       setSettleLocal(val);
                       if(val && !isNaN(val)) {
@@ -2916,51 +3070,47 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                         const krwRate = rates['KRW'] || 1350;
                         const krwVal = val * (krwRate / rate);
                         setSettleKrw(Math.round(krwVal));
-                      } else {
-                        setSettleKrw("");
-                      }
+                      } else { setSettleKrw(""); }
                     }} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
                   </div>
                   <div className="flex-1">
-                    <label className="text-[9px] font-bold text-slate-500 mb-1 block">원화 환산액</label>
-                    <input type="number" placeholder="예: 15000" value={settleKrw} onChange={e => setSettleKrw(e.target.value)} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
+                    <label className="text-[9px] font-bold text-slate-500 mb-1 block">원화 환산액(₩)</label>
+                    <input type="number" placeholder="자동계산" value={settleKrw} onChange={e => setSettleKrw(e.target.value)} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
                   </div>
                 </div>
                 <button onClick={() => {
                   const updatedTimeline = planTimeline.map(p => String(p.id) === String(selectedPlanInfo.id) ? { ...p, expenseLocal: settleLocal, expenseKrw: settleKrw } : p);
                   setPlanTimeline(updatedTimeline);
+                  console.log("💸 [DB 저장] 정산 업데이트 데이터:", { plan_timeline: updatedTimeline });
                   saveToDb({ plan_timeline: updatedTimeline });
                   setSelectedPlanInfo({ ...selectedPlanInfo, expenseLocal: settleLocal, expenseKrw: settleKrw });
                   setIsSettleMode(false);
                   showToast("정산 금액이 완벽하게 저장되었습니다! 💸");
-                }} className="w-full bg-rose-500 text-white py-2 rounded-md text-xs font-bold shadow-sm hover:bg-rose-600 transition-colors">저장하기</button>
+                }} className="w-full bg-rose-500 text-white py-2 rounded-md text-xs font-bold shadow-sm hover:bg-rose-600 transition-colors active:scale-95">저장하기</button>
               </div>
             ) : (
               (selectedPlanInfo.expenseLocal || selectedPlanInfo.expenseKrw) && (
-                <div className={`mt-3 p-3 rounded-xl border ${isDarkMode ? 'bg-rose-900/20 border-rose-800' : 'bg-rose-50 border-rose-100'}`}>
-                  <h4 className="text-[11px] font-black text-rose-500 mb-1 flex justify-between items-center">
+                /* [통합 지출 카드] 지출 내역과 메모 중복을 하나로 합쳤습니다 */
+                <div className={`mt-3 p-3 rounded-xl border animate-in fade-in ${isDarkMode ? 'bg-rose-900/20 border-rose-800' : 'bg-rose-50 border-rose-100'}`}>
+                  <h4 className="text-[11px] font-black text-rose-500 mb-1.5 flex justify-between items-center">
                     <span>💸 지출 내역</span>
-                    {selectedPlanInfo.theme && <span className="text-[9px] bg-rose-100 text-rose-600 dark:bg-rose-800 dark:text-rose-300 px-1.5 py-0.5 rounded">{selectedPlanInfo.theme}</span>}
+                    {selectedPlanInfo.theme && <span className="text-[9px] bg-rose-100 text-rose-600 dark:bg-rose-800 dark:text-rose-300 px-1.5 py-0.5 rounded shadow-sm">{selectedPlanInfo.theme}</span>}
                   </h4>
                   <div className="flex justify-between items-center text-xs font-bold text-rose-600 dark:text-rose-400">
-                    <span>현지: {selectedPlanInfo.expenseLocal ? Number(selectedPlanInfo.expenseLocal).toLocaleString() : 0}</span>
-                    <span>원화: {selectedPlanInfo.expenseKrw ? Number(selectedPlanInfo.expenseKrw).toLocaleString() + '원' : '0원'}</span>
+                    <span>현지: {(() => {
+                        const c = selectedPlanInfo.country;
+                        let sym = '$';
+                        if (c === '한국') sym = '₩'; 
+                        else if (c === '일본' || c === '중국') sym = '¥'; 
+                        else if (['프랑스','이탈리아','스페인','독일'].includes(c)) sym = '€'; 
+                        else if (c === '영국') sym = '£';
+                        return `${sym}${Number(selectedPlanInfo.expenseLocal).toLocaleString()}`;
+                    })()}</span>
+                    <span>원화: ₩{Number(selectedPlanInfo.expenseKrw).toLocaleString()}</span>
                   </div>
                 </div>
               )
             )}
-               {(selectedPlanInfo.expenseLocal || selectedPlanInfo.expenseKrw) && (
-                <div className={`mt-3 p-3 rounded-xl border ${isDarkMode ? 'bg-rose-900/20 border-rose-800' : 'bg-rose-50 border-rose-100'}`}>
-                  <h4 className="text-[11px] font-black text-rose-500 mb-1 flex justify-between items-center">
-                    <span>💸 지출 메모</span>
-                    {selectedPlanInfo.theme && <span className="text-[9px] bg-rose-100 text-rose-600 dark:bg-rose-800 dark:text-rose-300 px-1.5 py-0.5 rounded">{selectedPlanInfo.theme}</span>}
-                  </h4>
-                  <div className="flex justify-between items-center text-xs font-bold text-rose-600 dark:text-rose-400">
-                    <span>현지: {selectedPlanInfo.expenseLocal ? Number(selectedPlanInfo.expenseLocal).toLocaleString() : 0}</span>
-                    <span>원화: {selectedPlanInfo.expenseKrw ? Number(selectedPlanInfo.expenseKrw).toLocaleString() + '원' : '0원'}</span>
-                  </div>
-                </div>
-              )}
               
               <button onClick={() => setSelectedPlanInfo(null)} className="mt-5 w-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors duration-300">닫기</button>
             </div>
@@ -3454,8 +3604,15 @@ const filteredMyPins = filteredMarkers.filter(pin => {
                       )}
                       
                       <div className="flex-1 min-w-0 flex flex-col justify-center">
-                        <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight mb-0.5 transition-colors">{S(pin.name)}</h4>
-                        {pin.localName && (
+<div className="flex items-center mb-1">
+<span className="text-[8px] font-bold bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-400 px-1 py-0.5 rounded mr-1.5 shrink-0">
+                            {(() => {
+                               const linked = planTimeline.find(p => p && S(p.place).trim() === S(pin.name).trim());
+                               return linked?.theme || pin.theme || '기타';
+                            })()}
+                          </span>
+                          <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight transition-colors">{S(pin.name)}</h4>
+                        </div>                        {pin.localName && (
                           <p className="text-[9px] font-bold text-indigo-500 truncate cursor-pointer hover:opacity-80 leading-tight mb-0.5 transition-opacity" onClick={(e) => handleCopyLocalName(e, pin.localName)}>
                             📋 {S(pin.localName)}
                           </p>
