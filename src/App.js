@@ -3308,12 +3308,16 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
               </div>
 
               {/* [NEW] 테마 분류 선택 드롭다운 추가 */}
-              <div className="flex flex-col space-y-1 w-full mb-1">
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>테마 분류 📌</label>
+{/* [수정됨] 통합된 테마 분류 섹션 (필수 문구 제거 및 디자인 통일) */}
+              <div className="flex flex-col space-y-1 w-full mb-3">
+                <label className={`text-[9px] font-black ${textMuted} px-1 flex justify-between`}>
+                  <span>테마 분류 📌</span>
+                  <span className="text-[7px] opacity-50">미선택 시 '기타' 자동 지정</span>
+                </label>
                 <select 
                   value={S(editingPlan.theme || "기타")} 
                   onChange={e => setEditingPlan({...editingPlan, theme: e.target.value})} 
-                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg outline-none cursor-pointer transition-all duration-300`}
+                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2.5 text-xs font-bold rounded-xl outline-none cursor-pointer shadow-sm focus:border-indigo-400 transition-all duration-300`}
                 >
                   <option value="교통">교통 🚌</option>
                   <option value="식당">식당 🍽️</option>
@@ -3322,19 +3326,6 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                   <option value="쇼핑">쇼핑 🛍️</option>
                   <option value="숙소">숙소 🏠</option>
                   <option value="기타">기타 📌</option>
-                </select>
-              </div>
-{/* 테마 필수 지정란 (지출 입력은 상세 팝업으로 분리됨) */}
-              <div className="flex flex-col space-y-1 w-full mb-3">
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>테마 분류 (필수 📌)</label>
-                <select value={S(editingPlan.theme || "기타")} onChange={e => setEditingPlan({...editingPlan, theme: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`}>
-                  <option value="교통편">교통편 🚌</option>
-                  <option value="식당">식당 🍽️</option>
-                  <option value="디저트">디저트 🍰</option>
-                  <option value="관광지">관광지 📸</option>
-<option value="쇼핑">쇼핑 🛍️</option>
-                <option value="숙소">숙소 🏠</option>
-                <option value="기타">기타 📌</option>
                 </select>
               </div>
 
@@ -3355,8 +3346,13 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                   const finalCountry = editingPlan.countrySelect === "수동입력" ? editingPlan.manualCountry : editingPlan.countrySelect;
                   const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
 // [저장 로직 수정] 테마(theme) 데이터가 핀 목록에도 저장되도록 강제 연동합니다.
-                  const planData = { ...editingPlan, country: finalCountry, region: finalRegion, theme: editingPlan.theme || "기타" };
-                  
+// [데이터 보정] 테마가 비어있거나 선택되지 않은 경우 '기타'로 강제 할당하여 저장
+                  const planData = { 
+                    ...editingPlan, 
+                    country: finalCountry, 
+                    region: finalRegion, 
+                    theme: (editingPlan.theme && editingPlan.theme.trim() !== "") ? editingPlan.theme : "기타" 
+                  };                  
                   const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
                   let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
                   
