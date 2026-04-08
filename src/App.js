@@ -324,7 +324,11 @@ const MainApp = () => {
   const [panelRatio, setPanelRatio] = useState(50); 
   const dragRef = useRef(false);
 
-  const [activeMobileCard, setActiveMobileCard] = useState(null);
+const [activeMobileCard, setActiveMobileCard] = useState(null);
+  // [추가] 여행일기 작성을 위한 상태 변수
+  const [isDiaryOpen, setIsDiaryOpen] = useState(false);
+  const [diaryRating, setDiaryRating] = useState(0);
+  const [diaryReview, setDiaryReview] = useState("");
 // [정리 완료] 중복 선언을 제거하고 하나로 합쳤습니다.
 // [정리 완료] 중복 선언 에러 해결: 변수들을 하나씩만 정의했습니다.
   const [isPackingModalOpen, setIsPackingModalOpen] = useState(false);
@@ -1943,6 +1947,26 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       const pinColor = primaryPlan ? getDayColor(primaryPlan.day) : '#94a3b8'; 
       
       let html = '';
+// [추가됨] 지도 핀을 완전히 숨기는 마법의 필터 로직
+      const mapSafeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+      const mapPinNameClean = S(rest.name).trim();
+      const mapLinkedPlans = mapSafeTimeline.filter(p => S(p.place).trim() === mapPinNameClean);
+      
+      let mapPassDay = true;
+      if (!mapActiveDays.includes('all')) {
+         mapPassDay = mapActiveDays.includes('unlinked') ? mapLinkedPlans.length === 0 : mapLinkedPlans.some(p => mapActiveDays.includes(parseInt(p.day)));
+      }
+      
+      let mapPassTheme = true;
+      if (typeof myPinsThemeFilter !== 'undefined' && myPinsThemeFilter !== 'all') {
+         const mapEffectiveTheme = mapLinkedPlans[0]?.theme || rest.theme || "기타";
+         const mapRawPinTheme = S(mapEffectiveTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
+         const mapRawFilterTheme = S(myPinsThemeFilter).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
+         mapPassTheme = (mapRawPinTheme === mapRawFilterTheme);
+      }
+      
+      // 이 마커가 조건에 안 맞으면 여기서 바로 건너뜁니다! (회색 핀 원천 차단)
+      if (!mapPassDay || !mapPassTheme) return;
       if (isLand) {
         html = `<div style="background-color:#fbbf24;width:32px;height:32px;border-radius:50%;border:3px solid #b45309;box-shadow:0 0 10px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;transition:transform 0.2s; position:relative;"><span style="font-size:16px; filter: drop-shadow(1px 1px 1px rgba(0,0,0,0.5));">👑</span><div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:10px solid #b45309;"></div></div>`;
       } else {
@@ -2201,58 +2225,102 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
             
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
               <div>
-<h3 className={`text-xs font-bold mb-3 px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>나의 활성 여행 목록 ✈️</h3>
-                <div className="space-y-1">
-                  {trips.filter(t => !t.archived).map(t => {
-                    {/* [여행 완료 자동 감지 로직] */}
-                    const isTripFinished = travelStartDate && new Date(travelStartDate).getTime() + (maxDay * 24 * 60 * 60 * 1000) < Date.now();
-                    
-                    return (
-                      <div key={t.id} className="flex flex-col mb-1">
-                        <button 
-                          onClick={() => { handleSwitchTrip(t.id); }} 
-                          className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 truncate flex items-center justify-between group ${activeTripId === t.id ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : (isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50')}`}
-                        >
-                          <span className="truncate flex items-center">
-                            {t.isShared && <span className="mr-1.5 text-[10px]">🤝</span>}
-                            {S(t.name)}
-                          </span>
-                          <div className="flex items-center">
-                            <span onClick={(e) => { e.stopPropagation(); setTripToDelete(t.id); }} className={`text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-[10px] hover:scale-110 p-1`}>{t.isShared ? '🚪' : '🗑️'}</span>
-                          </div>
-                        </button>
+<h3 className={`text-xs font-black mb-3 px-1 flex items-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>지금 여행중 ✈️ <span className="ml-2 inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span></h3>
+                  <div className="space-y-1.5">
+                    {trips.filter(t => !t.archived).map(t => {
+                      // [고도화된 여행 완료 자동 감지 로직]
+                      const isActive = activeTripId === t.id;
+                      let isTimeFinished = false;
+                      
+                      if (isActive && travelStartDate) {
+                        const safePlans = Array.isArray(planTimeline) ? planTimeline.filter(p => p && !p.isAccommodation) : [];
+                        const lastDay = safePlans.length > 0 ? Math.max(...safePlans.map(p => parseInt(p.day || 1))) : maxDay;
+                        const lastTime = safePlans.filter(p => parseInt(p.day) === lastDay).sort((a,b) => S(b.time).localeCompare(S(a.time)))[0]?.time || "23:59";
                         
-                        {/* 여행 완료 배지/버튼: 활성화된 여행일 때만 표시 */}
-                        {isTripFinished && activeTripId === t.id && (
+                        const endDate = new Date(travelStartDate);
+                        endDate.setDate(endDate.getDate() + (lastDay - 1));
+                        const [hh, mm] = lastTime.split(':');
+                        endDate.setHours(parseInt(hh), parseInt(mm), 0);
+                        
+                        if (endDate < new Date()) isTimeFinished = true;
+                      }
+                      
+return (
+                        <div key={t.id} className="group relative">
                           <button 
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const newTrips = trips.map(item => item.id === t.id ? { ...item, archived: true, finishDate: new Date().toISOString() } : item);
-                              setTrips(newTrips);
-                              if(supabaseClient) {
-                                await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
-                                await supabaseClient.from('travel_state').update({ shared_users: [] }).eq('id', t.id); // 공유 자동 해제
-                              }
-                              showToast("축하합니다! 여행이 '여행기록'으로 소중히 저장되었습니다. 📸");
-                            }}
-                            className="mt-1 mx-2 bg-emerald-500 hover:bg-emerald-600 text-white text-[9px] py-1 rounded-lg font-black shadow-sm transition-all animate-bounce"
+                            onClick={() => {
+                              handleSwitchTrip(t.id); // 1. 여행 데이터 교체
+                              setActiveTab('dashboard'); // 2. 보관함에서 대시보드로 화면 전환
+                              setIsMobileMenuOpen(false); // 3. 모바일 사이드바 닫기
+                            }} 
+                            className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-black transition-all duration-300 flex items-center justify-between border-2 ${
+                              isActive 
+                                ? 'bg-indigo-600 text-white border-indigo-400 shadow-lg transform scale-[1.03] z-10' 
+                                : (isDarkMode 
+                                    ? 'bg-slate-800 text-slate-300 border-transparent hover:bg-slate-700' 
+                                    : 'bg-white text-slate-600 border-slate-100 shadow-sm hover:border-indigo-200 hover:bg-indigo-50/30')
+                            }`}
                           >
-                            🎉 여행 완료! 기록하기
+                            <span className="truncate flex items-center pr-8">
+                              {t.isShared ? <span className="mr-1.5 text-[10px]">🤝</span> : <span className="mr-1.5 text-[10px]">📍</span>}
+                              {S(t.name)}
+                            </span>
+                            
+                            {/* 삭제/나가기 버튼 강조 및 위치 고정 */}
+                            <span 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setTripToDelete(t.id); 
+                              }} 
+                              className={`absolute right-3 px-1 py-1 rounded-md transition-all duration-200 ${
+                                isActive 
+                                  ? 'text-indigo-200 hover:text-white hover:bg-indigo-500' 
+                                  : 'text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100'
+                              }`}
+                            >
+                              {t.isShared ? '🚪' : '🗑️'}
+                            </span>
                           </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                          
+                          {/* 스마트 완료 버튼: 시간이 지났을 때만 노출 */}
+                          {isTimeFinished && (
+                            <button 
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if(!window.confirm("정말 이 여행을 완료하시겠습니까?\n완료된 여행은 '소중한 여행기록'으로 이동합니다.")) return;
+                                
+                                const finishDate = new Date().toISOString();
+                                const newTrips = trips.map(item => item.id === t.id ? { ...item, archived: true, finishDate: finishDate } : item);
+                                setTrips(newTrips);
+                                
+                                if(supabaseClient && appUserId !== "Guest") {
+                                  await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
+                                  await supabaseClient.from('travel_state').update({ archived: true, finish_date: finishDate, shared_users: [] }).eq('id', t.id);
+                                }
+                                showToast("축하합니다! 성공적으로 여행을 마쳤습니다. 🏁");
+                                setActiveTab('archive');
+                              }}
+                              className="w-full mt-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[9px] py-1.5 rounded-lg font-black shadow-lg transition-all animate-in slide-in-from-top-1"
+                            >
+                              🏁 여행 완료 (기록 보관하기)
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
 
-                <div className="mt-6 pt-4 border-t border-dashed border-slate-200 dark:border-slate-700">
-                  <button 
-                    onClick={() => setIsArchiveModalOpen(true)}
-                    className={`w-full flex items-center justify-between px-3 py-3 rounded-xl text-xs font-black transition-all duration-300 ${isDarkMode ? 'bg-indigo-900/30 text-indigo-300' : 'bg-indigo-50 text-indigo-700 shadow-inner'}`}
-                  >
-                    <span>📷 소중한 여행기록</span>
-                    <span className="text-lg">📂</span>
-                  </button>
+                  <div className="mt-8 pt-4 border-t border-dashed border-slate-200 dark:border-slate-700">
+                    <button 
+                      onClick={() => { setActiveTab('archive'); setIsMobileMenuOpen(false); }}
+                      className={`w-full flex items-center justify-between px-4 py-4 rounded-2xl text-xs font-black transition-all duration-300 active:scale-95 ${activeTab === 'archive' ? 'bg-indigo-600 text-white shadow-xl' : 'bg-gradient-to-r from-indigo-50 to-blue-50 text-indigo-700 border border-indigo-100 shadow-sm'}`}
+                    >
+                      <div className="flex items-center">
+                        <span className="text-lg mr-2">📷</span>
+                        <span>소중한 여행기록</span>
+                      </div>
+                      <span className="opacity-50">📂</span>
+                    </button>
                 </div>
 
                 <div className="mt-2 grid grid-cols-2 gap-2">
@@ -3026,20 +3094,104 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                      showToast("정산 내역이 삭제되었습니다.");
                    }} className="bg-slate-100 text-slate-400 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 px-2 py-1 rounded-md text-[9px] font-bold hover:text-rose-500 transition-all active:scale-95">🗑️ 삭제</button>
                 )}
-                <button onClick={() => {
+<button onClick={() => {
                   setIsSettleMode(!isSettleMode);
                   setSettleLocal(selectedPlanInfo.expenseLocal || "");
                   setSettleKrw(selectedPlanInfo.expenseKrw || "");
+                  setIsDiaryOpen(false); // 정산 열 때 일기는 닫기
                 }} className="bg-rose-50 text-rose-500 border border-rose-200 dark:bg-rose-900/30 dark:border-rose-800 dark:text-rose-400 px-2 py-1 rounded-md text-[9px] font-bold shadow-sm hover:bg-rose-100 transition-all active:scale-95">
-                  {isSettleMode ? '취소' : '💸 정산 입력'}
+                  {isSettleMode ? '취소' : '💸 정산'}
+                </button>
+                <button onClick={() => {
+                  setIsDiaryOpen(!isDiaryOpen);
+                  setDiaryRating(selectedPlanInfo.rating || 0);
+                  setDiaryReview(selectedPlanInfo.review || "");
+                  setIsSettleMode(false); // 일기 열 때 정산은 닫기
+                }} className={`px-2 py-1 rounded-md text-[9px] font-bold shadow-sm transition-all active:scale-95 border ${isDiaryOpen ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
+                  {isDiaryOpen ? '취소' : '📝 일기'}
                 </button>
               </div>
             </div>
 
-            {selectedPlanInfo.features ? (
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">{S(selectedPlanInfo.features)}</p>
-            ) : (
-              <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
+            {/* 메모 영역 (정산/일기창이 모두 닫혀있을 때만 표시) */}
+            {!isSettleMode && !isDiaryOpen && (
+              <div className="animate-in fade-in duration-300">
+                {selectedPlanInfo.features ? (
+                  <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">{S(selectedPlanInfo.features)}</p>
+                ) : (
+                  <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
+                )}
+                {/* [추가] 저장된 별점이 있다면 표시 */}
+                {selectedPlanInfo.rating > 0 && (
+                  <div className="mt-2 flex items-center space-x-1 px-1">
+                    <span className="text-yellow-400">⭐</span>
+                    <span className="text-xs font-black text-slate-700 dark:text-slate-300">{selectedPlanInfo.rating}점</span>
+                    {selectedPlanInfo.review && <span className="text-[10px] text-slate-400 truncate ml-2">"{selectedPlanInfo.review}"</span>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* --- 여행일기 작성 영역 --- */}
+            {isDiaryOpen && (
+              <div className={`mt-3 p-3 rounded-xl border shadow-inner animate-in slide-in-from-top-2 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-indigo-50/30 border-indigo-100'}`}>
+                <div className="flex flex-col space-y-3">
+                  {/* 0.5점 단위 별점 UI */}
+                  <div className="flex flex-col space-y-1">
+                    <label className="text-[9px] font-black text-indigo-500">이 장소는 어땠나요? (0.5점 단위)</label>
+                    <div className="flex items-center space-x-1.5">
+                      {[1, 2, 3, 4, 5].map((num) => (
+                        <div key={num} className="relative cursor-pointer w-7 h-7"
+                             onClick={(e) => {
+                               const rect = e.currentTarget.getBoundingClientRect();
+                               const isHalf = e.clientX - rect.left < rect.width / 2;
+                               setDiaryRating(isHalf ? num - 0.5 : num);
+                             }}>
+                          {/* 회색 배경 별 */}
+                          <svg className={`w-7 h-7 ${isDarkMode ? 'text-slate-700' : 'text-slate-200'}`} fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+                          </svg>
+                          {/* 노란색 채우기 별 (조건부 폭 조절) */}
+                          <div className="absolute top-0 left-0 h-full overflow-hidden pointer-events-none" 
+                               style={{ width: diaryRating >= num ? '100%' : (diaryRating >= num - 0.5 ? '50%' : '0%') }}>
+                            <svg className="w-7 h-7 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+                            </svg>
+                          </div>
+                        </div>
+                      ))}
+                      <span className="ml-2 text-sm font-black text-indigo-600">{diaryRating}점</span>
+                    </div>
+                  </div>
+                  {/* 소감 입력창 */}
+                  <textarea 
+                    placeholder="여행의 소중한 기억을 한 줄로 남겨보세요!"
+                    value={diaryReview}
+                    onChange={e => setDiaryReview(e.target.value)}
+                    className={`w-full p-2.5 text-xs font-bold rounded-lg border outline-none h-20 resize-none transition-all ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-indigo-200 focus:border-indigo-500 shadow-sm'}`}
+                  />
+                  <button onClick={() => {
+                    const safeTimeline = Array.isArray(planTimeline) ? planTimeline : [];
+                    const updatedTimeline = safeTimeline.map(p => 
+                      String(p.id) === String(selectedPlanInfo.id) ? { ...p, rating: diaryRating, review: diaryReview } : p
+                    );
+                    
+                    const safeRests = Array.isArray(currentRestaurants) ? currentRestaurants : [];
+                    const updatedRests = safeRests.map(r => 
+                      S(r.name).trim() === S(selectedPlanInfo.place).trim() ? { ...r, rating: diaryRating, review: diaryReview } : r
+                    );
+
+                    setPlanTimeline(updatedTimeline);
+                    setCurrentRestaurants(updatedRests);
+                    saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests, rating: diaryRating, review: diaryReview });
+                    setSelectedPlanInfo({ ...selectedPlanInfo, rating: diaryRating, review: diaryReview });
+                    setIsDiaryOpen(false);
+                    showToast("기록이 소중하게 저장되었습니다! 📝");
+                  }} className="w-full bg-indigo-600 text-white py-2.5 rounded-xl font-black text-xs shadow-md hover:bg-indigo-700 active:scale-95 transition-all">
+                    일기 저장하기 ✨
+                  </button>
+                </div>
+              </div>
             )}
 
             {isSettleMode ? (
@@ -3347,12 +3499,14 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                   const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
 // [저장 로직 수정] 테마(theme) 데이터가 핀 목록에도 저장되도록 강제 연동합니다.
 // [데이터 보정] 테마가 비어있거나 선택되지 않은 경우 '기타'로 강제 할당하여 저장
-                  const planData = { 
+const planData = { 
                     ...editingPlan, 
                     country: finalCountry, 
                     region: finalRegion, 
-                    theme: (editingPlan.theme && editingPlan.theme.trim() !== "") ? editingPlan.theme : "기타" 
-                  };                  
+                    theme: (editingPlan.theme && editingPlan.theme.trim() !== "") ? editingPlan.theme : "기타",
+                    rating: editingPlan.rating || 0,
+                    review: editingPlan.review || ""
+                  };           
                   const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
                   let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
                   
@@ -4286,6 +4440,78 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
           </div>
 
           {/* --- Map Tab --- */}
+          {/* --- Archive (Travel History) Tab --- */}
+          <div className={`absolute inset-0 flex flex-col p-2 sm:p-5 overflow-hidden transition-opacity duration-300 ${activeTab === 'archive' ? 'visible opacity-100 z-10' : 'invisible opacity-0 -z-10 pointer-events-none'}`}>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3 flex-shrink-0">
+              <div>
+                <h2 className={`text-lg font-black flex items-center ${textMain}`}>📷 소중한 여행기록 <span className="ml-2 text-xs font-bold text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">{trips.filter(t => t.archived).length}개의 추억</span></h2>
+                <p className={`text-[10px] font-bold ${textMuted} mt-0.5`}>완료된 여행들을 이곳에서 다시 꺼내보세요.</p>
+              </div>
+              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shadow-inner">
+                {['전체', '국내', '해외'].map(cat => (
+                  <button key={cat} onClick={() => setArchiveFilterLocation(cat)} className={`px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${archiveFilterLocation === cat ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>{cat}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 scroll-smooth">
+              {(() => {
+                const archived = trips.filter(t => t.archived);
+                if (archived.length === 0) return (
+                  <div className="h-full flex flex-col items-center justify-center py-20 text-center opacity-40">
+                    <span className="text-6xl mb-4">🏜️</span>
+                    <p className="text-sm font-black">아직 완료된 여행이 없습니다.</p>
+                    <p className="text-xs font-bold mt-1">지금 여행중인 일정을 완료하면 이곳에 나타납니다!</p>
+                  </div>
+                );
+
+                // 연도별 그룹화 로직
+                const years = [...new Set(archived.map(t => new Date(t.finishDate || Date.now()).getFullYear()))].sort((a,b) => b - a);
+
+                return years.map(year => {
+                  const yearTrips = archived.filter(t => new Date(t.finishDate || Date.now()).getFullYear() === year);
+                  return (
+                    <div key={year} className="mb-10 last:mb-0">
+                      <div className="flex items-center mb-4 space-x-3">
+                        <span className="text-lg font-black text-indigo-500">{year}년</span>
+                        <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800"></div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {yearTrips.map(trip => (
+                          <div 
+                            key={trip.id} 
+                            onClick={() => {
+                              handleSwitchTrip(trip.id);
+                              setActiveTab('dashboard'); // 클릭 시 대시보드로 복귀
+                            }} 
+                            className={`group relative flex flex-col p-4 rounded-3xl border-2 transition-all duration-500 cursor-pointer hover:shadow-2xl hover:-translate-y-1 ${
+                              activeTripId === trip.id 
+                                ? 'border-indigo-500 bg-indigo-50/20 ring-4 ring-indigo-500/10' 
+                                : `${cardBg} border-transparent hover:border-indigo-200`
+                            }`}
+                          >
+                            <div className="flex justify-between items-start mb-3">
+                              <div className="w-10 h-10 rounded-2xl bg-indigo-100 flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform">🛫</div>
+                              <div className="text-right">
+                                <span className="text-[9px] font-black text-slate-400 block mb-0.5">FINISH DATE</span>
+                                <span className="text-[10px] font-bold text-slate-500">{new Date(trip.finishDate).toLocaleDateString()}</span>
+                              </div>
+                            </div>
+                            <h3 className={`text-sm font-black mb-1.5 ${textMain} line-clamp-1`}>{S(trip.name)}</h3>
+                            <div className="flex flex-wrap gap-1.5 mt-auto">
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-500 rounded text-[9px] font-bold"># {year}년 추억</span>
+                              {activeTripId === trip.id && <span className="px-2 py-0.5 bg-indigo-600 text-white rounded text-[9px] font-black animate-pulse">현재 선택됨</span>}
+                            </div>
+                            <div className={`absolute inset-0 bg-indigo-600/5 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity`}></div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
           <div className={`absolute inset-0 flex flex-col p-2 sm:p-4 pt-3 pb-4 overflow-hidden transition-opacity duration-300 ${activeTab === 'map' ? 'visible opacity-100 z-10' : 'invisible opacity-0 -z-10 pointer-events-none'}`}>
             <div className="flex flex-col gap-2 mb-2 flex-shrink-0 relative z-20">
               
@@ -4297,10 +4523,15 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                    {tripDays.map(d => {
                      const color = getDayColor(d);
                      const isActive = mapActiveDays.includes(d);
-                     return (
+return (
                        <button key={d} onClick={() => toggleMapDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all duration-300 ${isActive ? 'shadow-md scale-105' : 'hover:opacity-80'}`}>Day {d}</button>
                      )
                    })}
+                   
+                   {/* [추가됨] 미지정 핀 필터 버튼 복구 및 가로 정렬 유지 */}
+                   <button onClick={() => toggleMapDay('unlinked')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap border transition-all duration-300 ${mapActiveDays.includes('unlinked') ? 'bg-slate-500 text-white border-slate-500 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}`}>
+                     미지정 핀
+                   </button>
                 </div>
                 {/* [테마 필터 - 신설] */}
                 <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
