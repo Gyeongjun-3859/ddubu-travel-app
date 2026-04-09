@@ -1260,13 +1260,102 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
   
   function handleEditPlanClick(p) { 
     if (!p) return;
+
+    // [버그 수정] 구버전/신버전 상관없이 테마가 교통편이면 무조건 전용 모달 띄우기
+    const isTransportTheme = p.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(p.theme).includes(keyword));
+
+    if (isTransportTheme) {
+        let type = 'flight';
+        let dir = 'outbound';
+        let depPlaceText = "";
+        let arrPlaceText = "";
+        let flightNum = "";
+        let seatNum = "";
+        let depTime = p.time || "";
+        let arrTime = "";
+
+        if (p.id && String(p.id).startsWith('trans_')) {
+            // --- 1. 최신 버전 데이터 (출발/도착 분리형) 완벽 파싱 ---
+            const parts = String(p.id).split('_');
+            if (parts.length >= 4) {
+                type = parts[1];
+                dir = parts[2];
+                const safeTimeline = Array.isArray(planTimeline) ? planTimeline : [];
+                const depItem = safeTimeline.find(item => item.id === `trans_${type}_${dir}_dep`) || p;
+                const arrItem = safeTimeline.find(item => item.id === `trans_${type}_${dir}_arr`) || p;
+
+                depPlaceText = depItem.place.replace(/[^\uAC00-\uD7A3a-zA-Z0-9\s]/g, '').replace('출발', '').trim();
+                arrPlaceText = arrItem.place.replace(/[^\uAC00-\uD7A3a-zA-Z0-9\s]/g, '').replace('도착', '').trim();
+                depTime = depItem.time || '';
+                arrTime = arrItem.time || '';
+
+                const match = (depItem.features || '').match(/:\s*(.*?)(?:\s*\|\s*좌석:\s*(.*?))?\s*\|/);
+                if (match) {
+                    flightNum = match[1]?.trim() || '';
+                    seatNum = match[2]?.trim() || '';
+                }
+            }
+        } else {
+            // --- 2. 구버전 및 수동 데이터 스마트 역추적 파싱 ---
+            const placeStr = S(p.place);
+            const featStr = S(p.features);
+            
+            // 종류 추론
+            if (placeStr.includes('기차') || placeStr.includes('🚆') || S(p.localName).includes('기차') || S(p.localName).includes('KTX')) type = 'train';
+            else if (placeStr.includes('버스') || placeStr.includes('🚌') || S(p.localName).includes('버스')) type = 'bus';
+
+            // 방향 추론
+            if (featStr.includes('오는 편') || featStr.includes('오는편') || featStr.includes('inbound')) dir = 'inbound';
+
+            // 장소명 추론 ("순천터미널 -> 인천공항 T2" 분리)
+            const placeParts = placeStr.split(/➔|->|->/);
+            if (placeParts.length === 2) {
+                depPlaceText = placeParts[0].replace(/[^\uAC00-\uD7A3a-zA-Z0-9\s]/g, '').trim();
+                arrPlaceText = placeParts[1].replace(/[^\uAC00-\uD7A3a-zA-Z0-9\s]/g, '').trim();
+            } else {
+                depPlaceText = placeStr.replace(/[^\uAC00-\uD7A3a-zA-Z0-9\s]/g, '').trim();
+            }
+
+            // 메모 추론 ("버스 번호: 3번홈 | 좌석: 01, 02 (도착예정: 06:11)")
+            const numMatch = featStr.match(/(?:번호|항공편):\s*([^|]+)/);
+            if (numMatch) flightNum = numMatch[1].trim();
+            
+            const seatMatch = featStr.match(/좌석:\s*([^|(]+)/);
+            if (seatMatch) seatNum = seatMatch[1].trim();
+
+            const timeMatch = featStr.match(/도착.*?:?\s*([0-9:]+)/);
+            if (timeMatch) arrTime = timeMatch[1].replace(/[^0-9:]/g, '').trim();
+        }
+
+        setTransType(type);
+        setTransDir(dir);
+        setModalTransData(prev => ({
+            ...prev,
+            [type]: {
+                ...prev[type],
+                [dir]: {
+                    airline: p.localName || '',
+                    flightNum: flightNum,
+                    seatNum: seatNum,
+                    dep: depPlaceText,
+                    arr: arrPlaceText,
+                    depTime: depTime,
+                    arrTime: arrTime,
+                    day: p.day || 1
+                }
+            }
+        }));
+        setIsTransportModalOpen(true);
+        return; // 일반 수정 모달 띄우기 완벽 차단
+    }
+
     const c = S(p.country || "");
     const r = S(p.region || "");
     const isStandardCountry = Object.keys(REGIONS_BY_COUNTRY).includes(c) || c === "";
     const isStandardRegion = (isStandardCountry && c && REGIONS_BY_COUNTRY[c]?.includes(r)) || r === "";
     
-console.log("✏️ [디버깅] 모달창 열림. 불러온 기존 데이터:", p); // 디버깅 로그 추가
-    setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || ""), theme: S(p.theme || "기타") });  }
+    setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || ""), theme: S(p.theme || "기타") });  
+  }
   
 function handleDeletePlan(id) {
   if (!window.confirm("이 일정을 정말 삭제하시겠습니까?")) return;
@@ -1354,42 +1443,50 @@ function handleDeletePlan(id) {
         const data = modalTransData[type][dir];
         if (data.dep && data.arr) {
           hasAnyData = true;
-          if (type === 'flight') {
-             newFlights[dir] = { ...data };
-             const dirLabel = dir === 'outbound' ? '가는 편' : '오는 편';
-             const planData = { 
-               id: Date.now().toString() + Math.random().toString(), 
-               day: parseInt(data.day), 
-               time: S(data.depTime), 
-               place: `✈️ ${data.dep} ➔ ${data.arr}`, 
-               localName: S(data.airline), 
-               features: `항공편: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} | 도착: ${data.arrTime} [${dirLabel}]`, 
-               photo: "", 
-               country: S(globalPlanCountry), 
-               region: S(globalPlanRegion), 
-               isAccommodation: false,
-               isTransport: true
-             };
-             updatedTimeline.push(planData);
-          } else {
-             const emoji = type === 'train' ? '🚆' : '🚌';
-             const label = type === 'train' ? '기차' : '버스';
-             const dirLabel = dir === 'outbound' ? '가는 편' : '오는 편';
-             const planData = { 
-               id: Date.now().toString() + Math.random().toString(), 
-               day: parseInt(data.day), 
-               time: S(data.depTime), 
-               place: `${emoji} ${data.dep} ➔ ${data.arr}`, 
-               localName: S(data.airline), 
-               features: `${label} 번호: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} | 도착: ${data.arrTime} [${dirLabel}]`, 
-               photo: "", 
-               country: S(globalPlanCountry), 
-               region: S(globalPlanRegion), 
-               isAccommodation: false,
-               isTransport: true
-             };
-             updatedTimeline.push(planData);
-          }
+          if (type === 'flight') newFlights[dir] = { ...data };
+
+          const isFlight = type === 'flight';
+          const emojiDep = isFlight ? '🛫' : (type === 'train' ? '🚆' : '🚌');
+          const emojiArr = isFlight ? '🛬' : (type === 'train' ? '🚆' : '🚌');
+          const typeLabel = isFlight ? '항공편' : (type === 'train' ? '기차' : '버스');
+          const dirLabel = dir === 'outbound' ? '가는 편' : '오는 편';
+
+          // [버그 수정 2] 출발/도착 시간 비교로 자정을 넘기는 경우 도착 Day +1 계산
+          const depTime = S(data.depTime) || "00:00";
+          const arrTime = S(data.arrTime) || "00:00";
+          let arrDay = parseInt(data.day);
+          const dH = parseInt(depTime.split(':')[0] || 0);
+          const aH = parseInt(arrTime.split(':')[0] || 0);
+          if (aH < dH) arrDay += 1; // 도착 시간이 출발 시간보다 앞서면 다음 날로 간주
+
+          // [버그 수정 3] 중복 생성 방지를 위해 예측 가능한 고유 ID 부여 및 기존 데이터 필터링 제거
+          const depId = `trans_${type}_${dir}_dep`;
+          const arrId = `trans_${type}_${dir}_arr`;
+          updatedTimeline = updatedTimeline.filter(p => p.id !== depId && p.id !== arrId);
+
+          // 1. 출발 스케줄 아이템 (출발 Day에 할당)
+          updatedTimeline.push({ 
+            id: depId, 
+            day: parseInt(data.day), 
+            time: depTime, 
+            place: `${emojiDep} ${data.dep} 출발`, 
+            localName: S(data.airline), 
+            // 파싱 호환성을 위해 형식을 엄격히 맞춤
+            features: `[${dirLabel}] ${typeLabel}: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} | 도착: ${arrTime} (${data.arr})`, 
+            photo: "", country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false, isTransport: true, theme: '교통편'
+          });
+
+          // 2. 도착 스케줄 아이템 (도착 Day에 할당)
+          updatedTimeline.push({ 
+            id: arrId, 
+            day: arrDay, 
+            time: arrTime, 
+            place: `${emojiArr} ${data.arr} 도착`, 
+            localName: S(data.airline), 
+            // 파싱 호환성을 위해 형식을 엄격히 맞춤
+            features: `[${dirLabel}] ${typeLabel}: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} | 출발: ${depTime} (${data.dep})`, 
+            photo: "", country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false, isTransport: true, theme: '교통편'
+          });
         }
       });
     });
@@ -1404,7 +1501,7 @@ function handleDeletePlan(id) {
     setPlanTimeline(updatedTimeline);
     saveToDb({ flights: newFlights, plan_timeline: updatedTimeline });
 
-    showToast("교통/항공권이 성공적으로 일괄 등록되었습니다! ✨");
+    showToast("교통편이 날짜별로 완벽하게 분리되어 등록되었습니다! ✨");
     setIsTransportModalOpen(false);
     setModalTransData({
       flight: { outbound: { ...initialTransState }, inbound: { ...initialTransState } },
@@ -2231,11 +2328,12 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
     <div style={{ zoom: finalElementScale }} className={`flex flex-col h-[100dvh] w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
       
       {/* 네이티브 당겨서 새로고침 (Pull-to-Refresh) 숨겨진 배경 애니메이션 */}
-      <div className="absolute top-12 left-0 w-full flex flex-col items-center justify-start pt-6 z-0 pointer-events-none overflow-hidden" style={{ height: '150px' }}>
-        <div className={`transition-all duration-300 flex flex-col items-center ${isRefreshing ? 'animate-bounce' : 'opacity-70'}`} style={{ transform: `translateY(${Math.min(pullDistance * 0.4, 20)}px)` }}>
-          <span className="text-3xl drop-shadow-md mb-2">{isRefreshing ? '🚀' : '✈️'}</span>
-          <span className="text-[11px] font-black text-indigo-600 bg-indigo-50/90 dark:bg-indigo-900/80 dark:text-indigo-300 px-4 py-1.5 rounded-full shadow-sm backdrop-blur-sm border border-indigo-100 dark:border-indigo-800">
-            {isRefreshing ? "영차 영차! 새로운 여행 정보를 불러오는 중! ✨" : "아래로 쭈욱 당겨서 동기화..."}
+      {/* [버그 수정] 컨테이너 높이를 당긴 거리만큼 동기화하고, 안의 내용을 바닥(justify-end)에 붙여 짤림 현상 완벽 제거 */}
+      <div className="absolute top-0 left-0 w-full flex flex-col items-center justify-end z-0 pointer-events-none overflow-hidden" style={{ height: `${isRefreshing ? 80 : pullDistance}px` }}>
+        <div className={`transition-all duration-150 flex flex-col items-center pb-4 ${isRefreshing ? 'animate-bounce opacity-100' : 'opacity-100'}`}>
+          <span className="text-3xl drop-shadow-md mb-1.5">{isRefreshing ? '🚀' : '✈️'}</span>
+          <span className="text-[11px] font-black text-indigo-600 bg-indigo-50/90 dark:bg-indigo-900/80 dark:text-indigo-300 px-4 py-1.5 rounded-full shadow-sm backdrop-blur-sm border border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
+            {isRefreshing ? "영차 영차! 새로운 정보를 불러오는 중! ✨" : "아래로 쭈욱 당겨서 동기화..."}
           </span>
         </div>
       </div>
@@ -2901,13 +2999,17 @@ const getLocalSym = (c) => {
                       </select>
                       <input type="text" placeholder="살 물건 입력 후 우측 등록버튼" value={newShoppingItem} onChange={e => setNewShoppingItem(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') document.getElementById('addShopBtn')?.click(); }} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-pink-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
                       <button id="addShopBtn" onClick={() => {
-                        if (!newShoppingItem.trim()) return;
+                        // [버그 수정] 사진만 넣어도 저장되도록 예외 처리
+                        if (!newShoppingItem.trim() && !newShoppingPhoto) {
+                          showToast("물건 이름이나 사진을 최소 하나는 입력해주세요!");
+                          return;
+                        }
+                        const itemName = newShoppingItem.trim() || "사진 첨부 아이템";
                         let targetDay = shoppingItemDay;
                         let targetPlace = null;
                         let dbUpdates = {};
                         
                         if (shoppingLinkPlanId === 'manual' || !shoppingLinkPlanId) {
-                            const itemName = newShoppingItem.trim();
                             const newPinName = `[${shoppingItemTheme}] ${itemName}`;
                             const newPin = {
                                 id: `shop-pin-${Date.now()}`, lat: null, lng: null, country: S(displayCityName), city: S(displayCityName),
@@ -4113,8 +4215,10 @@ const planData = {
                       const isActive = activeMobileCard === plan.id;
                       const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-600 md:hover:border-indigo-400' : 'border-slate-100 md:hover:border-indigo-400');
                       
-                      // [NEW] 교통/항공권 렌더링 로직 강화
-                      if (plan.isTransport) {
+                      // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명 포함 시 무조건 전용 카드 적용)
+                      const isTransportTheme = plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword));
+// [버그 수정 1] 교통편 렌더링 조건 완화 (테마명에 교통수단 포함 시 전용 카드 적용)
+                      if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
                         return (
                           <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group`}
                                onClick={(e) => { 
@@ -4212,7 +4316,7 @@ const planData = {
                           className={`rounded-lg border shadow-sm overflow-hidden flex flex-col transition-all duration-300 group relative hover:shadow-md ${cardBorder} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-white'}`}
                         >
                           {/* 교통편의 경우 사진 영역 아예 생략 */}
-                          {!(plan.isTransport) && (
+                          {!(plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) && (
                             <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} 
                                  onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                               <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
@@ -4224,7 +4328,7 @@ const planData = {
                           )}
                           <div className={`flex flex-col p-1.5 flex-1 cursor-pointer justify-start min-w-0 transition-colors duration-300 ${isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50/50'}`} 
                                onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                            {plan.isTransport && <span className="text-indigo-500 font-bold text-[7px] mb-0.5">{S(plan.time)}</span>}
+                            {(plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) && <span className="text-indigo-500 font-bold text-[7px] mb-0.5">{S(plan.time)}</span>}
                             <h4 className={`font-black text-[9px] sm:text-[11px] truncate tracking-tight mb-0.5 transition-colors duration-300 ${textMain}`}>
                               {S(plan.place)} {plan.isAccommodation && '🏠'}
                             </h4>
@@ -4508,8 +4612,10 @@ const planData = {
                           planTimeline.filter(p => !p.isAccommodation && parseInt(p.day || 1) === day).map((plan) => {
                             const isActive = activeMobileCard === plan.id;
 
-                            // 교통/항공권 렌더링
-                            if (plan.isTransport) {
+                            // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명 포함 시 무조건 전용 카드 적용)
+                            const isTransportTheme = plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword));
+                            // [버그 수정 1] 교통/항공권 렌더링 조건 완화 (테마명에 교통수단 포함 시 전용 카드)
+                            if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
                               return (
                                 <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group cursor-pointer ${isActive ? 'border-indigo-400' : ''}`}
                                      onClick={(e) => { 
