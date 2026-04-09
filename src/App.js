@@ -1856,56 +1856,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     };
   }, [supabaseClient, appUserId, activeTripId, syncCountryRegionFromCityName, refreshTrigger]); // [NEW] refreshTrigger 의존성 추가
 
-  // [NEW] 당겨서 새로고침 (Pull-to-Refresh) 모바일 최적화 이벤트 리스너
-  useEffect(() => {
-    let startY = 0;
-    let isPulling = false;
-
-    const handleTouchStart = (e) => {
-      // 화면 최상단(scrollTop 0)일 때만 당기기 시작
-      const mainScrollArea = document.querySelector('main');
-      if (mainScrollArea && mainScrollArea.scrollTop <= 0) {
-        startY = e.touches[0].clientY;
-        isPulling = true;
-      }
-    };
-
-    const handleTouchMove = (e) => {
-      if (!isPulling) return;
-      const currentY = e.touches[0].clientY;
-      const distance = currentY - startY;
-      
-      if (distance > 0) {
-        setPullDistance(Math.min(distance * 0.5, 80)); // 텐션 효과를 위해 0.5 곱함, 최대 80px
-      }
-    };
-
-    const handleTouchEnd = () => {
-      if (!isPulling) return;
-      if (pullDistance > 60) { // 60px 이상 당겼을 때 새로고침 발동
-        setIsRefreshing(true);
-        setRefreshTrigger(prev => prev + 1); // DB Fetch 재실행 트리거
-        setTimeout(() => {
-          setIsRefreshing(false);
-          setPullDistance(0);
-          showToast("🔄 최신 데이터로 동기화되었습니다!");
-        }, 1000);
-      } else {
-        setPullDistance(0); // 원상복구
-      }
-      isPulling = false;
-    };
-
-    document.addEventListener('touchstart', handleTouchStart, { passive: true });
-    document.addEventListener('touchmove', handleTouchMove, { passive: true });
-    document.addEventListener('touchend', handleTouchEnd);
-
-    return () => {
-      document.removeEventListener('touchstart', handleTouchStart);
-      document.removeEventListener('touchmove', handleTouchMove);
-      document.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, [pullDistance]);
+  // (기존 전역 PTR 이벤트 리스너 제거 완료 - 메인 컨테이너 인라인 터치 이벤트로 이관됨)
 
   useEffect(() => {
     isPinModeRef.current = isPinMode; 
@@ -2279,11 +2230,13 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
   return (
     <div style={{ zoom: finalElementScale }} className={`flex flex-col h-[100dvh] w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
       
-      {/* [NEW] 당겨서 새로고침 로딩 인디케이터 UI */}
-      <div className="absolute top-0 left-0 w-full flex justify-center z-[9999] pointer-events-none transition-all duration-300" style={{ transform: `translateY(${pullDistance > 0 && !isRefreshing ? pullDistance : (isRefreshing ? 60 : -50)}px)`, opacity: pullDistance > 10 || isRefreshing ? 1 : 0 }}>
-        <div className="bg-white dark:bg-slate-800 shadow-xl rounded-full px-4 py-2 flex items-center space-x-2 border border-slate-200 dark:border-slate-700">
-          <span className={`text-xl ${isRefreshing ? 'animate-spin' : ''}`}>🔄</span>
-          <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400">{isRefreshing ? "업데이트 중..." : "당겨서 새로고침"}</span>
+      {/* 네이티브 당겨서 새로고침 (Pull-to-Refresh) 숨겨진 배경 애니메이션 */}
+      <div className="absolute top-12 left-0 w-full flex flex-col items-center justify-start pt-6 z-0 pointer-events-none overflow-hidden" style={{ height: '150px' }}>
+        <div className={`transition-all duration-300 flex flex-col items-center ${isRefreshing ? 'animate-bounce' : 'opacity-70'}`} style={{ transform: `translateY(${Math.min(pullDistance * 0.4, 20)}px)` }}>
+          <span className="text-3xl drop-shadow-md mb-2">{isRefreshing ? '🚀' : '✈️'}</span>
+          <span className="text-[11px] font-black text-indigo-600 bg-indigo-50/90 dark:bg-indigo-900/80 dark:text-indigo-300 px-4 py-1.5 rounded-full shadow-sm backdrop-blur-sm border border-indigo-100 dark:border-indigo-800">
+            {isRefreshing ? "영차 영차! 새로운 여행 정보를 불러오는 중! ✨" : "아래로 쭈욱 당겨서 동기화..."}
+          </span>
         </div>
       </div>
 
@@ -2466,8 +2419,8 @@ return (
 
                  {/* [NEW] 내 위치 캐릭터 아이콘 설정 */}
                  <div className="flex flex-col space-y-2 mt-3 mb-4">
-                    <label className={`text-xs font-bold ${textMuted}`}>📍 내 위치 캐릭터 설정 (배민 스타일)</label>
-                    <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+                    <label className={`text-xs font-bold ${textMuted}`}>📍 내 위치 캐릭터 설정</label>
+                    <div className="grid grid-cols-4 sm:grid-cols-7 gap-2 px-1 pb-1 box-border">
                        {['🚶‍♂️', '🏃‍♀️', '👶', '🚗', '🐎', '🐶', '🐱'].map(icon => (
                           <button key={icon} onClick={() => { setMyLocationIcon(icon); try{localStorage.setItem('my_travel_loc_icon', icon)}catch(e){} }} className={`py-1.5 text-xl rounded-lg transition-all duration-300 border shadow-sm ${myLocationIcon === icon ? 'bg-indigo-100 border-indigo-500 scale-110 z-10' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:scale-105'}`}>
                              {icon}
@@ -3966,7 +3919,38 @@ const planData = {
       )}
 
       {/* --- 메인 컨텐츠 영역 --- */}
-      <main className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto overflow-x-hidden relative z-0">
+      <main 
+        className={`flex-1 flex flex-col min-w-0 h-full overflow-y-auto overflow-x-hidden relative z-10 transition-transform ${isRefreshing || pullDistance === 0 ? 'duration-300 ease-out' : 'duration-0'} ${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}
+        style={{ transform: `translateY(${isRefreshing ? 80 : pullDistance}px)`, overscrollBehaviorY: 'contain' }}
+        onTouchStart={(e) => {
+          if (e.currentTarget.scrollTop <= 0) {
+            e.currentTarget.dataset.startY = e.touches[0].clientY;
+            e.currentTarget.dataset.isPulling = 'true';
+          }
+        }}
+        onTouchMove={(e) => {
+          if (e.currentTarget.dataset.isPulling === 'true') {
+            const startY = parseFloat(e.currentTarget.dataset.startY);
+            const currentY = e.touches[0].clientY;
+            const distance = currentY - startY;
+            if (distance > 0) {
+              setPullDistance(Math.min(distance * 0.4, 120)); 
+            }
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (e.currentTarget.dataset.isPulling === 'true') {
+            if (pullDistance > 70) {
+              setIsRefreshing(true);
+              setRefreshTrigger(prev => prev + 1);
+              setTimeout(() => { setIsRefreshing(false); setPullDistance(0); showToast("🔄 동기화 완료!"); }, 1500);
+            } else {
+              setPullDistance(0);
+            }
+            e.currentTarget.dataset.isPulling = 'false';
+          }
+        }}
+      >
         <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors duration-300`}>
           <div className="flex items-center flex-1 space-x-2 sm:space-x-4">
             <button className={`p-1.5 rounded-lg ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'} transition-all duration-300 active:scale-95`} onClick={() => setIsMobileMenuOpen(true)}>
