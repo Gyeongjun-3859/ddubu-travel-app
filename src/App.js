@@ -4299,14 +4299,21 @@ const planData = {
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col min-h-0 scroll-smooth">
-                  {/* 여행 리스트 카드: 컴팩트한 3열 배치 */}
+                 {/* 여행 리스트 카드: 컴팩트한 3열 배치 (교통편은 숨기고 오늘의 계획에만 표출) */}
                   <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-1.5 content-start">
-                    {todayPlans.length === 0 ? (
-                       <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`col-span-full flex flex-col items-center justify-center rounded-xl border border-dashed h-20 sm:h-24 cursor-pointer transition-all duration-300 active:scale-[0.99] ${textMuted} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 hover:border-indigo-400 hover:bg-white'}`}>
-                         <span className="text-[9px] sm:text-[11px] font-bold">일정이 없습니다. 추가해 보세요!</span>
-                       </div>
-                    ) : (
-                      todayPlans.map((plan) => {
+                    {(() => {
+                      // [버그 수정] 여행 리스트 갤러리에서는 교통/항공편 관련 카드를 완전히 필터링하여 레이아웃을 깔끔하게 유지합니다.
+                      const travelListPlans = todayPlans.filter(plan => !(plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))));
+                      
+                      if (travelListPlans.length === 0) {
+                        return (
+                           <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`col-span-full flex flex-col items-center justify-center rounded-xl border border-dashed h-20 sm:h-24 cursor-pointer transition-all duration-300 active:scale-[0.99] ${textMuted} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 hover:border-indigo-400 hover:bg-white'}`}>
+                             <span className="text-[9px] sm:text-[11px] font-bold">일정이 없습니다. 추가해 보세요!</span>
+                           </div>
+                        );
+                      }
+
+                      return travelListPlans.map((plan) => {
                         const isActive = activeMobileCard === plan.id;
                         const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-700 md:hover:border-indigo-500' : 'border-slate-200 md:hover:border-indigo-400');
                         
@@ -4315,20 +4322,18 @@ const planData = {
                           key={plan.id} 
                           className={`rounded-lg border shadow-sm overflow-hidden flex flex-col transition-all duration-300 group relative hover:shadow-md ${cardBorder} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-white'}`}
                         >
-                          {/* 교통편의 경우 사진 영역 아예 생략 */}
-                          {!(plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) && (
-                            <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} 
-                                 onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                              <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
-                              <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">
-                                {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
-                              </div>
-                              <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
+                          {/* 교통편이 이미 필터링되었으므로 조건부 렌더링을 제거하고 항상 예쁜 사진 영역을 띄웁니다. */}
+                          <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} 
+                               onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
+                            <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
+                            <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">
+                              {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
                             </div>
-                          )}
+                            <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
+                          </div>
+                          
                           <div className={`flex flex-col p-1.5 flex-1 cursor-pointer justify-start min-w-0 transition-colors duration-300 ${isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50/50'}`} 
                                onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                            {(plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) && <span className="text-indigo-500 font-bold text-[7px] mb-0.5">{S(plan.time)}</span>}
                             <h4 className={`font-black text-[9px] sm:text-[11px] truncate tracking-tight mb-0.5 transition-colors duration-300 ${textMain}`}>
                               {S(plan.place)} {plan.isAccommodation && '🏠'}
                             </h4>
@@ -4343,7 +4348,7 @@ const planData = {
                           </div>
                         </div>
                       )})
-                    )}
+                    })()}
                   </div>
                 </div>
               </div>
