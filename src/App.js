@@ -184,7 +184,8 @@ const MainApp = () => {
   const [elementScale, setElementScale] = useState(1);
   const [fontScale, setFontScale] = useState(1);
   
-  const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif");
+const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif");
+  const [appTextColor, setAppTextColor] = useState("default"); // [NEW] 앱 글자 색상 상태 추가
   const [myLocationIcon, setMyLocationIcon] = useState("🚗"); // [NEW] 배민 스타일 위치 캐릭터 상태
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tripModal, setTripModal] = useState({ isOpen: false, mode: 'add', name: '' });
@@ -339,7 +340,20 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
 // [정리 완료] 중복 선언 에러 해결: 변수들을 하나씩만 정의했습니다.
   const [isPackingModalOpen, setIsPackingModalOpen] = useState(false);
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
-  const [archiveFilterYear, setArchiveFilterYear] = useState('all');
+  const [editingItemId, setEditingItemId] = useState(null); // [NEW] 길게 눌러 수정 중인 아이디
+  const longPressTimer = useRef(null);
+
+  // [NEW] 길게 누르기 감지 공통 함수
+  const startLongPress = (id) => {
+    longPressTimer.current = setTimeout(() => {
+      setEditingItemId(id);
+      showToast("✏️ 편집 모드가 활성화되었습니다.");
+    }, 600); // 0.6초간 누르면 활성화
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };  const [archiveFilterYear, setArchiveFilterYear] = useState('all');
   const [archiveFilterLocation, setArchiveFilterLocation] = useState('all');
   const isDarkMode = appTheme === 'dark';
 
@@ -1843,6 +1857,9 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
 
       const savedFont = localStorage.getItem('my_travel_font');
       if (savedFont) setAppFont(savedFont);
+      
+      const savedTextColor = localStorage.getItem('my_travel_text_color');
+      if (savedTextColor) setAppTextColor(savedTextColor);
 
       // [NEW] 내 위치 아이콘 로컬스토리지 복구
       const savedLocIcon = localStorage.getItem('my_travel_loc_icon');
@@ -2535,7 +2552,24 @@ return (
                        <option value="'Noto Sans KR', sans-serif">Noto Sans KR (깔끔한 고딕)</option>
                        <option value="'Nanum Gothic', sans-serif">나눔고딕 (둥근 고딕)</option>
                     </select>
-                 </div>
+                  </div>
+
+                  {/* [NEW] 앱 글자 색상 설정 UI 수정 */}
+                  <div className="flex flex-col space-y-2 mt-3">
+                    <label className={`text-xs font-bold ${textMuted}`}>앱 글자 색상 설정</label>
+                    <div className="grid grid-cols-2 gap-2">
+                       {[
+                         { id: 'original', label: '초기 테마 (파랑/회색 혼합)', color: 'linear-gradient(45deg, #4f46e5, #64748b)' },
+                         { id: 'default', label: '기본 (다크/라이트 자동)', color: isDarkMode ? '#f1f5f9' : '#0f172a' },
+                         { id: 'high-contrast', label: '고대비 (선명함)', color: isDarkMode ? '#ffffff' : '#000000' },
+                         { id: 'monochrome', label: '단색 (부드러움)', color: isDarkMode ? '#e2e8f0' : '#1e293b' }
+                       ].map(item => (
+                         <button key={item.id} onClick={() => { setAppTextColor(item.id); localStorage.setItem('my_travel_text_color', item.id); }} className={`flex items-center space-x-2 p-2 rounded-lg border-2 text-[10px] font-bold transition-all ${appTextColor === item.id ? 'border-indigo-500 bg-indigo-50/20 shadow-inner' : 'border-slate-100 dark:border-slate-700'}`}>                           <div className="w-3 h-3 rounded-full border border-slate-300" style={{ background: item.color }}></div>
+                           <span>{item.label}</span>
+                         </button>
+                       ))}
+                    </div>
+                  </div>
                  
                  <div className="flex flex-col space-y-2 pt-2">
                     <label className={`text-xs font-bold ${textMuted}`}>화면/글자 크기 (글꼴: {fontScale}, 요소: {elementScale})</label>
@@ -3009,24 +3043,15 @@ const getLocalSym = (c) => {
                         let targetPlace = null;
                         let dbUpdates = {};
                         
-                        if (shoppingLinkPlanId === 'manual' || !shoppingLinkPlanId) {
-                            const newPinName = `[${shoppingItemTheme}] ${itemName}`;
-                            const newPin = {
-                                id: `shop-pin-${Date.now()}`, lat: null, lng: null, country: S(displayCityName), city: S(displayCityName),
-                                name: newPinName, localName: "", signature: `${shoppingItemTheme} 수동 등록`,
-                                img: newShoppingPhoto || "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
-                                rating: 5.0, isAccommodation: shoppingItemTheme === '숙소', isLandmark: false, theme: shoppingItemTheme
-                            };
-                            const updatedRests = [newPin, ...(Array.isArray(currentRestaurants) ? currentRestaurants : [])];
-                            setCurrentRestaurants(updatedRests);
-                            dbUpdates.current_restaurants = updatedRests;
-                            targetPlace = newPinName;
-                        } else {
+                        // [수정 완료] 쇼핑 리스트 등록 시 핀 목록(currentRestaurants) 연동 제거
+                        if (shoppingLinkPlanId !== 'manual' && shoppingLinkPlanId) {
                             const linkedPlan = planTimeline.find(p => String(p.id) === String(shoppingLinkPlanId));
                             if (linkedPlan) {
                                 targetDay = linkedPlan.day;
                                 targetPlace = linkedPlan.place;
                             }
+                        } else {
+                            targetPlace = itemName;
                         }
 
                         const isPersonal = document.getElementById('shopType')?.value === 'personal';
@@ -3078,22 +3103,64 @@ const getLocalSym = (c) => {
                     if (shoppingList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">기록된 항목이 없습니다.</p>;
                     if (filteredList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">해당 Day와 테마에 맞는 정보가 없습니다.</p>;
 
-                    return filteredList.map(item => (
-                       <div key={item.id} className={`group cursor-pointer flex flex-col justify-center px-3 py-1.5 rounded-xl border shadow-sm transition-all duration-300 w-full sm:w-auto ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-pink-900/30 border-pink-500/50 text-pink-300 hover:bg-pink-900/50' : 'bg-pink-50 border-pink-200 text-pink-700 hover:bg-pink-100')}`} onClick={() => {
-                          const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
-                          setShoppingList(newList); saveToDb({ shopping_list: newList });
-                       }}>
-                         <div className="flex items-center justify-between w-full">
-                           <span className={`text-[11px] font-bold truncate max-w-[200px]`}>{item.text}</span>
-                           <button onClick={(e) => { e.stopPropagation(); const newList = shoppingList.filter(s => s.id !== item.id); setShoppingList(newList); saveToDb({ shopping_list: newList }); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-pink-400 hover:text-pink-600'}`}>✕</button>
-                         </div>
-                         <div className="flex items-center space-x-1 mt-0.5">
-                           {/* [수정됨] 미지정이 아닐 경우 Day 대신 '📍 장소명'을 표시하도록 변경 */}
-                           <span className="text-[8px] font-bold opacity-70 bg-black/5 px-1 rounded">{item.linkedPlace ? `📍 ${item.linkedPlace}` : (item.day ? `Day ${item.day}` : '미지정')}</span>
-                           <span className="text-[8px] font-bold opacity-70 bg-black/5 px-1 rounded">{item.theme || '기타'}</span>
-                         </div>
+                    return filteredList.map(item => {
+                      const isEditing = editingItemId === item.id;
+                      return (
+                       <div 
+                         key={item.id} 
+                         onMouseDown={() => startLongPress(item.id)}
+                         onMouseUp={cancelLongPress}
+                         onTouchStart={() => startLongPress(item.id)}
+                         onTouchEnd={cancelLongPress}
+                         className={`group cursor-pointer flex flex-col justify-center px-3 py-2 rounded-xl border shadow-sm transition-all duration-300 w-full ${isEditing ? 'border-pink-500 ring-2 ring-pink-500 bg-white dark:bg-slate-800' : (item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-pink-900/30 border-pink-500/50 text-pink-300 hover:bg-pink-900/50' : 'bg-pink-50 border-pink-200 text-pink-700 hover:bg-pink-100'))}`} 
+                         onClick={() => {
+                            if (isEditing) return;
+                            const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
+                            setShoppingList(newList); saveToDb({ shopping_list: newList });
+                         }}
+                       >
+                         {isEditing ? (
+                           <div className="space-y-2 py-1 no-recolor" onClick={e => e.stopPropagation()}>
+                             <input 
+                               autoFocus
+                               className="w-full text-xs font-black p-1 border-b border-pink-300 bg-transparent outline-none" 
+                               value={item.text} 
+                               onChange={(e) => {
+                                 const newList = shoppingList.map(s => s.id === item.id ? { ...s, text: e.target.value } : s);
+                                 setShoppingList(newList);
+                               }}
+                             />
+                             <div className="flex space-x-2">
+                               <select 
+                                 className="flex-1 text-[10px] p-1 rounded bg-pink-50 border border-pink-200"
+                                 value={item.theme}
+                                 onChange={(e) => {
+                                   const newList = shoppingList.map(s => s.id === item.id ? { ...s, theme: e.target.value } : s);
+                                   setShoppingList(newList);
+                                 }}
+                               >
+                                 {['쇼핑', '식당', '디저트', '관광지', '숙소', '기타'].map(t => <option key={t} value={t}>{t}</option>)}
+                               </select>
+                               <button 
+                                 onClick={() => { setEditingItemId(null); saveToDb({ shopping_list: shoppingList }); }}
+                                 className="bg-pink-500 text-white px-3 py-1 rounded text-[10px] font-black"
+                               >완료</button>
+                             </div>
+                           </div>
+                         ) : (
+                           <>
+                             <div className="flex items-center justify-between w-full">
+                               <span className="text-[11px] font-bold truncate max-w-[200px]">{item.text}</span>
+                               <button onClick={(e) => { e.stopPropagation(); const newList = shoppingList.filter(s => s.id !== item.id); setShoppingList(newList); saveToDb({ shopping_list: newList }); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-pink-400 hover:text-pink-600'}`}>✕</button>
+                             </div>
+                             <div className="flex items-center space-x-1 mt-0.5 opacity-60">
+                               <span className="text-[8px] font-bold bg-black/5 px-1 rounded">{item.linkedPlace ? `📍 ${item.linkedPlace}` : (item.day ? `Day ${item.day}` : '미지정')}</span>
+                               <span className="text-[8px] font-bold bg-black/5 px-1 rounded">{item.theme || '기타'}</span>
+                             </div>
+                           </>
+                         )}
                        </div>
-                    ));
+                    )});
                   })()}
                 </div>
              </div>
@@ -3156,28 +3223,28 @@ const getLocalSym = (c) => {
                         {Object.keys(grouped[dayKey]).sort().map(themeKey => (
                            <div key={themeKey} className="mb-3 last:mb-0 pl-2">
                               <h5 className={`text-[10px] font-bold mb-1.5 ${isDarkMode ? 'text-pink-400' : 'text-pink-600'}`}>• {themeKey}</h5>
-                              {/* [NEW] 쇼핑 리스트 4열 갤러리 뷰 UI 적용 (반응형 Grid) */}
-                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                              {/* [수정 완료] 쇼핑 리스트 4~5열 병렬 촘촘한 그리드 적용 */}
+                              <div className="grid grid-cols-4 sm:grid-cols-5 gap-1.5 sm:gap-2">
                                  {grouped[dayKey][themeKey].map(item => (
                                     <div key={item.id} onClick={() => {
                                         const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
                                         setShoppingList(newList); saveToDb({ shopping_list: newList });
-                                    }} className={`cursor-pointer flex flex-col rounded-xl border shadow-sm overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-md ${item.isChecked ? (isDarkMode ? 'bg-slate-800 border-slate-700 opacity-50 grayscale' : 'bg-slate-100 border-slate-200 opacity-50 grayscale') : (isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200')}`}>
+                                    }} className={`cursor-pointer flex flex-col rounded-lg border shadow-sm overflow-hidden transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-800 border-slate-700 opacity-50 grayscale' : 'bg-slate-100 border-slate-200 opacity-50 grayscale') : (isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200')}`}>
                                       <div className="w-full aspect-square relative bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center overflow-hidden">
                                         {item.img && !S(item.img).includes("unsplash") ? (
-                                          <img src={item.img} alt={item.text} className="w-full h-full object-cover transition-transform duration-500 hover:scale-110" />
+                                          <img src={item.img} alt={item.text} className="w-full h-full object-cover" />
                                         ) : (
-                                          <span className="text-4xl opacity-40">{themeKey === '쇼핑' ? '🛍️' : themeKey === '식당' ? '🍽️' : themeKey === '관광지' ? '📸' : themeKey === '숙소' ? '🏠' : '🎁'}</span>
+                                          <span className="text-xl opacity-40">{themeKey === '쇼핑' ? '🛍️' : themeKey === '식당' ? '🍽️' : themeKey === '관광지' ? '📸' : themeKey === '숙소' ? '🏠' : '🎁'}</span>
                                         )}
-                                        <div className={`absolute top-2 left-2 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-sm bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm ${item.isChecked ? 'border-pink-500 bg-pink-500 text-white scale-110' : 'border-slate-300 dark:border-slate-500'}`}>
-                                          {item.isChecked && <span className="text-[10px] font-black leading-none mt-0.5">✓</span>}
+                                        <div className={`absolute top-1 left-1 w-3.5 h-3.5 rounded-full border flex items-center justify-center transition-all duration-300 shadow-sm bg-white/80 dark:bg-slate-800/80 ${item.isChecked ? 'border-pink-500 bg-pink-500 text-white' : 'border-slate-300'}`}>
+                                          {item.isChecked && <span className="text-[7px] font-black">✓</span>}
                                         </div>
                                       </div>
-                                      <div className={`p-2.5 text-center transition-all duration-300 ${item.isChecked ? 'line-through text-slate-400' : (isDarkMode ? 'text-slate-200' : 'text-slate-800')}`}>
-                                        <span className="text-[11px] font-black block truncate w-full">{item.text}</span>
+                                      <div className={`p-1 text-center transition-all duration-300 ${item.isChecked ? 'line-through text-slate-400' : (isDarkMode ? 'text-slate-200' : 'text-slate-800')}`}>
+                                        <span className="text-[8px] font-black block truncate w-full no-recolor">{item.text}</span>
                                       </div>
                                     </div>
-                                 ))}
+                                  ))}
                               </div>
                            </div>
                         ))}
@@ -3214,12 +3281,43 @@ const getLocalSym = (c) => {
 
                 <div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
                   {/* [NEW] 개인용 아이템은 작성자 본인(appUserId)에게만 보이도록 필터링 로직 추가 */}
-                  {packingList.filter(item => !item.isPersonal || item.userId === appUserId).map(item => (
-                     <div key={item.id} onClick={() => togglePackingItem(item.id)} className={`group cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100')}`}>
-                       <span className={`text-[11px] font-bold truncate max-w-[200px]`}>{item.text}</span>
-                       <button onClick={(e) => { e.stopPropagation(); deletePackingItem(item.id); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-indigo-400 hover:text-indigo-600'}`}>✕</button>
+                  {packingList.filter(item => !item.isPersonal || item.userId === appUserId).map(item => {
+                    const isEditing = editingItemId === item.id;
+                    return (
+                     <div 
+                       key={item.id} 
+                       onMouseDown={() => startLongPress(item.id)}
+                       onMouseUp={cancelLongPress}
+                       onTouchStart={() => startLongPress(item.id)}
+                       onTouchEnd={cancelLongPress}
+                       className={`group cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${isEditing ? 'border-indigo-500 ring-2 ring-indigo-500 bg-white dark:bg-slate-800' : (item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'))}`}
+                       onClick={() => {
+                          if (isEditing) return;
+                          togglePackingItem(item.id);
+                       }}
+                     >
+                       {isEditing ? (
+                         <div className="flex items-center space-x-2 no-recolor" onClick={e => e.stopPropagation()}>
+                           <input 
+                             autoFocus
+                             className="text-xs font-black bg-transparent outline-none border-b border-indigo-300 w-24" 
+                             value={item.text} 
+                             onChange={(e) => {
+                               const newList = packingList.map(p => p.id === item.id ? { ...p, text: e.target.value } : p);
+                               setPackingList(newList);
+                             }}
+                             onKeyDown={e => e.key === 'Enter' && setEditingItemId(null)}
+                           />
+                           <button onClick={() => { setEditingItemId(null); saveToDb({ packing_list: packingList }); }} className="text-[10px] font-black text-indigo-600">저장</button>
+                         </div>
+                       ) : (
+                         <>
+                           <span className="text-[11px] font-bold truncate max-w-[200px]">{item.text}</span>
+                           <button onClick={(e) => { e.stopPropagation(); deletePackingItem(item.id); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-indigo-400 hover:text-indigo-600'}`}>✕</button>
+                         </>
+                       )}
                      </div>
-                  ))}
+                  )})}
                   {packingList.length === 0 && (
                     <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">아직 등록된 준비물이 없습니다.</p>
                   )}
@@ -4444,7 +4542,7 @@ const planData = {
                   {/* [NEW] 4칸씩 줄바꿈(접힘) 처리되는 그리드 */}
                   <div className={`grid grid-cols-4 gap-1 border rounded-lg p-1 shadow-sm mb-2 max-h-24 overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200/80'}`}>
                     {tripDays.map(d => (
-                      <button key={d} onClick={() => setNewDay(d)} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 ${newDay === d ? 'bg-indigo-600 text-white shadow-md scale-105' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
+                      <button key={d} onClick={() => setNewDay(d)} className={`flex-1 text-[10px] font-black py-1.5 rounded transition-all duration-300 is-tag ${newDay === d ? 'bg-indigo-600 text-white shadow-md scale-110 z-10' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 hover:bg-indigo-100'}`}>D{d}</button>
                     ))}
                   </div>
 
@@ -4628,7 +4726,7 @@ const planData = {
                                        if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                                        else setActiveMobileCard(plan.id);
                                      }}>
-                                  <div className="bg-indigo-500 text-white font-black text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{S(plan.time)}</div>
+                                  <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{S(plan.time)}</div>
                                   <div className="flex-1 min-w-0 flex flex-col px-0.5">
                                     <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
                                       {S(plan.place)}
@@ -4762,8 +4860,7 @@ const planData = {
 <div className="flex flex-col space-y-2 pb-1">
                 {/* [Day 필터] */}
                 <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
-                   <button onClick={() => toggleMapDay('all')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-300 ${mapActiveDays.includes('all') ? (isDarkMode ? 'bg-indigo-500 text-white border-indigo-500 shadow-md' : 'bg-slate-800 text-white shadow-md border-slate-800') : (isDarkMode ? 'bg-slate-800 text-slate-300 border border-slate-600' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50')}`}>전체 Day</button>
-                   {tripDays.map(d => {
+                  <button onClick={() => toggleMapDay('all')} className={`px-4 py-1.5 rounded-full text-[10px] font-black whitespace-nowrap transition-all duration-300 is-tag ${mapActiveDays.includes('all') ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'}`}>전체 Day</button>                   {tripDays.map(d => {
                      const color = getDayColor(d);
                      const isActive = mapActiveDays.includes(d);
 return (
@@ -4875,7 +4972,34 @@ return (
         
         :root {
           --font-scale: ${fontScale};
+          /* [NEW] 글자 색상 동적 변수 할당 */
+          --main-text-color: ${(() => {
+            if (appTextColor === 'original') return isDarkMode ? '#f1f5f9' : '#0f172a'; // 초기 테마는 기본 시스템 색상 따름
+            if (appTextColor === 'high-contrast') return isDarkMode ? '#ffffff' : '#000000'; // 고대비: 완전 흰색/검정
+            if (appTextColor === 'monochrome') return isDarkMode ? '#e2e8f0' : '#1e293b'; // 단색: 부드러운 흰색/검정
+            return isDarkMode ? '#f1f5f9' : '#0f172a'; // 기본값
+          })()};
         }
+
+        /* [수정 완료] 전역 글자색 로직 최적화 및 가독성 보호 */
+        body { color: var(--main-text-color); }
+        
+        /* 유색 배경의 태그/버튼들은 전역 글자색 변경에서 제외하여 가독성 확보 */
+        .is-tag, .is-tag *, .text-white, .text-white *, 
+        .bg-indigo-600 *, .bg-indigo-500 *, .bg-rose-500 *, .bg-orange-500 *, .bg-emerald-500 *, .bg-pink-500 * { 
+          color: white !important; 
+          text-shadow: 0 1px 1px rgba(0,0,0,0.1);
+        }
+
+        ${appTextColor !== 'original' && appTextColor !== 'default' ? `
+          /* 일반 텍스트들만 선택된 글자색으로 변경 */
+          p, span:not(.is-tag), div:not(.is-tag), h1, h2, h3, h4, h5, h6, label {
+            color: var(--main-text-color) !important;
+          }
+        ` : ''}
+
+        /* 아이콘 및 특수 컴포넌트 보호 */
+        .no-recolor, .no-recolor *, .leaflet-container *, .leaflet-popup-content * { color: inherit !important; }
 
         /* Tailwind 텍스트 클래스들 동적 오버라이드 (폰트 스케일 적용) */
         .text-\\[6px\\] { font-size: calc(6px * var(--font-scale)) !important; }
