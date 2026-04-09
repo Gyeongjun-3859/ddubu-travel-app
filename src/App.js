@@ -43,7 +43,7 @@ const CURRENCIES = [
 ];
 
 const REGIONS_BY_COUNTRY = {
-  "한국": ["서울", "부산", "제주", "인천", "경주"],
+  "한국": ["서울", "부산", "제주", "인천", "경주", "순천"],
   "일본": ["도쿄", "오사카", "후쿠오카", "교토", "삿포로"],
   "프랑스": ["파리", "니스", "마르세유", "리옹"],
   "미국": ["뉴욕", "로스앤젤레스", "시카고", "하와이", "샌프란시스코"],
@@ -52,7 +52,7 @@ const REGIONS_BY_COUNTRY = {
   "태국": ["방콕", "치앙마이", "푸껫", "파타야"],
   "베트남": ["다낭", "하노이", "호찌민", "나트랑"],
   "중국": ["베이징", "상하이", "칭다오", "청두", "대련"],
-  "영국": ["런던", "에든버러", "맨체스터"],
+  "영국": ["런던", "에든버러", "맨체스터", "리버풀"],
   "스페인": ["바르셀로나", "마드리드", "세비야"],
   "독일": ["베를린", "뮌헨", "프랑크푸르트"],
   "호주": ["시드니", "멜버른", "브리즈번"]
@@ -185,6 +185,7 @@ const MainApp = () => {
   const [fontScale, setFontScale] = useState(1);
   
   const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif");
+  const [myLocationIcon, setMyLocationIcon] = useState("🚗"); // [NEW] 배민 스타일 위치 캐릭터 상태
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tripModal, setTripModal] = useState({ isOpen: false, mode: 'add', name: '' });
   const [tripToDelete, setTripToDelete] = useState(null);
@@ -301,6 +302,11 @@ const MainApp = () => {
   const [shoppingList, setShoppingList] = useState([]);
   const [isShoppingModalOpen, setIsShoppingModalOpen] = useState(false);
   const [newShoppingItem, setNewShoppingItem] = useState("");
+  const [newShoppingPhoto, setNewShoppingPhoto] = useState(""); // [NEW] 쇼핑 사진 첨부 상태
+  const shoppingFileInputRef = useRef(null); // [NEW] 쇼핑 사진 DOM Ref
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // [NEW] 당겨서 새로고침 (PTR) 트리거
+  const [pullDistance, setPullDistance] = useState(0); // [NEW] 당겨서 새로고침 거리
+  const [isRefreshing, setIsRefreshing] = useState(false); // [NEW] 새로고침 중 상태
   const [shoppingLinkPlanId, setShoppingLinkPlanId] = useState("");
   const [shoppingItemDay, setShoppingItemDay] = useState("");
   const [shoppingItemTheme, setShoppingItemTheme] = useState("쇼핑");
@@ -1138,20 +1144,26 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
         
         const renderLocMarker = (lat, lng, head) => {
            if (window.myLocMarker) window.myLocMarker.remove();
-           const rot = (head !== null && !isNaN(head)) ? `transform: rotate(${head}deg);` : '';
+           
+           // [NEW] 방향 화살표 (스무스한 회전 적용 및 캐릭터 머리 위로 배치)
            const arrowHtml = (head !== null && !isNaN(head))
-              ? `<div style="position:absolute; top:-14px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:14px solid #ef4444;"></div>` 
+              ? `<div style="position:absolute; top:-12px; left:50%; transform:translateX(-50%) rotate(${head}deg); transform-origin: 50% 34px; transition: transform 0.3s ease-out; z-index: 1;">
+                    <div style="width:0; height:0; border-left:8px solid transparent; border-right:8px solid transparent; border-bottom:16px solid rgba(79, 70, 229, 0.9); filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.3));"></div>
+                 </div>` 
               : '';
+
+           // [NEW] 배달의민족 스타일 통통 튀는 캐릭터 마커 HTML/CSS
            const html = `
-              <div style="position:relative; width:24px; height:24px; ${rot} transition: transform 0.2s;">
+              <div style="position:relative; width:44px; height:44px; display:flex; align-items:center; justify-content:center;">
                   ${arrowHtml}
-                  <div style="background-color:#ef4444;width:16px;height:16px;border-radius:50%;border:3px solid white;box-shadow:0 0 8px rgba(0,0,0,0.6); position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index: 2;"></div>
-                  <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); width:40px; height:40px; border-radius:50%; background-color:#ef4444; opacity:0.3; animation: myloc-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; z-index: 1;"></div>
+                  <div style="position:relative; z-index:2; animation: baemin-bounce 0.6s infinite alternate cubic-bezier(0.5, 0.05, 1, 0.5); filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.4)); font-size: 32px; line-height: 1;">
+                      ${myLocationIcon}
+                  </div>
+                  <div style="position:absolute; bottom:2px; left:50%; transform:translateX(-50%); width:20px; height:6px; background:rgba(0,0,0,0.3); border-radius:50%; filter:blur(2px); animation: baemin-shadow 0.6s infinite alternate cubic-bezier(0.5, 0.05, 1, 0.5); z-index:1;"></div>
               </div>
-              <style>@keyframes myloc-ping { 75%, 100% { transform: translate(-50%, -50%) scale(2); opacity: 0; } }</style>
            `;
-           const myLocIcon = window.L.divIcon({ html, className: '', iconSize: [24, 24], iconAnchor: [12, 12] });
-           window.myLocMarker = window.L.marker([lat, lng], { icon: myLocIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current).bindPopup(`<b>현재 내 위치</b>`);
+           const customLocIcon = window.L.divIcon({ html, className: '', iconSize: [44, 44], iconAnchor: [22, 40] });
+           window.myLocMarker = window.L.marker([lat, lng], { icon: customLocIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current).bindPopup(`<div style="text-align:center; font-weight:bold; font-size:12px;">내 현재 위치 (설정에서 변경 가능)</div>`);
         };
 
         renderLocMarker(latitude, longitude, heading);
@@ -1179,6 +1191,13 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
       else showToast("위치 접근 중 알 수 없는 오류가 발생했습니다.");
     }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
   }
+
+  // [버그 수정 3] 환경설정에서 마커 캐릭터 변경 시 지도에 즉각 반영되도록 반응성(Reactivity) 의존성 추가
+  useEffect(() => {
+    if (window.myLocMarker && isLeafletLoaded && mapInstanceRef.current) {
+      handleFindMyLocation(); // 마커 상태(myLocationIcon)가 바뀔 때마다 내 위치 함수를 재호출하여 즉각 렌더링
+    }
+  }, [myLocationIcon]);
 
   function handleMarkerSearchSelect(marker) {
     if (mapInstanceRef.current && marker && marker.lat) mapInstanceRef.current.flyTo([marker.lat, marker.lng], 17);
@@ -1531,10 +1550,10 @@ function deletePackingItem(id) {
               setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
               
               if (Array.isArray(data.current_restaurants)) {
-              setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타" })));              } else { setCurrentRestaurants([]); }
+              setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));              } else { setCurrentRestaurants([]); }
               
               if (Array.isArray(data.plan_timeline)) {
-               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "" })));              } else { setPlanTimeline([]); }
+               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));              } else { setPlanTimeline([]); }
               
               loaded = true;
             }
@@ -1727,6 +1746,10 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
 
       const savedFont = localStorage.getItem('my_travel_font');
       if (savedFont) setAppFont(savedFont);
+
+      // [NEW] 내 위치 아이콘 로컬스토리지 복구
+      const savedLocIcon = localStorage.getItem('my_travel_loc_icon');
+      if (savedLocIcon) setMyLocationIcon(savedLocIcon);
     } catch(e){}
   }, []);
 
@@ -1757,11 +1780,12 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           setShoppingList(Array.isArray(data.shopping_list) ? data.shopping_list : []);
           setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
           
+          // [버그 수정 2] F5 새로고침 시 DB에서 rating과 review 필드 복원 (Fetch 매핑 로직 추가)
           if (Array.isArray(data.current_restaurants)) {
-          setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타" })));          } else { setCurrentRestaurants([]); }
+          setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));          } else { setCurrentRestaurants([]); }
           
           if (Array.isArray(data.plan_timeline)) {
-          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "" })));          } else { setPlanTimeline([]); }
+          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
         } else {
            setDisplayCityName("선택된 지역 없음");
            setCurrentRestaurants([]);
@@ -1800,11 +1824,11 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           }
           
           if (Array.isArray(payload.new.current_restaurants)) {
-            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || '기타' }));
+            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || '기타', rating: r.rating || 0, review: r.review || "" }));
             setCurrentRestaurants(cleanRests);
           }
           if (Array.isArray(payload.new.plan_timeline)) {
-            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport) }));
+            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
             setPlanTimeline(cleanPlans);
           }
         }
@@ -1830,7 +1854,58 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       supabaseClient.removeChannel(tripChannel);
       supabaseClient.removeChannel(inviteChannel);
     };
-  }, [supabaseClient, appUserId, activeTripId, syncCountryRegionFromCityName]);
+  }, [supabaseClient, appUserId, activeTripId, syncCountryRegionFromCityName, refreshTrigger]); // [NEW] refreshTrigger 의존성 추가
+
+  // [NEW] 당겨서 새로고침 (Pull-to-Refresh) 모바일 최적화 이벤트 리스너
+  useEffect(() => {
+    let startY = 0;
+    let isPulling = false;
+
+    const handleTouchStart = (e) => {
+      // 화면 최상단(scrollTop 0)일 때만 당기기 시작
+      const mainScrollArea = document.querySelector('main');
+      if (mainScrollArea && mainScrollArea.scrollTop <= 0) {
+        startY = e.touches[0].clientY;
+        isPulling = true;
+      }
+    };
+
+    const handleTouchMove = (e) => {
+      if (!isPulling) return;
+      const currentY = e.touches[0].clientY;
+      const distance = currentY - startY;
+      
+      if (distance > 0) {
+        setPullDistance(Math.min(distance * 0.5, 80)); // 텐션 효과를 위해 0.5 곱함, 최대 80px
+      }
+    };
+
+    const handleTouchEnd = () => {
+      if (!isPulling) return;
+      if (pullDistance > 60) { // 60px 이상 당겼을 때 새로고침 발동
+        setIsRefreshing(true);
+        setRefreshTrigger(prev => prev + 1); // DB Fetch 재실행 트리거
+        setTimeout(() => {
+          setIsRefreshing(false);
+          setPullDistance(0);
+          showToast("🔄 최신 데이터로 동기화되었습니다!");
+        }, 1000);
+      } else {
+        setPullDistance(0); // 원상복구
+      }
+      isPulling = false;
+    };
+
+    document.addEventListener('touchstart', handleTouchStart, { passive: true });
+    document.addEventListener('touchmove', handleTouchMove, { passive: true });
+    document.addEventListener('touchend', handleTouchEnd);
+
+    return () => {
+      document.removeEventListener('touchstart', handleTouchStart);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [pullDistance]);
 
   useEffect(() => {
     isPinModeRef.current = isPinMode; 
@@ -1954,15 +2029,18 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       
       let mapPassDay = true;
       if (!mapActiveDays.includes('all')) {
-         mapPassDay = mapActiveDays.includes('unlinked') ? mapLinkedPlans.length === 0 : mapLinkedPlans.some(p => mapActiveDays.includes(parseInt(p.day)));
+         // [버그 수정] 미지정 핀(unlinked)과 일반 Day 복수 선택 가능하도록 조건 병합
+         const hasUnlinked = mapActiveDays.includes('unlinked') && mapLinkedPlans.length === 0;
+         const hasDay = mapLinkedPlans.some(p => mapActiveDays.includes(parseInt(p.day)));
+         mapPassDay = hasUnlinked || hasDay;
       }
       
       let mapPassTheme = true;
-      if (typeof myPinsThemeFilter !== 'undefined' && myPinsThemeFilter !== 'all') {
+      if (typeof myPinsThemeFilter !== 'undefined' && !myPinsThemeFilter.includes('all')) {
          const mapEffectiveTheme = mapLinkedPlans[0]?.theme || rest.theme || "기타";
          const mapRawPinTheme = S(mapEffectiveTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
-         const mapRawFilterTheme = S(myPinsThemeFilter).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
-         mapPassTheme = (mapRawPinTheme === mapRawFilterTheme);
+         // [버그 수정] 테마 복수 선택(배열) 지원
+         mapPassTheme = myPinsThemeFilter.some(filterTheme => mapRawPinTheme === S(filterTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim());
       }
       
       // 이 마커가 조건에 안 맞으면 여기서 바로 건너뜁니다! (회색 핀 원천 차단)
@@ -2021,12 +2099,11 @@ const filteredMyPins = filteredMarkers.filter(pin => {
 
   // 2. [테마 필터 - 스마트 룩업]
   let passTheme = true;
-  if (myPinsThemeFilter !== 'all') {
+  if (!myPinsThemeFilter.includes('all')) {
     // 일정표 테마가 1순위, 핀 테마가 2순위
     const effectiveTheme = linkedPlans[0]?.theme || pin.theme || "기타";
     const rawPinTheme = S(effectiveTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
-    const rawFilterTheme = S(myPinsThemeFilter).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
-    passTheme = (rawPinTheme === rawFilterTheme);
+    passTheme = myPinsThemeFilter.some(filterTheme => rawPinTheme === S(filterTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim());
   }
 
   return passDay && passTheme;
@@ -2202,6 +2279,14 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
   return (
     <div style={{ zoom: finalElementScale }} className={`flex flex-col h-[100dvh] w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
       
+      {/* [NEW] 당겨서 새로고침 로딩 인디케이터 UI */}
+      <div className="absolute top-0 left-0 w-full flex justify-center z-[9999] pointer-events-none transition-all duration-300" style={{ transform: `translateY(${pullDistance > 0 && !isRefreshing ? pullDistance : (isRefreshing ? 60 : -50)}px)`, opacity: pullDistance > 10 || isRefreshing ? 1 : 0 }}>
+        <div className="bg-white dark:bg-slate-800 shadow-xl rounded-full px-4 py-2 flex items-center space-x-2 border border-slate-200 dark:border-slate-700">
+          <span className={`text-xl ${isRefreshing ? 'animate-spin' : ''}`}>🔄</span>
+          <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400">{isRefreshing ? "업데이트 중..." : "당겨서 새로고침"}</span>
+        </div>
+      </div>
+
       {/* --- 모달 및 팝업 영역 --- */}
       {toastMsg && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">
@@ -2376,6 +2461,18 @@ return (
                        <button onClick={() => handleThemeChange('light')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'light' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>기본(Light)</button>
                        <button onClick={() => handleThemeChange('dark')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'dark' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'}`}>다크 모드</button>
                        <button onClick={() => handleThemeChange('pastel')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'pastel' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100'}`}>파스텔</button>
+                    </div>
+                 </div>
+
+                 {/* [NEW] 내 위치 캐릭터 아이콘 설정 */}
+                 <div className="flex flex-col space-y-2 mt-3 mb-4">
+                    <label className={`text-xs font-bold ${textMuted}`}>📍 내 위치 캐릭터 설정 (배민 스타일)</label>
+                    <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+                       {['🚶‍♂️', '🏃‍♀️', '👶', '🚗', '🐎', '🐶', '🐱'].map(icon => (
+                          <button key={icon} onClick={() => { setMyLocationIcon(icon); try{localStorage.setItem('my_travel_loc_icon', icon)}catch(e){} }} className={`py-1.5 text-xl rounded-lg transition-all duration-300 border shadow-sm ${myLocationIcon === icon ? 'bg-indigo-100 border-indigo-500 scale-110 z-10' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:scale-105'}`}>
+                             {icon}
+                          </button>
+                       ))}
                     </div>
                  </div>
 
@@ -2843,25 +2940,26 @@ const getLocalSym = (c) => {
                        ))}
                     </select>
                   </div>
-<div className="flex space-x-1.5">
-                    <select id="shopType" className={`w-20 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-1 py-2.5 text-[10px] font-bold outline-none rounded-lg shadow-sm`}>
-                      <option value="shared">공동용 👨‍👩‍👧‍👦</option>
-                      <option value="personal">개인용 🔒</option>
-                    </select>
-                    <input type="text" placeholder="살 물건/계획 입력 후 엔터키" value={newShoppingItem} onChange={e => setNewShoppingItem(e.target.value)} onKeyDown={(e) => {
-                      if (e.nativeEvent.isComposing) return;
-                      if (e.key === 'Enter' && e.target.value.trim()) {
+<div className="flex flex-col space-y-1.5">
+                    <div className="flex space-x-1.5">
+                      <select id="shopType" className={`w-20 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-1 py-2.5 text-[10px] font-bold outline-none rounded-lg shadow-sm`}>
+                        <option value="shared">공동용 👨‍👩‍👧‍👦</option>
+                        <option value="personal">개인용 🔒</option>
+                      </select>
+                      <input type="text" placeholder="살 물건 입력 후 우측 등록버튼" value={newShoppingItem} onChange={e => setNewShoppingItem(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') document.getElementById('addShopBtn')?.click(); }} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-pink-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
+                      <button id="addShopBtn" onClick={() => {
+                        if (!newShoppingItem.trim()) return;
                         let targetDay = shoppingItemDay;
                         let targetPlace = null;
                         let dbUpdates = {};
                         
                         if (shoppingLinkPlanId === 'manual' || !shoppingLinkPlanId) {
-                            const itemName = e.target.value.trim();
+                            const itemName = newShoppingItem.trim();
                             const newPinName = `[${shoppingItemTheme}] ${itemName}`;
                             const newPin = {
                                 id: `shop-pin-${Date.now()}`, lat: null, lng: null, country: S(displayCityName), city: S(displayCityName),
                                 name: newPinName, localName: "", signature: `${shoppingItemTheme} 수동 등록`,
-                                img: "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
+                                img: newShoppingPhoto || "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
                                 rating: 5.0, isAccommodation: shoppingItemTheme === '숙소', isLandmark: false, theme: shoppingItemTheme
                             };
                             const updatedRests = [newPin, ...(Array.isArray(currentRestaurants) ? currentRestaurants : [])];
@@ -2876,15 +2974,26 @@ const getLocalSym = (c) => {
                             }
                         }
 
-const isPersonal = document.getElementById('shopType')?.value === 'personal';
-                        const newItem = { id: Date.now().toString(), text: e.target.value.trim(), isChecked: false, day: targetDay, theme: shoppingItemTheme, linkedPlace: targetPlace, isPersonal: isPersonal, userId: appUserId };                        const newList = [...shoppingList, newItem];
+                        const isPersonal = document.getElementById('shopType')?.value === 'personal';
+                        // [NEW] 쇼핑 아이템에 img 필드 추가
+                        const newItem = { id: Date.now().toString(), text: newShoppingItem.trim(), isChecked: false, day: targetDay, theme: shoppingItemTheme, linkedPlace: targetPlace, isPersonal: isPersonal, userId: appUserId, img: newShoppingPhoto };
+                        const newList = [...shoppingList, newItem];
                         setShoppingList(newList); 
                         dbUpdates.shopping_list = newList;
                         
                         saveToDb(dbUpdates);
                         setNewShoppingItem("");
-                      }
-                    }} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-pink-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
+                        setNewShoppingPhoto(""); // 입력 완료 후 사진 초기화
+                      }} className="bg-pink-500 text-white px-3 py-2.5 rounded-lg text-[10px] font-bold shadow-sm hover:bg-pink-600 active:scale-95 transition-all">등록</button>
+                    </div>
+                    {/* [NEW] 사진 첨부 영역 */}
+                    <div className="flex space-x-1.5">
+                      <input type="file" accept="image/*" ref={shoppingFileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if(file) compressImage(file, (compressed) => setNewShoppingPhoto(S(compressed))); }} className="hidden" />
+                      <button type="button" onClick={() => shoppingFileInputRef.current?.click()} className={`flex-shrink-0 px-2 py-1.5 text-[9px] font-bold rounded-lg border transition-all duration-300 flex items-center justify-center ${newShoppingPhoto ? 'bg-pink-50 border-pink-300 text-pink-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100')}`}>
+                        📸 파일
+                      </button>
+                      <input type="text" placeholder="또는 이미지 URL 복붙" value={newShoppingPhoto} onChange={e => setNewShoppingPhoto(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-2 py-1.5 text-[9px] font-bold outline-none rounded-lg shadow-sm`} />
+                    </div>
                   </div>
 <div className="flex items-center justify-between px-1 mt-2">
                     <select value={shoppingFilterTheme} onChange={e => setShoppingFilterTheme(e.target.value)} className={`w-24 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1 text-[9px] font-bold outline-none rounded-md shadow-sm transition-colors duration-300`}>
@@ -2992,16 +3101,26 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                         {Object.keys(grouped[dayKey]).sort().map(themeKey => (
                            <div key={themeKey} className="mb-3 last:mb-0 pl-2">
                               <h5 className={`text-[10px] font-bold mb-1.5 ${isDarkMode ? 'text-pink-400' : 'text-pink-600'}`}>• {themeKey}</h5>
-                              <div className="flex flex-wrap gap-2">
+                              {/* [NEW] 쇼핑 리스트 4열 갤러리 뷰 UI 적용 (반응형 Grid) */}
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                                  {grouped[dayKey][themeKey].map(item => (
                                     <div key={item.id} onClick={() => {
                                         const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
                                         setShoppingList(newList); saveToDb({ shopping_list: newList });
-                                    }} className={`cursor-pointer flex items-center px-3 py-1.5 rounded-full border shadow-sm transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-pink-900/20 border-pink-500/30 text-pink-300 hover:bg-pink-900/40' : 'bg-white border-pink-200 text-pink-700 hover:bg-pink-50')}`}>
-<div className={`w-4 h-4 mr-1.5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all duration-300 ${item.isChecked ? 'bg-pink-500 border-pink-500 scale-110' : 'border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700'}`}>
-                                        {item.isChecked && <span className="text-white text-[10px] font-black leading-none mt-0.5">✓</span>}
+                                    }} className={`cursor-pointer flex flex-col rounded-xl border shadow-sm overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-md ${item.isChecked ? (isDarkMode ? 'bg-slate-800 border-slate-700 opacity-50 grayscale' : 'bg-slate-100 border-slate-200 opacity-50 grayscale') : (isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200')}`}>
+                                      <div className="w-full aspect-square relative bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center overflow-hidden">
+                                        {item.img && !S(item.img).includes("unsplash") ? (
+                                          <img src={item.img} alt={item.text} className="w-full h-full object-cover transition-transform duration-500 hover:scale-110" />
+                                        ) : (
+                                          <span className="text-4xl opacity-40">{themeKey === '쇼핑' ? '🛍️' : themeKey === '식당' ? '🍽️' : themeKey === '관광지' ? '📸' : themeKey === '숙소' ? '🏠' : '🎁'}</span>
+                                        )}
+                                        <div className={`absolute top-2 left-2 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-sm bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm ${item.isChecked ? 'border-pink-500 bg-pink-500 text-white scale-110' : 'border-slate-300 dark:border-slate-500'}`}>
+                                          {item.isChecked && <span className="text-[10px] font-black leading-none mt-0.5">✓</span>}
+                                        </div>
                                       </div>
-                                      <input type="checkbox" checked={item.isChecked} readOnly className="hidden" />                                      <span className={`text-[11px] font-bold truncate max-w-[250px]`}>{item.text}</span>
+                                      <div className={`p-2.5 text-center transition-all duration-300 ${item.isChecked ? 'line-through text-slate-400' : (isDarkMode ? 'text-slate-200' : 'text-slate-800')}`}>
+                                        <span className="text-[11px] font-black block truncate w-full">{item.text}</span>
+                                      </div>
                                     </div>
                                  ))}
                               </div>
@@ -3136,31 +3255,45 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
             {isDiaryOpen && (
               <div className={`mt-3 p-3 rounded-xl border shadow-inner animate-in slide-in-from-top-2 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-indigo-50/30 border-indigo-100'}`}>
                 <div className="flex flex-col space-y-3">
-                  {/* 0.5점 단위 별점 UI */}
+                  {/* 0.5점 단위 별점 UI (스와이프/드래그 지원) */}
                   <div className="flex flex-col space-y-1">
-                    <label className="text-[9px] font-black text-indigo-500">이 장소는 어땠나요? (0.5점 단위)</label>
-                    <div className="flex items-center space-x-1.5">
-                      {[1, 2, 3, 4, 5].map((num) => (
-                        <div key={num} className="relative cursor-pointer w-7 h-7"
-                             onClick={(e) => {
-                               const rect = e.currentTarget.getBoundingClientRect();
-                               const isHalf = e.clientX - rect.left < rect.width / 2;
-                               setDiaryRating(isHalf ? num - 0.5 : num);
-                             }}>
-                          {/* 회색 배경 별 */}
-                          <svg className={`w-7 h-7 ${isDarkMode ? 'text-slate-700' : 'text-slate-200'}`} fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
-                          </svg>
-                          {/* 노란색 채우기 별 (조건부 폭 조절) */}
-                          <div className="absolute top-0 left-0 h-full overflow-hidden pointer-events-none" 
-                               style={{ width: diaryRating >= num ? '100%' : (diaryRating >= num - 0.5 ? '50%' : '0%') }}>
-                            <svg className="w-7 h-7 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                    <label className="text-[9px] font-black text-indigo-500">이 장소는 어땠나요? ✨</label>
+                    <div className="flex items-center">
+                      <div 
+                        className="flex items-center space-x-1.5 cursor-pointer touch-none"
+                        style={{ touchAction: 'none' }}
+                        onPointerDown={(e) => {
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+                          setDiaryRating(Math.round((x / rect.width) * 10) / 2);
+                        }}
+                        onPointerMove={(e) => {
+                          if (e.buttons !== 1) return; // 클릭/터치 유지 상태일 때만 작동
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+                          setDiaryRating(Math.round((x / rect.width) * 10) / 2);
+                        }}
+                        onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
+                        onPointerCancel={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
+                      >
+                        {[1, 2, 3, 4, 5].map((num) => (
+                          <div key={num} className="relative w-7 h-7 pointer-events-none">
+                            {/* 회색 배경 별 */}
+                            <svg className={`w-7 h-7 ${isDarkMode ? 'text-slate-700' : 'text-slate-200'}`} fill="currentColor" viewBox="0 0 24 24">
                               <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
                             </svg>
+                            {/* 노란색 채우기 별 (조건부 폭 조절) */}
+                            <div className="absolute top-0 left-0 h-full overflow-hidden" 
+                                 style={{ width: diaryRating >= num ? '100%' : (diaryRating >= num - 0.5 ? '50%' : '0%') }}>
+                              <svg className="w-7 h-7 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+                              </svg>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                      <span className="ml-2 text-sm font-black text-indigo-600">{diaryRating}점</span>
+                        ))}
+                      </div>
+                      <span className="ml-3 text-sm font-black text-indigo-600 w-8 text-right">{diaryRating}점</span>
                     </div>
                   </div>
                   {/* 소감 입력창 */}
@@ -3171,20 +3304,36 @@ const isPersonal = document.getElementById('shopType')?.value === 'personal';
                     className={`w-full p-2.5 text-xs font-bold rounded-lg border outline-none h-20 resize-none transition-all ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-indigo-200 focus:border-indigo-500 shadow-sm'}`}
                   />
                   <button onClick={() => {
-                    const safeTimeline = Array.isArray(planTimeline) ? planTimeline : [];
-                    const updatedTimeline = safeTimeline.map(p => 
-                      String(p.id) === String(selectedPlanInfo.id) ? { ...p, rating: diaryRating, review: diaryReview } : p
+// 1. 일정(Timeline) 데이터 업데이트
+                    // [버그 수정 1] 여행 소감(review) 텍스트 명시적 문자열 캐싱 및 DB Payload 누락 방지
+                    const safeReviewText = diaryReview ? String(diaryReview).trim() : "";
+                    
+                    const updatedTimeline = (planTimeline || []).map(p => 
+                      String(p.id) === String(selectedPlanInfo.id) 
+                        ? { ...p, rating: Number(diaryRating) || 0, review: safeReviewText } 
+                        : p
                     );
                     
-                    const safeRests = Array.isArray(currentRestaurants) ? currentRestaurants : [];
-                    const updatedRests = safeRests.map(r => 
-                      S(r.name).trim() === S(selectedPlanInfo.place).trim() ? { ...r, rating: diaryRating, review: diaryReview } : r
+                    // 2. 장소(Pins) 데이터 업데이트 (장소명이 일치하는 경우 연동)
+                    const updatedRests = (currentRestaurants || []).map(r => 
+                      S(r.name).trim() === S(selectedPlanInfo.place).trim() 
+                        ? { ...r, rating: Number(diaryRating) || 0, review: safeReviewText } 
+                        : r
                     );
 
+                    // 3. 리액트 상태 즉시 반영
                     setPlanTimeline(updatedTimeline);
                     setCurrentRestaurants(updatedRests);
-                    saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests, rating: diaryRating, review: diaryReview });
-                    setSelectedPlanInfo({ ...selectedPlanInfo, rating: diaryRating, review: diaryReview });
+                    
+                    // 4. 현재 열려있는 상세 모달 정보도 즉시 갱신
+                    setSelectedPlanInfo(prev => ({ ...prev, rating: diaryRating, review: diaryReview }));
+
+                    // 5. DB 저장 (배열 내부 데이터이므로 배열 전체를 전달)
+                    saveToDb({ 
+                      plan_timeline: updatedTimeline, 
+                      current_restaurants: updatedRests 
+                    });
+
                     setIsDiaryOpen(false);
                     showToast("기록이 소중하게 저장되었습니다! 📝");
                   }} className="w-full bg-indigo-600 text-white py-2.5 rounded-xl font-black text-xs shadow-md hover:bg-indigo-700 active:scale-95 transition-all">
@@ -3699,15 +3848,14 @@ const planData = {
                     <button key={d} onClick={() => setMyPinsFilter(d)} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors ${myPinsFilter === d ? 'bg-indigo-600 text-white shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-200 text-slate-500 hover:bg-slate-300')}`}>Day {d}</button>
                  ))}
                  <button onClick={() => setMyPinsFilter('unlinked')} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors border ${myPinsFilter === 'unlinked' ? 'bg-slate-600 text-white border-slate-600 shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400 border-transparent' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
-                 <select value={myPinsThemeFilter} onChange={e => setMyPinsThemeFilter(e.target.value)} className={`ml-2 px-2 py-1 rounded-full text-[10px] font-bold outline-none cursor-pointer transition-colors border ${isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
-                    <option value="all">테마 전체</option>
+                 <select value={Array.isArray(myPinsThemeFilter) ? myPinsThemeFilter[0] : myPinsThemeFilter} onChange={e => setMyPinsThemeFilter([e.target.value])} className={`ml-2 px-2 py-1 rounded-full text-[10px] font-bold outline-none cursor-pointer transition-colors border ${isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>                    <option value="all">테마 전체</option>
                     <option value="교통편">교통편 🚌</option>
                     <option value="식당">식당 🍽️</option>
                     <option value="디저트">디저트 🍰</option>
                     <option value="관광지">관광지 📸</option>
-<option value="쇼핑">쇼핑 🛍️</option>
-                <option value="숙소">숙소 🏠</option>
-                <option value="기타">기타 📌</option>
+                    <option value="쇼핑">쇼핑 🛍️</option>
+                    <option value="숙소">숙소 🏠</option>
+                    <option value="기타">기타 📌</option>
                  </select>
               </div>
 
@@ -4477,7 +4625,7 @@ const planData = {
                         <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800"></div>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {yearTrips.map(trip => (
+{yearTrips.map(trip => (
                           <div 
                             key={trip.id} 
                             onClick={() => {
@@ -4536,7 +4684,16 @@ return (
                 {/* [테마 필터 - 신설] */}
                 <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
                    {['all', '교통편', '식당', '디저트', '관광지', '쇼핑', '숙소', '기타'].map(t => (
-                     <button key={t} onClick={() => setMyPinsThemeFilter(t)} className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${myPinsThemeFilter === t ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200')}`}>
+                     <button key={t} onClick={() => {
+                        setMyPinsThemeFilter(prev => {
+                           let arr = Array.isArray(prev) ? prev : [prev];
+                           if (t === 'all') return ['all'];
+                           let newThemes = arr.filter(x => x !== 'all');
+                           if (newThemes.includes(t)) newThemes = newThemes.filter(x => x !== t);
+                           else newThemes.push(t);
+                           return newThemes.length === 0 ? ['all'] : newThemes;
+                        });
+                     }} className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${myPinsThemeFilter.includes(t) ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}`}>
                        {t === 'all' ? '테마 전체' : t}
                      </button>
                    ))}
@@ -4657,6 +4814,16 @@ return (
         .leaflet-popup-content { margin: 12px; font-family: inherit; line-height: 1.4; }
         .leaflet-popup-tip { background: #fff; border-top: 1px solid #e2e8f0; border-left: 1px solid #e2e8f0; transition: all 0.3s; }
         .dark .leaflet-popup-tip { background: #1e293b; border-top-color: #334155; border-left-color: #334155; }
+
+        /* [NEW] 배달의민족 스타일 통통 튀는 모션 및 그림자 애니메이션 */
+        @keyframes baemin-bounce {
+          0% { transform: translateY(0px) scaleY(0.95); }
+          100% { transform: translateY(-12px) scaleY(1.05); }
+        }
+        @keyframes baemin-shadow {
+          0% { transform: translateX(-50%) scale(1); opacity: 0.4; }
+          100% { transform: translateX(-50%) scale(0.5); opacity: 0.1; }
+        }
       `}} />
     </div>
   );
