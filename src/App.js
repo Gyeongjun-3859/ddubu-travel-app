@@ -44,7 +44,7 @@ const CURRENCIES = [
 
 const REGIONS_BY_COUNTRY = {
   "한국": ["서울", "부산", "제주", "인천", "경주", "순천"],
-  "일본": ["도쿄", "오사카", "후쿠오카", "교토", "삿포로"],
+  "일본": ["도쿄", "오사카", "후쿠오카", "교토", "삿포로", "구마모토", "나고야", "히로시마", "나라", "요코하마", "고베", "센다이", "가나자와", "오키나와"],
   "프랑스": ["파리", "니스", "마르세유", "리옹"],
   "미국": ["뉴욕", "로스앤젤레스", "시카고", "하와이", "샌프란시스코"],
   "대만": ["타이베이", "가오슝", "타이중"],
@@ -56,6 +56,24 @@ const REGIONS_BY_COUNTRY = {
   "스페인": ["바르셀로나", "마드리드", "세비야"],
   "독일": ["베를린", "뮌헨", "프랑크푸르트"],
   "호주": ["시드니", "멜버른", "브리즈번"]
+};
+
+const CITY_NAME_TO_EN = {
+  "서울": "Seoul", "부산": "Busan", "제주": "Jeju", "인천": "Incheon", "경주": "Gyeongju", "순천": "Suncheon",
+  "도쿄": "Tokyo", "오사카": "Osaka", "후쿠오카": "Fukuoka", "교토": "Kyoto", "삿포로": "Sapporo",
+  "구마모토": "Kumamoto", "나고야": "Nagoya", "히로시마": "Hiroshima", "나라": "Nara",
+  "요코하마": "Yokohama", "고베": "Kobe", "센다이": "Sendai", "가나자와": "Kanazawa", "오키나와": "Okinawa",
+  "파리": "Paris", "니스": "Nice", "마르세유": "Marseille", "리옹": "Lyon",
+  "뉴욕": "New York", "로스앤젤레스": "Los Angeles", "시카고": "Chicago", "하와이": "Honolulu", "샌프란시스코": "San Francisco",
+  "타이베이": "Taipei", "가오슝": "Kaohsiung", "타이중": "Taichung",
+  "로마": "Rome", "밀라노": "Milan", "베네치아": "Venice", "피렌체": "Florence",
+  "방콕": "Bangkok", "치앙마이": "Chiang Mai", "푸껫": "Phuket", "파타야": "Pattaya",
+  "다낭": "Da Nang", "하노이": "Hanoi", "호찌민": "Ho Chi Minh City", "나트랑": "Nha Trang",
+  "베이징": "Beijing", "상하이": "Shanghai", "칭다오": "Qingdao", "청두": "Chengdu", "대련": "Dalian",
+  "런던": "London", "에든버러": "Edinburgh", "맨체스터": "Manchester", "리버풀": "Liverpool",
+  "바르셀로나": "Barcelona", "마드리드": "Madrid", "세비야": "Seville",
+  "베를린": "Berlin", "뮌헨": "Munich", "프랑크푸르트": "Frankfurt",
+  "시드니": "Sydney", "멜버른": "Melbourne", "브리즈번": "Brisbane"
 };
 
 function S(val) {
@@ -274,6 +292,11 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
 
   const [isAddPlaceModalOpen, setIsAddPlaceModalOpen] = useState(false);
   const [isMyPinsModalOpen, setIsMyPinsModalOpen] = useState(false);
+  const [isNavModalOpen, setIsNavModalOpen] = useState(false);
+  const [navOrigin, setNavOrigin] = useState(null);
+  const [navDest, setNavDest] = useState(null);
+  const [navWaypoints, setNavWaypoints] = useState([]);
+  const [navSelectingFor, setNavSelectingFor] = useState(null); // 'origin' | 'dest' | number(waypoint index)
   const [clickedLocation, setClickedLocation] = useState(null);
   const [newManualPlaceName, setNewManualPlaceName] = useState("");
   const [newManualLocalName, setNewManualLocalName] = useState("");
@@ -289,7 +312,8 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [viewPhoto, setViewPhoto] = useState(null);
   
   const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
-  const [selectedPinInfo, setSelectedPinInfo] = useState(null); 
+  const [selectedPinInfo, setSelectedPinInfo] = useState(null);
+  const [pinQuickView, setPinQuickView] = useState(null);
   const [isSettleMode, setIsSettleMode] = useState(false);
   const [newTheme, setNewTheme] = useState("기타");
   const [settleLocal, setSettleLocal] = useState("");
@@ -364,6 +388,13 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
   useEffect(() => {
     activeContextRef.current = { editingPlan, isAddPlaceModalOpen, activeTab };
   }, [editingPlan, isAddPlaceModalOpen, activeTab]);
+
+  // 일기 자동저장용: 항상 최신 값을 ref로 추적
+  const prevDiaryPlanIdRef = useRef(null);
+  const diaryRatingRef = useRef(0);
+  const diaryReviewRef = useRef("");
+  const planTimelineRef = useRef([]);
+  const currentRestaurantsRef2 = useRef([]);
 
   useEffect(() => {
     currentRestaurantsRef.current = currentRestaurants;
@@ -512,7 +543,6 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
       setNewManualTime("");
     }
 
-    setIsMyPinsModalOpen(false);
     setIsAddPlaceModalOpen(true);
   }
 
@@ -546,9 +576,9 @@ const fetchWeatherData = useCallback(async (cityName) => {
     }
 
     try {
-      console.log(`🌤️ [3] '${safeCityName}' 좌표 검색 중...`);
-      // 한/영 인식률을 높이기 위해 accept-language 파라미터 추가
-      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(safeCityName)}&limit=1&accept-language=ko,en`);
+      const queryName = CITY_NAME_TO_EN[safeCityName] || safeCityName;
+      console.log(`🌤️ [3] '${safeCityName}' → '${queryName}' 좌표 검색 중...`);
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryName)}&limit=1&accept-language=en`);
       const geoData = await geoRes.json();
 
       // [핵심 버그 수정] 좌표를 못 찾았을 때 조용히 죽는 문제 해결
@@ -589,7 +619,8 @@ const fetchWeatherData = useCallback(async (cityName) => {
       if (!regionName || regionName === "수동입력" || regionName === "선택된 지역 없음" || regionName === "글로벌") return null;
       if (hourlyWeatherCache[regionName]) return hourlyWeatherCache[regionName]; 
       try {
-          const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(S(regionName))}&limit=1`);
+          const queryRegion = CITY_NAME_TO_EN[S(regionName)] || S(regionName);
+          const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryRegion)}&limit=1&accept-language=en`);
           const geoData = await geoRes.json();
           if (!geoData.length) return null;
           const { lat, lon } = geoData[0];
@@ -1150,60 +1181,92 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
   function handleFindMyLocation() {
     if (!navigator.geolocation) { showToast("위치 기능을 지원하지 않습니다."); return; }
     showToast("현재 위치를 확인 중입니다... (최초 권한 동의가 필요할 수 있습니다)");
-    
-    navigator.geolocation.getCurrentPosition((pos) => {
+
+    // 이전 watchPosition 정리
+    if (window.myLocWatchId != null) {
+      navigator.geolocation.clearWatch(window.myLocWatchId);
+      window.myLocWatchId = null;
+    }
+    if (window.myLocOrientationHandler) {
+      window.removeEventListener('deviceorientation', window.myLocOrientationHandler);
+      window.myLocOrientationHandler = null;
+    }
+
+    // 최신 좌표를 ref로 관리해 클로저 고정 문제 해결
+    const locRef = { lat: null, lng: null, heading: null };
+    let mapFlown = false;
+
+    const renderLocMarker = (lat, lng, head) => {
+      if (!mapInstanceRef.current || !window.L) return;
+      if (window.myLocMarker) window.myLocMarker.remove();
+
+      const arrowHtml = (head !== null && head !== undefined && !isNaN(head))
+        ? `<div style="position:absolute; top:-12px; left:50%; transform:translateX(-50%) rotate(${head}deg); transform-origin: 50% 34px; transition: transform 0.3s ease-out; z-index: 1;">
+              <div style="width:0; height:0; border-left:8px solid transparent; border-right:8px solid transparent; border-bottom:16px solid rgba(79, 70, 229, 0.9); filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.3));"></div>
+           </div>`
+        : '';
+
+      const html = `
+        <div style="position:relative; width:44px; height:44px; display:flex; align-items:center; justify-content:center;">
+            ${arrowHtml}
+            <div style="position:relative; z-index:2; animation: baemin-bounce 0.6s infinite alternate cubic-bezier(0.5, 0.05, 1, 0.5); filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.4)); font-size: 32px; line-height: 1;">
+                ${myLocationIcon}
+            </div>
+            <div style="position:absolute; bottom:2px; left:50%; transform:translateX(-50%); width:20px; height:6px; background:rgba(0,0,0,0.3); border-radius:50%; filter:blur(2px); animation: baemin-shadow 0.6s infinite alternate cubic-bezier(0.5, 0.05, 1, 0.5); z-index:1;"></div>
+        </div>
+      `;
+      const customLocIcon = window.L.divIcon({ html, className: '', iconSize: [44, 44], iconAnchor: [22, 40] });
+      window.myLocMarker = window.L.marker([lat, lng], { icon: customLocIcon, zIndexOffset: 1000 })
+        .addTo(mapInstanceRef.current)
+        .bindPopup(`<div style="text-align:center; font-weight:bold; font-size:12px;">내 현재 위치 (설정에서 변경 가능)</div>`);
+    };
+
+    // watchPosition으로 실시간 위치 추적
+    window.myLocWatchId = navigator.geolocation.watchPosition((pos) => {
       const { latitude, longitude, heading } = pos.coords;
-      if (mapInstanceRef.current && window.L) {
+      locRef.lat = latitude;
+      locRef.lng = longitude;
+      // GPS heading이 유효하면 우선 사용 (이동 중에만 정확)
+      if (heading !== null && !isNaN(heading)) locRef.heading = heading;
+
+      if (!mapFlown && mapInstanceRef.current) {
         mapInstanceRef.current.flyTo([latitude, longitude], 16);
-        
-        const renderLocMarker = (lat, lng, head) => {
-           if (window.myLocMarker) window.myLocMarker.remove();
-           
-           // [NEW] 방향 화살표 (스무스한 회전 적용 및 캐릭터 머리 위로 배치)
-           const arrowHtml = (head !== null && !isNaN(head))
-              ? `<div style="position:absolute; top:-12px; left:50%; transform:translateX(-50%) rotate(${head}deg); transform-origin: 50% 34px; transition: transform 0.3s ease-out; z-index: 1;">
-                    <div style="width:0; height:0; border-left:8px solid transparent; border-right:8px solid transparent; border-bottom:16px solid rgba(79, 70, 229, 0.9); filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.3));"></div>
-                 </div>` 
-              : '';
-
-           // [NEW] 배달의민족 스타일 통통 튀는 캐릭터 마커 HTML/CSS
-           const html = `
-              <div style="position:relative; width:44px; height:44px; display:flex; align-items:center; justify-content:center;">
-                  ${arrowHtml}
-                  <div style="position:relative; z-index:2; animation: baemin-bounce 0.6s infinite alternate cubic-bezier(0.5, 0.05, 1, 0.5); filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.4)); font-size: 32px; line-height: 1;">
-                      ${myLocationIcon}
-                  </div>
-                  <div style="position:absolute; bottom:2px; left:50%; transform:translateX(-50%); width:20px; height:6px; background:rgba(0,0,0,0.3); border-radius:50%; filter:blur(2px); animation: baemin-shadow 0.6s infinite alternate cubic-bezier(0.5, 0.05, 1, 0.5); z-index:1;"></div>
-              </div>
-           `;
-           const customLocIcon = window.L.divIcon({ html, className: '', iconSize: [44, 44], iconAnchor: [22, 40] });
-           window.myLocMarker = window.L.marker([lat, lng], { icon: customLocIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current).bindPopup(`<div style="text-align:center; font-weight:bold; font-size:12px;">내 현재 위치 (설정에서 변경 가능)</div>`);
-        };
-
-        renderLocMarker(latitude, longitude, heading);
-        
-        if (window.DeviceOrientationEvent) {
-          const handleOrientation = (e) => {
-             let h = e.webkitCompassHeading || Math.abs(e.alpha - 360);
-             if (h !== null && h !== undefined) {
-                renderLocMarker(latitude, longitude, h);
-             }
-          };
-          if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-             DeviceOrientationEvent.requestPermission().then(res => {
-                if (res === 'granted') window.addEventListener('deviceorientation', handleOrientation);
-             }).catch(err => console.error(err));
-          } else {
-             window.addEventListener('deviceorientation', handleOrientation);
-          }
-        }
+        mapFlown = true;
       }
+      renderLocMarker(locRef.lat, locRef.lng, locRef.heading);
     }, (error) => {
       if (error.code === 1) showToast("위치 권한이 거부되었습니다. 스마트폰/브라우저의 위치 권한을 허용해주세요.");
       else if (error.code === 2) showToast("위치 정보를 사용할 수 없습니다. GPS를 켜주세요.");
       else if (error.code === 3) showToast("위치 요청 시간이 초과되었습니다.");
       else showToast("위치 접근 중 알 수 없는 오류가 발생했습니다.");
     }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+
+    // 나침반 방향 — locRef로 항상 최신 좌표 참조
+    if (window.DeviceOrientationEvent) {
+      const handleOrientation = (e) => {
+        if (locRef.lat === null) return;
+        let h;
+        if (e.webkitCompassHeading != null) {
+          // iOS: 진북 기준 정확한 값
+          h = e.webkitCompassHeading;
+        } else if (e.alpha != null) {
+          // Android: alpha는 기기 초기 방향 기준이므로 360에서 빼서 진북 기준으로 보정
+          h = (360 - e.alpha) % 360;
+        } else {
+          return;
+        }
+        locRef.heading = h;
+        renderLocMarker(locRef.lat, locRef.lng, locRef.heading);
+      };
+      window.myLocOrientationHandler = handleOrientation;
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(res => {
+          if (res === 'granted') window.addEventListener('deviceorientation', handleOrientation);
+        }).catch(err => console.error(err));
+      } else {
+        window.addEventListener('deviceorientation', handleOrientation);
+      }
+    }
   }
 
   // [버그 수정 3] 환경설정에서 마커 캐릭터 변경 시 지도에 즉각 반영되도록 반응성(Reactivity) 의존성 추가
@@ -1777,6 +1840,43 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
     }
   }, [globalPlanCountry, globalPlanRegion, globalManualCountry, globalManualRegion, editingPlan]);
+
+// 일기 자동저장용 ref 동기화
+  useEffect(() => { diaryRatingRef.current = diaryRating; }, [diaryRating]);
+  useEffect(() => { diaryReviewRef.current = diaryReview; }, [diaryReview]);
+  useEffect(() => { planTimelineRef.current = planTimeline; }, [planTimeline]);
+  useEffect(() => { currentRestaurantsRef2.current = currentRestaurants; }, [currentRestaurants]);
+
+// 다른 일정 클릭 시 이전 일정 자동 저장 후 새 일정으로 초기화
+  useEffect(() => {
+    const prevId = prevDiaryPlanIdRef.current;
+    const newId = selectedPlanInfo?.id ?? null;
+
+    // 이전 일정이 있었고 다른 일정으로 바뀐 경우 → 이전 값 자동 저장
+    if (prevId && prevId !== newId) {
+      const rating = Number(diaryRatingRef.current) || 0;
+      const review = diaryReviewRef.current ? String(diaryReviewRef.current).trim() : "";
+      const updatedTimeline = (planTimelineRef.current || []).map(p =>
+        String(p.id) === String(prevId)
+          ? { ...p, rating, review }
+          : p
+      );
+      const prevPlan = (planTimelineRef.current || []).find(p => String(p.id) === String(prevId));
+      const updatedRests = (currentRestaurantsRef2.current || []).map(r =>
+        prevPlan && S(r.name).trim() === S(prevPlan.place).trim()
+          ? { ...r, rating, review }
+          : r
+      );
+      setPlanTimeline(updatedTimeline);
+      setCurrentRestaurants(updatedRests);
+      saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests });
+    }
+
+    prevDiaryPlanIdRef.current = newId;
+    setIsDiaryOpen(false);
+    setDiaryRating(selectedPlanInfo?.rating || 0);
+    setDiaryReview(selectedPlanInfo?.review || "");
+  }, [selectedPlanInfo?.id]);
 
 // [NEW] 날씨 데이터 호출 트리거 (전역 지역명 + 개별 일정 지역명 하이브리드 연동)
   useEffect(() => {
@@ -2632,8 +2732,8 @@ return (
       )}
 
       {viewPhoto && (
-        <div className="fixed inset-0 bg-black/90 z-[5000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setViewPhoto(null)}>
-          <img src={viewPhoto} className="max-w-full max-h-full object-contain rounded-md shadow-2xl animate-in zoom-in-95 duration-300" alt="" />
+        <div className="fixed inset-0 bg-black/90 z-[99998] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setViewPhoto(null)}>
+          <img src={viewPhoto} className="max-w-full max-h-full object-contain rounded-md shadow-2xl animate-in zoom-in-95 duration-300" alt="" onClick={e => e.stopPropagation()} />
           <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1 rounded-full hover:bg-black/80 transition-colors" onClick={() => setViewPhoto(null)}>✕</button>
         </div>
       )}
@@ -2842,11 +2942,24 @@ const getLocalSym = (c) => {
                        const isToday = targetDateStr === todayStr;
 
                        if (!f) {
+                           const today = new Date();
+                           today.setHours(0, 0, 0, 0);
+                           const targetDate = targetDateStr ? new Date(targetDateStr) : null;
+                           const daysUntil = targetDate ? Math.ceil((targetDate - today) / (1000 * 60 * 60 * 24)) : null;
+                           const availableFrom = targetDate ? new Date(targetDate.getTime() - 15 * 24 * 60 * 60 * 1000) : null;
+                           const availableFromStr = availableFrom ? `${availableFrom.getMonth() + 1}월 ${availableFrom.getDate()}일` : null;
+                           const reason = daysUntil === null ? '날짜 정보 없음'
+                             : daysUntil < 0 ? '지난 날짜'
+                             : daysUntil > 15 ? `아직 너무 먼 날짜`
+                             : '데이터 준비 중';
                            return (
                               <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all duration-300 ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
-                                 <div className="flex flex-col">
+                                 <div className="flex flex-col space-y-0.5">
                                     <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} - {displayCityName} ({targetDateStr.slice(5)})</span>
-                                    <span className={`text-xs font-black mt-0.5 ${textMuted}`}>예보 없음</span>
+                                    <span className={`text-xs font-black ${textMuted}`}>예보 없음 <span className="font-normal text-[10px]">({reason})</span></span>
+                                    {daysUntil > 15 && availableFromStr && (
+                                      <span className="text-[10px] text-indigo-400 font-bold">📅 {availableFromStr}부터 날씨 확인 가능</span>
+                                    )}
                                  </div>
                                  <div className="text-right flex flex-col justify-center">
                                     <span className={`text-[11px] font-bold ${textMuted}`}>-</span>
@@ -3332,10 +3445,13 @@ const getLocalSym = (c) => {
         <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPlanInfo(null)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             {selectedPlanInfo.photo && !selectedPlanInfo.isTransport && (
-              <div className="w-full h-48 relative">
+              <div className="w-full h-48 relative cursor-pointer" onClick={() => setViewPhoto(selectedPlanInfo.photo)}>
                 <img src={selectedPlanInfo.photo} className="w-full h-full object-cover" alt="" />
                 <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md">
                   {S(selectedPlanInfo.time)}
+                </div>
+                <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors duration-200 flex items-center justify-center">
+                  <span className="opacity-0 hover:opacity-100 text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full transition-opacity duration-200">🔍 크게 보기</span>
                 </div>
               </div>
             )}
@@ -3375,12 +3491,35 @@ const getLocalSym = (c) => {
                   {isSettleMode ? '취소' : '💸 정산'}
                 </button>
                 <button onClick={() => {
-                  setIsDiaryOpen(!isDiaryOpen);
-                  setDiaryRating(selectedPlanInfo.rating || 0);
-                  setDiaryReview(selectedPlanInfo.review || "");
-                  setIsSettleMode(false); // 일기 열 때 정산은 닫기
+                  if (isDiaryOpen) {
+                    // 닫을 때 현재 작성 중인 내용 자동 저장
+                    const safeReviewText = diaryReview ? String(diaryReview).trim() : "";
+                    const updatedTimeline = (planTimeline || []).map(p =>
+                      String(p.id) === String(selectedPlanInfo.id)
+                        ? { ...p, rating: Number(diaryRating) || 0, review: safeReviewText }
+                        : p
+                    );
+                    const updatedRests = (currentRestaurants || []).map(r =>
+                      S(r.name).trim() === S(selectedPlanInfo.place).trim()
+                        ? { ...r, rating: Number(diaryRating) || 0, review: safeReviewText }
+                        : r
+                    );
+                    setPlanTimeline(updatedTimeline);
+                    setCurrentRestaurants(updatedRests);
+                    setSelectedPlanInfo(prev => ({ ...prev, rating: diaryRating, review: safeReviewText }));
+                    saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests });
+                    setIsDiaryOpen(false);
+                  } else {
+                    // 열 때 state 초기화 후 현재 일정 값 로드
+                    setDiaryRating(0);
+                    setDiaryReview("");
+                    setDiaryRating(selectedPlanInfo.rating || 0);
+                    setDiaryReview(selectedPlanInfo.review || "");
+                    setIsSettleMode(false);
+                    setIsDiaryOpen(true);
+                  }
                 }} className={`px-2 py-1 rounded-md text-[9px] font-bold shadow-sm transition-all active:scale-95 border ${isDiaryOpen ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
-                  {isDiaryOpen ? '취소' : '📝 일기'}
+                  {isDiaryOpen ? '닫기' : '📝 일기'}
                 </button>
               </div>
             </div>
@@ -3591,7 +3730,16 @@ const getLocalSym = (c) => {
                 <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
               )}
               
-              <div className="flex space-x-2 mt-5">
+              {selectedPinInfo.lat && selectedPinInfo.lng && (
+                <button onClick={() => {
+                  const dest = `${selectedPinInfo.lat},${selectedPinInfo.lng}`;
+                  const label = encodeURIComponent(S(selectedPinInfo.name));
+                  window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&destination_place_id=${label}&travelmode=walking`, '_blank');
+                }} className="w-full mt-4 bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2">
+                  <span>🧭</span><span>구글 네비게이션으로 길 안내</span>
+                </button>
+              )}
+              <div className="flex space-x-2 mt-2">
                 <button onClick={() => {
                   openEditPinModal(selectedPinInfo);
                   setSelectedPinInfo(null);
@@ -3693,7 +3841,7 @@ const getLocalSym = (c) => {
       )}
 
       {editingPlan && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[6000] flex items-center justify-center p-4 transition-opacity duration-300">
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[6000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setEditingPlan(null)}>
           <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
               <div className="flex items-center space-x-2">
@@ -3849,7 +3997,7 @@ const planData = {
       )}
 
       {isAddPlaceModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9000] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
+        <div className="fixed inset-0 bg-black/60 z-[9000] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsAddPlaceModalOpen(false)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
               <h3 className="text-sm font-black flex items-center">
@@ -3990,8 +4138,8 @@ const planData = {
       )}
 
       {isMyPinsModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[3500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
-          <div className={`${cardBg} w-full max-w-5xl flex flex-col animate-in zoom-in-95 duration-300 max-h-[85vh] rounded-3xl overflow-hidden`}>
+        <div className="fixed inset-0 bg-black/60 z-[3500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsMyPinsModalOpen(false)}>
+          <div className={`${cardBg} w-full max-w-5xl flex flex-col animate-in zoom-in-95 duration-300 max-h-[85vh] rounded-3xl overflow-hidden`} onClick={e => e.stopPropagation()}>
             <div className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 border-b gap-3 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
               <h3 className="text-sm font-black flex items-center shrink-0"><span className="mr-2 text-indigo-500 text-lg">📍</span> 내 핀/장소 목록</h3>
               
@@ -4041,27 +4189,17 @@ const planData = {
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                   {filteredMyPins.map(pin => (
-                    <div key={pin.id} onClick={() => {
-                      if (pin.lat && pin.lng) {
-                        setIsMyPinsModalOpen(false);
-                        setActiveTab('map');
-                        setTimeout(() => {
-                          if (mapInstanceRef.current) {
-                            mapInstanceRef.current.flyTo([pin.lat, pin.lng], 17);
-                            window.dispatchEvent(new CustomEvent('onPinClick', { detail: String(pin.id) }));
-                          }
-                        }, 300);
-                      } else {
-                        showToast("위치가 지정되지 않은 핀입니다. 하단 '위치 지정'을 먼저 해주세요.");
-                      }
-                    }} className={`flex flex-col p-2 border rounded-xl shadow-sm transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
-                      
+                    <div key={pin.id} className={`flex flex-col p-2 border rounded-xl shadow-sm transition-all duration-300 hover:shadow-md ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
+
                       {pin.isLandmark && <div className="absolute top-1 right-1 bg-yellow-400 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm z-10">👑 랜드마크</div>}
-                      
+
                       {pin.img && !S(pin.img).includes("unsplash") ? (
-                        <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0">
+                        <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0 cursor-pointer" onClick={() => setViewPhoto(pin.img)}>
                           <img src={pin.img} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
                           {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm z-10">숙소</div>}
+                          <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors duration-200 flex items-center justify-center">
+                            <span className="opacity-0 hover:opacity-100 text-white text-[9px] font-bold bg-black/50 px-2 py-0.5 rounded-full transition-opacity">🔍 크게 보기</span>
+                          </div>
                         </div>
                       ) : (
                         <div className={`w-full h-12 flex items-center justify-center rounded-lg mb-1.5 shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
@@ -4070,15 +4208,30 @@ const planData = {
                       )}
                       
                       <div className="flex-1 min-w-0 flex flex-col justify-center">
-<div className="flex items-center mb-1">
-<span className="text-[8px] font-bold bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-400 px-1 py-0.5 rounded mr-1.5 shrink-0">
+                        <div className="flex items-center mb-1 gap-1">
+                          <span className="text-[8px] font-bold bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-400 px-1 py-0.5 rounded shrink-0">
                             {(() => {
                                const linked = planTimeline.find(p => p && S(p.place).trim() === S(pin.name).trim());
                                return linked?.theme || pin.theme || '기타';
                             })()}
                           </span>
-                          <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight transition-colors">{S(pin.name)}</h4>
-                        </div>                        {pin.localName && (
+                          <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight flex-1 cursor-pointer hover:text-indigo-500 transition-colors" onClick={() => setPinQuickView(pin)}>{S(pin.name)}</h4>
+                          {pin.lat && pin.lng && (
+                            <button onClick={() => {
+                              setIsMyPinsModalOpen(false);
+                              setActiveTab('map');
+                              setTimeout(() => {
+                                if (mapInstanceRef.current) {
+                                  mapInstanceRef.current.flyTo([pin.lat, pin.lng], 17);
+                                  window.dispatchEvent(new CustomEvent('onPinClick', { detail: String(pin.id) }));
+                                }
+                              }, 300);
+                            }} className="shrink-0 bg-indigo-500 hover:bg-indigo-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded transition-colors" title="지도에서 위치 보기">
+                              📍이동
+                            </button>
+                          )}
+                        </div>
+                        {pin.localName && (
                           <p className="text-[9px] font-bold text-indigo-500 truncate cursor-pointer hover:opacity-80 leading-tight mb-0.5 transition-opacity" onClick={(e) => handleCopyLocalName(e, pin.localName)}>
                             📋 {S(pin.localName)}
                           </p>
@@ -4117,6 +4270,174 @@ const planData = {
           </div>
         </div>
       )}
+
+      {pinQuickView && (
+        <div className="fixed inset-0 bg-black/60 z-[9500] backdrop-blur-sm flex items-center justify-center p-6 transition-opacity duration-300" onClick={() => setPinQuickView(null)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
+            {pinQuickView.img && !S(pinQuickView.img).includes("unsplash") && (
+              <div className="w-full h-44 relative cursor-pointer" onClick={() => { setPinQuickView(null); setViewPhoto(pinQuickView.img); }}>
+                <img src={pinQuickView.img} className="w-full h-full object-cover" alt="" />
+                <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center">
+                  <span className="opacity-0 hover:opacity-100 text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full transition-opacity">🔍 크게 보기</span>
+                </div>
+              </div>
+            )}
+            <div className="p-4 flex flex-col space-y-3">
+              <h3 className={`text-base font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{S(pinQuickView.name)}</h3>
+              {pinQuickView.localName && (
+                <button onClick={(e) => handleCopyLocalName(e, pinQuickView.localName)} className="flex items-center space-x-2 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 px-3 py-2 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-colors text-left">
+                  <span>📋</span>
+                  <span className="truncate">{S(pinQuickView.localName)}</span>
+                  <span className="ml-auto shrink-0 bg-indigo-100 dark:bg-indigo-800 px-2 py-0.5 rounded-full text-[10px]">복사</span>
+                </button>
+              )}
+              {pinQuickView.lat && pinQuickView.lng && (
+                <button onClick={() => {
+                  setPinQuickView(null);
+                  const dest = `${pinQuickView.lat},${pinQuickView.lng}`;
+                  window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`, '_blank');
+                }} className="w-full bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1">
+                  <span>🧭</span><span>현재 위치에서 길 안내</span>
+                </button>
+              )}
+              <button onClick={() => setPinQuickView(null)} className={`w-full py-2.5 rounded-xl text-xs font-bold transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isNavModalOpen && (() => {
+        const validPins = currentRestaurants.filter(r => r && r.lat && r.lng);
+        // 구글 맵 앱 우선 실행 함수
+        const openGoogleNav = (mode) => {
+          const waypointStr = navWaypoints.filter(w => w).map(w => `${w.lat},${w.lng}`).join('|');
+          const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${navOrigin.lat},${navOrigin.lng}&destination=${navDest.lat},${navDest.lng}${waypointStr ? `&waypoints=${waypointStr}` : ''}&travelmode=${mode}`;
+          // Android: comgooglemaps://, iOS: comgooglemaps://
+          const appUrl = `comgooglemaps://?saddr=${navOrigin.lat},${navOrigin.lng}&daddr=${navDest.lat},${navDest.lng}${waypointStr ? `+to:${navWaypoints.filter(w=>w).map(w=>`${w.lat},${w.lng}`).join('+to:')}` : ''}&directionsmode=${mode}`;
+          const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+          const isAndroid = /Android/i.test(navigator.userAgent);
+          if (isIOS) {
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = appUrl;
+            document.body.appendChild(iframe);
+            setTimeout(() => { document.body.removeChild(iframe); window.open(webUrl, '_blank'); }, 1500);
+          } else if (isAndroid) {
+            window.location.href = `intent://maps.google.com/maps?saddr=${navOrigin.lat},${navOrigin.lng}&daddr=${navDest.lat},${navDest.lng}${waypointStr ? `+to:${waypointStr.replace(/\|/g,'+')}` : ''}&dirflg=${mode==='driving'?'d':mode==='transit'?'r':'w'}#Intent;scheme=https;package=com.google.android.apps.maps;end`;
+          } else {
+            window.open(webUrl, '_blank');
+          }
+          setIsNavModalOpen(false);
+        };
+        const selectingLabel = navSelectingFor === 'origin' ? '출발지' : navSelectingFor === 'dest' ? '도착지' : navSelectingFor !== null ? `경유지 ${navSelectingFor + 1}` : null;
+        return (
+        <div className="fixed inset-0 bg-black/60 z-[9500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsNavModalOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]`} onClick={e => e.stopPropagation()}>
+            <div className={`flex items-center justify-between p-4 border-b shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h3 className={`text-sm font-black flex items-center ${isDarkMode ? 'text-white' : 'text-slate-900'}`}><span className="mr-2">🗺️</span>경로 네비게이션</h3>
+              <button onClick={() => setIsNavModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+            </div>
+            <div className="p-4 space-y-2 overflow-y-auto">
+              {/* 출발지 */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[10px] font-black text-green-500">🟢 출발지</p>
+                  {!navOrigin && <button onClick={() => {
+                    if (!navigator.geolocation) { showToast("위치 기능을 지원하지 않습니다."); return; }
+                    navigator.geolocation.getCurrentPosition((pos) => {
+                      setNavOrigin({ id: '__my_location__', name: '📍 내 현재 위치', lat: pos.coords.latitude, lng: pos.coords.longitude });
+                      setNavSelectingFor(null);
+                    }, () => showToast("위치 권한이 필요합니다."), { enableHighAccuracy: true, timeout: 10000 });
+                  }} className="text-[10px] font-black text-blue-500 hover:text-blue-700 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-700 transition-colors">📍 현재 위치 사용</button>}
+                </div>
+                <div onClick={() => setNavSelectingFor(navSelectingFor === 'origin' ? null : 'origin')}
+                  className={`flex items-center p-2.5 rounded-xl border-2 cursor-pointer transition-all ${navSelectingFor === 'origin' ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : navOrigin ? 'border-green-400 bg-green-50/50 dark:bg-green-900/10' : 'border-dashed border-slate-300 dark:border-slate-600 hover:border-green-300'}`}>
+                  <span className="text-xs font-black truncate flex-1 ${navOrigin ? 'text-green-700 dark:text-green-300' : 'text-slate-400'}">{navOrigin ? navOrigin.name : '목록에서 선택'}</span>
+                  {navOrigin && <button onClick={e => { e.stopPropagation(); setNavOrigin(null); }} className="ml-2 text-slate-400 hover:text-red-400 shrink-0 text-xs">✕</button>}
+                </div>
+              </div>
+
+              {/* 출발↔도착 스왑 버튼 */}
+              <div className="flex items-center justify-center">
+                <button onClick={() => { const tmp = navOrigin; setNavOrigin(navDest); setNavDest(tmp); }}
+                  className={`p-1.5 rounded-full border transition-all active:scale-90 ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-100 border-slate-200 hover:bg-slate-200'}`} title="출발/도착 바꾸기">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* 경유지 */}
+              {navWaypoints.map((wp, idx) => (
+                <div key={idx}>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[10px] font-black text-orange-400">🟠 경유지 {idx + 1}</p>
+                  </div>
+                  <div onClick={() => setNavSelectingFor(navSelectingFor === idx ? null : idx)}
+                    className={`flex items-center p-2.5 rounded-xl border-2 cursor-pointer transition-all ${navSelectingFor === idx ? 'border-orange-400 bg-orange-50 dark:bg-orange-900/20' : wp ? 'border-orange-300 bg-orange-50/50 dark:bg-orange-900/10' : 'border-dashed border-slate-300 dark:border-slate-600 hover:border-orange-300'}`}>
+                    <span className="text-xs font-black truncate flex-1">{wp ? wp.name : '목록에서 선택'}</span>
+                    <button onClick={e => { e.stopPropagation(); setNavWaypoints(prev => prev.filter((_, i) => i !== idx)); }} className="ml-2 text-slate-400 hover:text-red-400 shrink-0 text-xs">✕</button>
+                  </div>
+                </div>
+              ))}
+
+              {/* 도착지 */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[10px] font-black text-indigo-500">🔵 도착지</p>
+                  <button onClick={() => setNavWaypoints(prev => [...prev, null])}
+                    className="text-[10px] font-black text-orange-500 hover:text-orange-700 bg-orange-50 dark:bg-orange-900/30 px-2 py-0.5 rounded-full border border-orange-200 dark:border-orange-700 transition-colors">+ 경유지 추가</button>
+                </div>
+                <div onClick={() => setNavSelectingFor(navSelectingFor === 'dest' ? null : 'dest')}
+                  className={`flex items-center p-2.5 rounded-xl border-2 cursor-pointer transition-all ${navSelectingFor === 'dest' ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : navDest ? 'border-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/10' : 'border-dashed border-slate-300 dark:border-slate-600 hover:border-indigo-300'}`}>
+                  <span className="text-xs font-black truncate flex-1">{navDest ? navDest.name : '목록에서 선택'}</span>
+                  {navDest && <button onClick={e => { e.stopPropagation(); setNavDest(null); }} className="ml-2 text-slate-400 hover:text-red-400 shrink-0 text-xs">✕</button>}
+                </div>
+              </div>
+
+              {/* 핀 목록 — 선택 중일 때만 표시 */}
+              {navSelectingFor !== null && (
+                <div className={`border rounded-xl overflow-hidden ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                  <p className={`text-[10px] font-black px-3 py-2 ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-50 text-slate-500'}`}>
+                    {selectingLabel} 선택 중 — 핀을 눌러주세요
+                  </p>
+                  <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
+                    {validPins.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-4">좌표가 지정된 핀이 없습니다.</p>
+                    ) : validPins.map(pin => (
+                      <button key={pin.id} onClick={() => {
+                        if (navSelectingFor === 'origin') setNavOrigin(pin);
+                        else if (navSelectingFor === 'dest') setNavDest(pin);
+                        else setNavWaypoints(prev => prev.map((w, i) => i === navSelectingFor ? pin : w));
+                        setNavSelectingFor(null);
+                      }} className={`w-full flex items-center space-x-2 px-3 py-2 text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
+                        <span className="text-xs">📍</span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs font-black truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{S(pin.name)}</p>
+                          {pin.localName && <p className="text-[10px] text-slate-400 truncate">{S(pin.localName)}</p>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 이동 수단 → 출발 */}
+              {navOrigin && navDest && (
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  {[['walking','🚶 도보'],['driving','🚗 자동차'],['transit','🚌 대중교통']].map(([mode, label]) => (
+                    <button key={mode} onClick={() => openGoogleNav(mode)}
+                      className="bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-[11px] font-black transition-all shadow-md">
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* --- 메인 컨텐츠 영역 --- */}
       <main 
@@ -4946,6 +5267,9 @@ return (
                    </label>
                    <button onClick={handleFindMyLocation} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-all duration-300 shadow-sm active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
                       <span className="text-xs mr-1">🧭</span><span>현재 위치</span>
+                   </button>
+                   <button onClick={() => { setNavOrigin(null); setNavDest(null); setIsNavModalOpen(true); }} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-all duration-300 shadow-sm active:scale-95 ${isDarkMode ? 'bg-green-900/50 border-green-600 text-green-300 hover:bg-green-900/70' : 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'}`}>
+                      <span className="text-xs mr-1">🗺️</span><span>네비게이션</span>
                    </button>
                 </div>
               </div>
