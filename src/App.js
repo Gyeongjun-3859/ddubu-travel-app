@@ -344,6 +344,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
 
   const [viewPhoto, setViewPhoto] = useState(null); // {imgs: string[], idx: number} | null
   const [viewPhotoAnim, setViewPhotoAnim] = useState(null); // 'left' | 'right' | null
+  const viewPhotoDragRef = useRef({ startX: null, wheelLock: false });
   const [newManualPhotos, setNewManualPhotos] = useState([]); // 핀 등록 다중 사진
   const openPhotoViewer = (imgs, idx = 0) => {
     const arr = Array.isArray(imgs) ? imgs.filter(Boolean) : (imgs ? [imgs] : []);
@@ -352,12 +353,12 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
     setViewPhotoAnim(null);
   };
   const goPhotoNext = (imgs, idx) => {
-    setViewPhotoAnim('left');
-    setTimeout(() => { setViewPhoto({ imgs, idx: (idx + 1) % imgs.length }); setViewPhotoAnim(null); }, 260);
+    if (idx + 1 >= imgs.length) return;
+    setViewPhoto({ imgs, idx: idx + 1 });
   };
   const goPhotoPrev = (imgs, idx) => {
-    setViewPhotoAnim('right');
-    setTimeout(() => { setViewPhoto({ imgs, idx: (idx - 1 + imgs.length) % imgs.length }); setViewPhotoAnim(null); }, 260);
+    if (idx - 1 < 0) return;
+    setViewPhoto({ imgs, idx: idx - 1 });
   };
   const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
   
@@ -3089,38 +3090,36 @@ return (
         const imgs = viewPhoto.imgs || [];
         const idx = viewPhoto.idx || 0;
         const n = imgs.length;
-        // 드래그 추적 변수 (렌더 바깥에서 관리)
-        let _dragX = null;
-        let _wheelLock = false;
+        const dr = viewPhotoDragRef.current;
         const onPointerDown = (e) => {
-          if (e.button !== undefined && e.button !== 0) return;
-          _dragX = e.clientX;
+          if (e.button !== 0) return;
+          dr.startX = e.clientX;
         };
         const onPointerUp = (e) => {
-          if (_dragX === null) return;
-          const diff = _dragX - e.clientX;
-          _dragX = null;
+          if (dr.startX === null) return;
+          const diff = dr.startX - e.clientX;
+          dr.startX = null;
           if (Math.abs(diff) < 30) return;
+          e.stopPropagation();
           if (diff > 0) goPhotoNext(imgs, idx);
           else goPhotoPrev(imgs, idx);
         };
-        const onTouchStart = (e) => { _dragX = e.touches[0].clientX; };
+        const onTouchStart = (e) => { dr.startX = e.touches[0].clientX; };
         const onTouchEnd = (e) => {
-          if (_dragX === null) return;
-          const diff = _dragX - e.changedTouches[0].clientX;
-          _dragX = null;
+          if (dr.startX === null) return;
+          const diff = dr.startX - e.changedTouches[0].clientX;
+          dr.startX = null;
           if (Math.abs(diff) < 30) return;
+          e.stopPropagation();
           if (diff > 0) goPhotoNext(imgs, idx);
           else goPhotoPrev(imgs, idx);
         };
         const onWheel = (e) => {
-          if (n < 2 || _wheelLock) return;
-          e.preventDefault();
-          // 수평(deltaX) 우선, 없으면 수직(deltaY)
+          if (n < 2 || dr.wheelLock) return;
           const delta = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
           if (Math.abs(delta) < 10) return;
-          _wheelLock = true;
-          setTimeout(() => { _wheelLock = false; }, 400);
+          dr.wheelLock = true;
+          setTimeout(() => { dr.wheelLock = false; }, 450);
           if (delta > 0) goPhotoNext(imgs, idx);
           else goPhotoPrev(imgs, idx);
         };
