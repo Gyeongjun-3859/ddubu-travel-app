@@ -68,25 +68,14 @@ function openExternalUrl(url) {
   }
 }
 
-// Android에서 구글 맵 앱으로 직접 길 안내 실행
+// 구글 맵 길 안내 실행 (네이티브 앱 → 외부 브라우저 순으로 폴백)
 function openGoogleMapsNav(lat, lng, mode = 'driving') {
   const dest = `${lat},${lng}`;
-  const dirflg = mode === 'driving' ? 'd' : mode === 'transit' ? 'r' : 'w';
   const dirMode = mode === 'driving' ? 'driving' : mode === 'transit' ? 'transit' : 'walking';
-  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
   const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=${dirMode}`;
-
-  if (Capacitor.isNativePlatform()) {
-    if (isIOS) {
-      openExternalUrl(`comgooglemaps://?daddr=${dest}&directionsmode=${dirMode}`);
-    } else {
-      // Android: intent URI로 구글 맵 앱 직접 지정 실행
-      const intentUrl = `intent://maps.google.com/maps?daddr=${dest}&dirflg=${dirflg}#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=${encodeURIComponent(webUrl)};end`;
-      openExternalUrl(intentUrl);
-    }
-  } else {
-    window.open(webUrl, '_blank');
-  }
+  // Capacitor.openUrl()은 네이티브/웹 모두 외부 브라우저로 열림
+  // 브라우저에서 maps.google.com을 열면 구글 맵 앱으로 자동 연결됨
+  openExternalUrl(webUrl);
 }
 
 const CITY_NAME_TO_EN = {
@@ -4331,28 +4320,14 @@ const planData = {
 
       {isNavModalOpen && (() => {
         const validPins = currentRestaurants.filter(r => r && r.lat && r.lng);
-        // 구글 맵 앱 우선 실행 함수
+        // 구글 맵 길 안내 실행
         const openGoogleNav = (mode) => {
           const wps = navWaypoints.filter(w => w);
           const origin = `${navOrigin.lat},${navOrigin.lng}`;
           const dest = `${navDest.lat},${navDest.lng}`;
           const waypointStr = wps.map(w => `${w.lat},${w.lng}`).join('|');
-          const dirflg = mode === 'driving' ? 'd' : mode === 'transit' ? 'r' : 'w';
-          const daddr = dest + (wps.length ? '+to:' + wps.map(w=>`${w.lat},${w.lng}`).join('+to:') : '');
-          const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
           const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}${waypointStr ? `&waypoints=${waypointStr}` : ''}&travelmode=${mode}`;
-
-          if (Capacitor.isNativePlatform()) {
-            if (isIOS) {
-              openExternalUrl(`comgooglemaps://?saddr=${origin}&daddr=${daddr}&directionsmode=${mode}`);
-            } else {
-              // Android 네이티브: intent URI로 구글 맵 앱 패키지 직접 지정 실행
-              const intentUrl = `intent://maps.google.com/maps?saddr=${origin}&daddr=${daddr}&dirflg=${dirflg}#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=${encodeURIComponent(webUrl)};end`;
-              openExternalUrl(intentUrl);
-            }
-          } else {
-            window.open(webUrl, '_blank');
-          }
+          openExternalUrl(webUrl);
           setIsNavModalOpen(false);
         };
         const selectingLabel = navSelectingFor === 'origin' ? '출발지' : navSelectingFor === 'dest' ? '도착지' : navSelectingFor !== null ? `경유지 ${navSelectingFor + 1}` : null;
