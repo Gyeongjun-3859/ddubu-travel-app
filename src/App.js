@@ -4919,7 +4919,7 @@ const planData = {
               </div>
             </div>
             
-            <div className={`flex-1 flex flex-col md:flex-row overflow-visible sm:overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar transition-colors duration-300 ${cardBg}`}>
+            <div className={`flex-1 flex flex-col md:flex-row overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar transition-colors duration-300 ${cardBg}`}>
               <div className={`w-full md:w-[22rem] lg:w-96 p-3 sm:p-4 border-b md:border-b-0 md:border-r flex flex-col flex-shrink-0 md:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
                 <div className="space-y-2 mt-1">
                   <div className="flex items-center justify-between mb-1">
@@ -5453,10 +5453,14 @@ return (
           font-family: inherit;
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
-          scrollbar-gutter: stable;
           overflow: hidden;
         }
-        html { overflow: hidden; }
+        html {
+          overflow: hidden;
+          scrollbar-width: none;
+        }
+        html::-webkit-scrollbar { display: none; }
+        body::-webkit-scrollbar { display: none; }
         
         .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } 
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } 
