@@ -393,6 +393,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [basicExpAddAmt, setBasicExpAddAmt] = useState('');
   const [basicExpAddCat, setBasicExpAddCat] = useState('기타');
   const [basicExpAddIsKrw, setBasicExpAddIsKrw] = useState(false);
+  const [basicExpAddDay, setBasicExpAddDay] = useState(1);
   const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
   const [transType, setTransType] = useState('flight'); 
   const [transDir, setTransDir] = useState('outbound'); 
@@ -3061,7 +3062,10 @@ return (
         const manualItems = timelinePlans
           .filter(p => p.id && String(p.id).startsWith('manual-exp-'))
           .map(p => ({ id: p.id, name: p.place.replace(/^\[기타\]\s*/, ''), amtKrw: Number(p.expenseKrw) || 0, category: '기타', isFromTimeline: true, planId: p.id }));
-        const basicItems = [...basicExpenses, ...transportItems, ...accomItems, ...manualItems];
+        const basicExpItems = timelinePlans
+          .filter(p => p.id && String(p.id).startsWith('basic-exp-'))
+          .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, amtLocal: p.expenseLocal || '', sym: p.sym || '', category: S(p.theme || '기타'), isFromTimeline: true, planId: p.id, dayLabel: `D${p.day}` }));
+        const basicItems = [...basicExpenses, ...transportItems, ...accomItems, ...manualItems, ...basicExpItems];
         const basicTotalKrw = basicItems.reduce((sum, b) => sum + (Number(b.amtKrw) || 0), 0);
 
         const grandTotal = planTotalKrw + basicTotalKrw;
@@ -3093,7 +3097,17 @@ return (
                   <h4 className={`text-[10px] font-black ${textMain}`}>📋 기본지출</h4>
                   <div className="flex items-center gap-2">
                     <span className={`text-[9px] font-bold text-rose-500`}>₩{basicTotalKrw.toLocaleString()}</span>
-                    <button onClick={() => { setBasicExpAddIsKrw(false); setBasicExpAddName(''); setBasicExpAddAmt(''); setBasicExpAddCat('기타'); setIsBasicExpAddOpen(true); }} className="bg-indigo-600 text-white px-2 py-0.5 text-[9px] font-bold rounded-lg hover:bg-indigo-700 active:scale-95 transition-all">+ 추가</button>
+                    <button onClick={() => {
+                      // 오늘 날짜 기준 자동 Day 계산
+                      let todayDayNum = 1;
+                      if (travelStartDate) {
+                        const start = new Date(travelStartDate); start.setHours(0,0,0,0);
+                        const today = new Date(); today.setHours(0,0,0,0);
+                        const diff = Math.round((today - start) / 86400000) + 1;
+                        todayDayNum = (diff >= 1 && diff <= safeMaxDay) ? diff : 1;
+                      }
+                      setBasicExpAddIsKrw(false); setBasicExpAddName(''); setBasicExpAddAmt(''); setBasicExpAddCat('기타'); setBasicExpAddDay(todayDayNum); setIsBasicExpAddOpen(true);
+                    }} className="bg-indigo-600 text-white px-2 py-0.5 text-[9px] font-bold rounded-lg hover:bg-indigo-700 active:scale-95 transition-all">+ 추가</button>
                   </div>
                 </div>
                 {basicItems.length === 0 ? (
@@ -3351,7 +3365,19 @@ return (
           if (!basicExpAddName.trim() || !basicExpAddAmt) { showToast("항목명과 금액을 입력하세요."); return; }
           const krwAmt = toKrwAdd(basicExpAddAmt);
           const localAmt = basicExpAddIsKrw ? '' : basicExpAddAmt;
-          setBasicExpenses(prev => [...prev, { id: 'basic-' + Date.now(), name: basicExpAddName.trim(), amtKrw: krwAmt, amtLocal: localAmt, currency: basicExpAddIsKrw ? 'KRW' : globalCur.code, sym: basicExpAddIsKrw ? '₩' : globalCur.sym, category: basicExpAddCat }]);
+          const newId = 'basic-exp-' + Date.now();
+          // planTimeline에 저장 (시간 없이, 일정 하단에 표시)
+          const newPlan = {
+            id: newId, day: basicExpAddDay, time: '99:99', // 시간 없이 맨 하단 정렬용
+            place: basicExpAddName.trim(), localName: '', features: basicExpAddCat,
+            photo: '', photos: [], country: S(globalPlanCountry), region: S(globalPlanRegion),
+            isAccommodation: false, isTransport: false, theme: basicExpAddCat,
+            expenseLocal: localAmt, expenseKrw: String(krwAmt),
+            sym: basicExpAddIsKrw ? '₩' : globalCur.sym, isBasicExp: true
+          };
+          const updatedTimeline = [...(Array.isArray(planTimeline) ? planTimeline : []), newPlan];
+          setPlanTimeline(updatedTimeline);
+          saveToDb({ plan_timeline: updatedTimeline });
           showToast("기본지출이 추가되었습니다!");
           closeAdd();
         };
@@ -3363,6 +3389,15 @@ return (
                 <button onClick={closeAdd} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
               </div>
               <div className="space-y-3">
+                {/* Day 선택 버튼 */}
+                <div>
+                  <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>Day 선택</label>
+                  <div className={`grid grid-cols-4 gap-1 p-1 rounded-lg border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                    {tripDays.map(d => (
+                      <button key={d} onClick={() => setBasicExpAddDay(d)} className={`py-1.5 text-[10px] font-bold rounded transition-all duration-200 ${basicExpAddDay === d ? 'bg-indigo-600 text-white shadow-md' : (isDarkMode ? 'text-slate-400 hover:bg-slate-600' : 'text-slate-400 hover:bg-slate-100')}`}>D{d}</button>
+                    ))}
+                  </div>
+                </div>
                 <div>
                   <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>항목명</label>
                   <input type="text" value={basicExpAddName} onChange={e => setBasicExpAddName(e.target.value)} placeholder="예: 편의점, 택시" autoFocus className={`w-full border rounded-xl p-3 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
@@ -5218,7 +5253,7 @@ const planData = {
                                  if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                                  else setActiveMobileCard(plan.id);
                                }}>
-                            <div className="bg-indigo-500 text-white font-black text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{S(plan.time)}</div>
+                            <div className="bg-indigo-500 text-white font-black text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{plan.time === '99:99' ? '' : S(plan.time)}</div>
                             <div className="flex-1 min-w-0 flex flex-col px-0.5">
                               <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
                                 {S(plan.place)}
@@ -5710,7 +5745,7 @@ const planData = {
                                        if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                                        else setActiveMobileCard(plan.id);
                                      }}>
-                                  <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{S(plan.time)}</div>
+                                  <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{plan.time === '99:99' ? '' : S(plan.time)}</div>
                                   <div className="flex-1 min-w-0 flex flex-col px-0.5">
                                     <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
                                       {S(plan.place)}
@@ -5731,7 +5766,7 @@ const planData = {
                             return (
                             <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                               <div className="flex justify-between items-start mb-1">
-                                <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>
+                                <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{plan.time === '99:99' ? '' : S(plan.time)}</span>
                                 <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
