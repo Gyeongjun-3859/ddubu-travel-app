@@ -3100,71 +3100,68 @@ return (
           if (diff > 0 && n > 1) goPhotoNext(imgs, idx);
           else if (diff < 0 && n > 1) goPhotoPrev(imgs, idx);
         };
-        // 각 카드의 스타일 계산: position=0(현재), 1(바로 뒤), 2(두 번째 뒤)
-        const cardStyle = (pos) => {
-          // pos 0=메인, 1=첫번째 뒤, 2=두번째 뒤
-          const scales   = [1,    0.88,  0.77];
-          const offX     = [0,    26,    46];   // px, 우측으로
-          const offY     = [0,    18,    32];   // px, 아래로
-          const opacities= [1,    0.65,  0.38];
-          const zIdxs    = [10,   7,     5];
-          const brightness = [1,  0.55,  0.35];
+        // 하스스톤 카드 배열: 각 카드의 상대 위치(offset)를 idx 기준으로 계산
+        // offset = cardIdx - idx (중앙=0, 우측=+1,+2..., 좌측=-1,-2...)
+        const CARD_W = 200;   // 중앙 카드 기준 너비(px)
+        const CARD_H = 280;
+        const X_GAP = 110;    // 카드 간격
+        const getCardStyle = (offset) => {
+          const absOff = Math.abs(offset);
+          const scale = absOff === 0 ? 1 : absOff === 1 ? 0.78 : 0.62;
+          const brightness = absOff === 0 ? 1 : absOff === 1 ? 0.55 : 0.35;
+          const opacity = absOff === 0 ? 1 : absOff === 1 ? 0.85 : 0.6;
+          const zIndex = 10 - absOff;
+          const tx = offset * X_GAP;
+          const ty = absOff === 0 ? 0 : absOff === 1 ? 24 : 42;
           return {
-            position: 'absolute', inset: 0, borderRadius: 16, overflow: 'hidden',
-            transform: `translate(${offX[pos]}px, ${offY[pos]}px) scale(${scales[pos]})`,
-            transformOrigin: 'top left',
-            opacity: opacities[pos],
-            filter: `brightness(${brightness[pos]})`,
-            zIndex: zIdxs[pos],
-            transition: viewPhotoAnim ? 'none' : 'transform 0.28s cubic-bezier(.4,0,.2,1), opacity 0.28s, filter 0.28s',
-            boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+            position: 'absolute',
+            width: CARD_W, height: CARD_H,
+            left: '50%', top: '50%',
+            marginLeft: -CARD_W / 2, marginTop: -CARD_H / 2,
+            borderRadius: 16, overflow: 'hidden',
+            transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+            filter: `brightness(${brightness})`,
+            opacity,
+            zIndex,
+            transition: 'transform 0.32s cubic-bezier(.4,0,.2,1), opacity 0.32s, filter 0.32s',
+            boxShadow: absOff === 0 ? '0 20px 60px rgba(0,0,0,0.9)' : '0 8px 24px rgba(0,0,0,0.6)',
+            cursor: absOff === 0 ? 'default' : 'pointer',
           };
         };
-        // 현재 카드 애니메이션: left → 왼쪽으로 날아감
-        const mainAnimStyle = viewPhotoAnim === 'left'
-          ? { position:'absolute', inset:0, borderRadius:16, overflow:'hidden', transform:'translateX(-120%) scale(0.85)', opacity:0, zIndex:10, transition:'transform 0.26s cubic-bezier(.4,0,.2,1), opacity 0.22s', boxShadow:'0 12px 40px rgba(0,0,0,0.7)' }
-          : viewPhotoAnim === 'right'
-          ? { position:'absolute', inset:0, borderRadius:16, overflow:'hidden', transform:'translateX(120%) scale(0.85)', opacity:0, zIndex:10, transition:'transform 0.26s cubic-bezier(.4,0,.2,1), opacity 0.22s', boxShadow:'0 12px 40px rgba(0,0,0,0.7)' }
-          : cardStyle(0);
+        // 보여줄 카드 범위: 현재 기준 ±2장
+        const visibleOffsets = [-2, -1, 0, 1, 2].filter(o => {
+          const ci = (idx + o + n * 10) % n;
+          return n > 1 || o === 0;
+        });
         return (
-          <div className="fixed inset-0 bg-black/93 z-[99998] flex items-center justify-center backdrop-blur-sm"
+          <div className="fixed inset-0 bg-black/95 z-[99998] flex items-center justify-center backdrop-blur-sm"
                onClick={() => setViewPhoto(null)}
                onMouseDown={onDragStart} onMouseUp={onDragEnd}
                onTouchStart={onDragStart} onTouchEnd={onDragEnd}>
-            <div className="relative" style={{ width: '78vw', maxWidth: 440, height: '68vh' }}>
-              {/* 두 번째 뒤 카드 */}
-              {n > 2 && (
-                <div style={cardStyle(2)} className="pointer-events-none select-none">
-                  <img src={imgs[(idx + 2) % n]} className="w-full h-full object-cover" alt="" />
-                </div>
-              )}
-              {/* 첫 번째 뒤 카드 */}
-              {n > 1 && (
-                <div style={viewPhotoAnim === 'left'
-                       ? { ...cardStyle(0), transition: 'transform 0.26s cubic-bezier(.4,0,.2,1), opacity 0.26s, filter 0.26s' }
-                       : cardStyle(1)}
-                     className="pointer-events-none select-none">
-                  <img src={imgs[(idx + 1) % n]} className="w-full h-full object-cover" alt="" />
-                </div>
-              )}
-              {/* 메인 카드 */}
-              <div style={mainAnimStyle} className="select-none"
-                   onClick={e => e.stopPropagation()}
-                   onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
-                   onTouchStart={e => { e.stopPropagation(); onDragStart(e); }}
-                   onTouchEnd={e => { e.stopPropagation(); onDragEnd(e); }}>
-                <img src={imgs[idx]} className="w-full h-full object-contain bg-black" alt="" />
-              </div>
+            <div className="relative" style={{ width: '100vw', height: '80vh' }}
+                 onClick={e => e.stopPropagation()}
+                 onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
+                 onTouchStart={e => { e.stopPropagation(); onDragStart(e); }}
+                 onTouchEnd={e => { e.stopPropagation(); onDragEnd(e); }}>
+              {[-2,-1,0,1,2].map(offset => {
+                if (n === 1 && offset !== 0) return null;
+                const ci = (idx + offset + n * 10) % n;
+                return (
+                  <div key={`${ci}-${offset}`} style={getCardStyle(offset)}
+                       onClick={e => { e.stopPropagation(); if (offset < 0) goPhotoPrev(imgs, idx); else if (offset > 0) goPhotoNext(imgs, idx); }}>
+                    <img src={imgs[ci]} className="w-full h-full object-cover" alt="" draggable={false} />
+                  </div>
+                );
+              })}
             </div>
             <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 30 }} onClick={() => setViewPhoto(null)}>✕</button>
             {n > 1 && (
-              <>
-                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl" style={{ zIndex: 30 }} onClick={e => { e.stopPropagation(); goPhotoPrev(imgs, idx); }}>‹</button>
-                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl" style={{ zIndex: 30 }} onClick={e => { e.stopPropagation(); goPhotoNext(imgs, idx); }}>›</button>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5" style={{ zIndex: 30 }}>
-                  {imgs.map((_, i) => <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === idx ? 'bg-white' : 'bg-white/35'}`} />)}
-                </div>
-              </>
+              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2" style={{ zIndex: 30 }}>
+                {imgs.map((_, i) => (
+                  <div key={i} onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: i }); setViewPhotoAnim(null); }}
+                       className={`rounded-full transition-all cursor-pointer ${i === idx ? 'w-4 h-2 bg-white' : 'w-2 h-2 bg-white/35 hover:bg-white/60'}`} />
+                ))}
+              </div>
             )}
           </div>
         );
