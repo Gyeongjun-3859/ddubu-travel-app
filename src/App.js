@@ -263,6 +263,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [newLocalName, setNewLocalName] = useState("");
   const [newFeatures, setNewFeatures] = useState("");
   const [newPhoto, setNewPhoto] = useState("");
+  const [newPlanPhotos, setNewPlanPhotos] = useState([]); // 스케줄 다중 사진
   const [newIsAccommodation, setNewIsAccommodation] = useState(false);
   const [planCountry, setPlanCountry] = useState("");
   const [planRegion, setPlanRegion] = useState("");
@@ -328,7 +329,13 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [pinLinkPlanId, setPinLinkPlanId] = useState("");
   const manualFileInputRef = useRef(null);
 
-  const [viewPhoto, setViewPhoto] = useState(null);
+  const [viewPhoto, setViewPhoto] = useState(null); // {imgs: string[], idx: number} | null
+  const [newManualPhotos, setNewManualPhotos] = useState([]); // 핀 등록 다중 사진
+  const openPhotoViewer = (imgs, idx = 0) => {
+    const arr = Array.isArray(imgs) ? imgs.filter(Boolean) : (imgs ? [imgs] : []);
+    if (arr.length === 0) return;
+    setViewPhoto({ imgs: arr, idx });
+  };
   const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
   
   const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
@@ -361,7 +368,13 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [isDashboardShoppingOpen, setIsDashboardShoppingOpen] = useState(false);
   const [dashShowAllShopping, setDashShowAllShopping] = useState(false);
   const [dashShoppingFilterTheme, setDashShoppingFilterTheme] = useState("all");
+  const [confirmModal, setConfirmModal] = useState(null); // {msg, onOk, onCancel?}
+  const showConfirm = (msg, onOk, onCancel) => setConfirmModal({ msg, onOk, onCancel: onCancel || null });
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [expenseAmtModalPlan, setExpenseAmtModalPlan] = useState(null); // 금액 수정 모달 대상 plan
+  const [expenseAmtValue, setExpenseAmtValue] = useState(""); // 금액 수정 모달 입력값
+  const [expenseCurrencyToggle, setExpenseCurrencyToggle] = useState({}); // {planId: 'local'|'krw'}
+  const [basicExpenses, setBasicExpenses] = useState([]); // 기본지출 항목 [{id, name, amtKrw, category}]
   const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
   const [transType, setTransType] = useState('flight'); 
   const [transDir, setTransDir] = useState('outbound'); 
@@ -438,13 +451,21 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
         compressImage(imageFile, (compressedBase64) => {
           const ctx = activeContextRef.current;
           if (ctx.editingPlan) {
-            setEditingPlan(prev => ({...prev, photo: compressedBase64}));
+            setEditingPlan(prev => {
+              const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []);
+              if (imgs.length >= 3) { showToast("사진은 최대 3장까지 추가할 수 있어요."); return prev; }
+              const newImgs = [...imgs, compressedBase64];
+              return {...prev, photos: newImgs, photo: newImgs[0]};
+            });
             showToast("📋 복사된 이미지가 붙여넣기 되었습니다!");
           } else if (ctx.isAddPlaceModalOpen) {
             setNewManualPhoto(compressedBase64);
             showToast("📋 핀 사진에 이미지가 붙여넣어 졌습니다!");
           } else if (ctx.activeTab === 'plan') {
-            setNewPhoto(compressedBase64);
+            setNewPlanPhotos(prev => {
+              if (prev.length >= 3) { showToast("사진은 최대 3장까지 추가할 수 있어요."); return prev; }
+              return [...prev, compressedBase64];
+            });
             showToast("📋 스케줄 사진에 이미지가 붙여넣어 졌습니다!");
           }
         });
@@ -612,10 +633,6 @@ const fetchWeatherData = useCallback(async (cityName) => {
 
       const { lat, lon } = geoData[0];
       console.log(`🌤️ [5] 좌표 획득 성공! 위도:${lat}, 경도:${lon}. 날씨 API 요청 시작.`);
-
-      if (mapInstanceRef.current) {
-          mapInstanceRef.current.flyTo([parseFloat(lat), parseFloat(lon)], 13);
-      }
 
       const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=16`);
       const wData = await wRes.json();
@@ -855,7 +872,7 @@ const saveToDb = useCallback(async (updates) => {
   }
 
 async function confirmDeleteTrip() {
-  if (!window.confirm("이 여행 데이터를 내 목록에서 정말 삭제(또는 나가기) 하시겠습니까?")) return;
+  showConfirm("이 여행 데이터를 내 목록에서 정말 삭제(또는 나가기) 하시겠습니까?", async () => {
   if (trips.length <= 1) {
         showToast("최소 1개의 여행 일정은 남겨두어야 합니다.");
         setTripToDelete(null);
@@ -897,6 +914,7 @@ async function confirmDeleteTrip() {
     
     setTripToDelete(null);
     showToast(tripToRemove?.isShared ? "공유된 여행 목록에서 나갔습니다." : "여행이 정상적으로 삭제되었습니다.");
+  }); // showConfirm end
   }
 
   function handleElementScaleChange(e) {
@@ -1131,10 +1149,15 @@ async function confirmDeleteTrip() {
     }
 
     const placeId = clickedLocation?.id || `manual-${Date.now()}`;
+    const finalImgs = newManualPhotos.length > 0 ? newManualPhotos : (newManualPhoto ? [newManualPhoto] : []);
+    // country는 실제 국가명(globalPlanCountry), city는 지역명(displayCityName)으로 올바르게 저장
+    const pinCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || S(displayCityName));
+    const pinCity = displayCityName && displayCityName !== '선택된 지역 없음' ? displayCityName : S(globalPlanRegion === '수동입력' ? globalManualRegion : globalPlanRegion);
     const newPlace = {
-      id: S(placeId), lat: pLat, lng: pLng, country: S(displayCityName), city: S(displayCityName),
+      id: S(placeId), lat: pLat, lng: pLng, country: pinCountry, city: pinCity,
       name: S(newManualPlaceName), localName: S(newManualLocalName), signature: newManualFeature ? S(newManualFeature) : "직접 추가한 장소",
-      img: newManualPhoto ? S(newManualPhoto) : "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
+      img: finalImgs[0] || "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
+      imgs: finalImgs,
       rating: 5.0, isAccommodation: Boolean(newManualIsAccommodation), isLandmark: Boolean(newManualIsLandmark), theme: S(newManualTheme) || "기타"
     };
 
@@ -1150,10 +1173,9 @@ async function confirmDeleteTrip() {
     let updatedTimeline = [...safePlanTimeline];
     
     if (pinLinkDay) {
-      // [NEW] 핀에 저장된 지역 정보 확인 (없으면 기존 글로벌 설정값 사용)
-      const existingPin = safeCurrentRestaurants.find(r => r && S(r.id) === S(clickedLocation?.id));
-      const targetCountry = existingPin?.country || S(globalPlanCountry);
-      const targetRegion = existingPin?.city || S(globalPlanRegion);
+      // 전역 여행 국가/지역을 기본값으로 사용 (핀 데이터보다 globalPlanCountry/globalPlanRegion 우선)
+      const targetCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || S(globalPlanCountry));
+      const targetRegion = globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : (globalManualRegion || S(globalPlanRegion));
 
       if (pinLinkPlanId && pinLinkPlanId !== 'manual') {
         updatedTimeline = updatedTimeline.map(p => p && String(p.id) === String(pinLinkPlanId) ? {
@@ -1191,7 +1213,7 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
        setIsAddPlaceModalOpen(false);
     }
     
-    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualIsLandmark(false); setNewManualTheme("기타");
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualIsLandmark(false); setNewManualTheme("기타");
     setPinLinkDay(""); setPinLinkPlanId(""); 
   }
 
@@ -1313,8 +1335,9 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     let updatedTimeline = [...safePlanTimeline];
 
-    const planData = { 
-      id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: newPhoto ? S(newPhoto) : "", 
+    const finalPlanImgs = newPlanPhotos.length > 0 ? newPlanPhotos : (newPhoto ? [newPhoto] : []);
+    const planData = {
+      id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: finalPlanImgs[0] || "", photos: finalPlanImgs,
       country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), theme: S(newTheme)
     };
 
@@ -1334,7 +1357,8 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
             ...updatedRests[matchedIndex],
             localName: newLocalName ? S(newLocalName) : updatedRests[matchedIndex].localName,
             signature: newFeatures ? S(newFeatures) : updatedRests[matchedIndex].signature,
-            img: newPhoto ? S(newPhoto) : updatedRests[matchedIndex].img,
+            img: finalPlanImgs[0] || updatedRests[matchedIndex].img,
+            imgs: finalPlanImgs.length > 0 ? finalPlanImgs : (updatedRests[matchedIndex].imgs || []),
             isAccommodation: newIsAccommodation ? true : updatedRests[matchedIndex].isAccommodation
         };
         setCurrentRestaurants(updatedRests);
@@ -1350,11 +1374,26 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
   }
   
   function handlePlanPhotoUpload(e, isEdit = false) {
-    const file = e.target.files?.[0]; if (!file) return;
-    compressImage(file, (compressedBase64) => { 
-      if(isEdit && editingPlan) setEditingPlan({...editingPlan, photo: S(compressedBase64)});
-      else setNewPhoto(S(compressedBase64)); 
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    files.forEach(file => {
+      compressImage(file, (compressedBase64) => {
+        if (isEdit && editingPlan) {
+          setEditingPlan(prev => {
+            const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []);
+            if (imgs.length >= 3) { showToast("사진은 최대 3장까지 추가할 수 있어요."); return prev; }
+            const newImgs = [...imgs, S(compressedBase64)];
+            return {...prev, photos: newImgs, photo: newImgs[0]};
+          });
+        } else {
+          setNewPlanPhotos(prev => {
+            if (prev.length >= 3) { showToast("사진은 최대 3장까지 추가할 수 있어요."); return prev; }
+            return [...prev, S(compressedBase64)];
+          });
+        }
+      });
     });
+    e.target.value = "";
   }
   
   function handleEditPlanClick(p) { 
@@ -1448,24 +1487,38 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
         return; // 일반 수정 모달 띄우기 완벽 차단
     }
 
-    const c = S(p.country || "");
-    const r = S(p.region || "");
+    let rawC = S(p.country || "");
+    let rawR = S(p.region || "");
+    // country가 실제 국가명인지 확인, 아니면 역추적
+    let c = rawC;
+    let r = rawR;
+    if (rawC && !Object.keys(REGIONS_BY_COUNTRY).includes(rawC)) {
+      // rawR로 국가 역추적 시도
+      let found = "";
+      for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rawR)) { found = cn; break; } }
+      if (!found) {
+        // rawC 자체가 지역명인 경우
+        for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rawC)) { found = cn; r = rawC; break; } }
+      }
+      if (found) c = found;
+    }
     const isStandardCountry = Object.keys(REGIONS_BY_COUNTRY).includes(c) || c === "";
     const isStandardRegion = (isStandardCountry && c && REGIONS_BY_COUNTRY[c]?.includes(r)) || r === "";
-    
-    setEditingPlan({ ...p, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || ""), theme: S(p.theme || "기타") });  
+
+    setEditingPlan({ ...p, country: c, region: r, countrySelect: isStandardCountry ? c : "수동입력", manualCountry: isStandardCountry ? "" : c, regionSelect: isStandardRegion ? r : "수동입력", manualRegion: isStandardRegion ? "" : r, isAccommodation: Boolean(p.isAccommodation), localName: S(p.localName || ""), features: S(p.features || ""), time: S(p.time || ""), place: S(p.place || ""), theme: S(p.theme || "기타") });  
   }
   
 function handleDeletePlan(id) {
-  if (!window.confirm("이 일정을 정말 삭제하시겠습니까?")) return;
-  const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-    const updated = safePlanTimeline.filter(p => p && S(p.id) !== S(id)); 
-    setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
-    showToast("일정이 삭제되었습니다.");
+    showConfirm("이 일정을 정말 삭제하시겠습니까?", () => {
+      const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+      const updated = safePlanTimeline.filter(p => p && S(p.id) !== S(id));
+      setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+      showToast("일정이 삭제되었습니다.");
+    });
   }
   
   function resetPlanForm() {
-    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewIsAccommodation(false); setNewTheme("기타"); setPinSelectOpen(false);
+    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewPlanPhotos([]); setNewIsAccommodation(false); setNewTheme("기타"); setPinSelectOpen(false);
     setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion);
     setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : ""); setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
   }
@@ -1647,10 +1700,11 @@ function handleAddPackingItem(e) {
     saveToDb({ packing_list: newList });
   }
 function deletePackingItem(id) {
-  if (!window.confirm("이 준비물을 목록에서 정말 삭제하시겠습니까?")) return;
-  const newList = packingList.filter(item => item.id !== id);
-    setPackingList(newList);
-    saveToDb({ packing_list: newList });
+    showConfirm("이 준비물을 목록에서 정말 삭제하시겠습니까?", () => {
+      const newList = packingList.filter(item => item.id !== id);
+      setPackingList(newList);
+      saveToDb({ packing_list: newList });
+    });
   }
 
   const handleDragMove = useCallback((e) => {
@@ -1749,8 +1803,11 @@ function deletePackingItem(id) {
               setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));              } else { setCurrentRestaurants([]); }
               
               if (Array.isArray(data.plan_timeline)) {
-               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));              } else { setPlanTimeline([]); }
-              
+               const fallbackCityName = data.display_city_name ? S(data.display_city_name) : "";
+               let fallbackCountry = ""; let fallbackRegion = fallbackCityName;
+               if (fallbackCityName) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName)) { fallbackCountry = cn; break; } } }
+               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));              } else { setPlanTimeline([]); }
+
               loaded = true;
             }
           }
@@ -2085,7 +2142,10 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));          } else { setCurrentRestaurants([]); }
           
           if (Array.isArray(data.plan_timeline)) {
-          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
+          const fallbackCityName2 = data.display_city_name ? S(data.display_city_name) : "";
+          let fallbackCountry2 = ""; let fallbackRegion2 = fallbackCityName2;
+          if (fallbackCityName2) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName2)) { fallbackCountry2 = cn; break; } } }
+          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
         } else {
            setDisplayCityName("선택된 지역 없음");
            setCurrentRestaurants([]);
@@ -2128,7 +2188,10 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
             setCurrentRestaurants(cleanRests);
           }
           if (Array.isArray(payload.new.plan_timeline)) {
-            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), country: S(p.country), region: S(p.region), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
+            const fallbackCityName3 = payload.new.display_city_name ? S(payload.new.display_city_name) : "";
+            let fallbackCountry3 = ""; let fallbackRegion3 = fallbackCityName3;
+            if (fallbackCityName3) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName3)) { fallbackCountry3 = cn; break; } } }
+            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
             setPlanTimeline(cleanPlans);
           }
         }
@@ -2551,6 +2614,19 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
         </div>
       )}
 
+      {/* 커스텀 확인 모달 (window.confirm 대체) */}
+      {confirmModal && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[100000] flex items-center justify-center p-6" onClick={() => { if (confirmModal.onCancel) confirmModal.onCancel(); setConfirmModal(null); }}>
+          <div className={`${cardBg} rounded-3xl p-6 w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
+            <p className={`text-sm font-bold text-center leading-relaxed mb-6 whitespace-pre-line ${textMain}`}>{confirmModal.msg}</p>
+            <div className="flex gap-3">
+              <button onClick={() => { if (confirmModal.onCancel) confirmModal.onCancel(); setConfirmModal(null); }} className={`flex-1 py-3 rounded-2xl text-xs font-bold border transition-all active:scale-95 ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
+              <button onClick={() => { confirmModal.onOk(); setConfirmModal(null); }} className="flex-1 bg-rose-500 text-white py-3 rounded-2xl text-xs font-bold shadow-md hover:bg-rose-600 active:scale-95 transition-all">확인</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isMobileMenuOpen && (
         <div className="fixed inset-0 bg-black/60 z-[9500] flex transition-opacity duration-300" onClick={() => setIsMobileMenuOpen(false)}>
           <div className={`w-64 h-full shadow-2xl flex flex-col animate-in slide-in-from-left duration-300 ${isDarkMode ? 'bg-slate-900 border-r border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
@@ -2626,21 +2702,20 @@ return (
                           
                           {/* 스마트 완료 버튼: 시간이 지났을 때만 노출 */}
                           {isTimeFinished && (
-                            <button 
-                              onClick={async (e) => {
+                            <button
+                              onClick={(e) => {
                                 e.stopPropagation();
-                                if(!window.confirm("정말 이 여행을 완료하시겠습니까?\n완료된 여행은 '소중한 여행기록'으로 이동합니다.")) return;
-                                
-                                const finishDate = new Date().toISOString();
-                                const newTrips = trips.map(item => item.id === t.id ? { ...item, archived: true, finishDate: finishDate } : item);
-                                setTrips(newTrips);
-                                
-                                if(supabaseClient && appUserId !== "Guest") {
-                                  await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
-                                  await supabaseClient.from('travel_state').update({ archived: true, finish_date: finishDate, shared_users: [] }).eq('id', t.id);
-                                }
-                                showToast("축하합니다! 성공적으로 여행을 마쳤습니다. 🏁");
-                                setActiveTab('archive');
+                                showConfirm("정말 이 여행을 완료하시겠습니까?\n완료된 여행은 '소중한 여행기록'으로 이동합니다.", async () => {
+                                  const finishDate = new Date().toISOString();
+                                  const newTrips = trips.map(item => item.id === t.id ? { ...item, archived: true, finishDate: finishDate } : item);
+                                  setTrips(newTrips);
+                                  if(supabaseClient && appUserId !== "Guest") {
+                                    await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
+                                    await supabaseClient.from('travel_state').update({ archived: true, finish_date: finishDate, shared_users: [] }).eq('id', t.id);
+                                  }
+                                  showToast("축하합니다! 성공적으로 여행을 마쳤습니다. 🏁");
+                                  setActiveTab('archive');
+                                });
                               }}
                               className="w-full mt-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[9px] py-1.5 rounded-lg font-black shadow-lg transition-all animate-in slide-in-from-top-1"
                             >
@@ -2820,12 +2895,25 @@ return (
         </div>
       )}
 
-      {viewPhoto && (
-        <div className="fixed inset-0 bg-black/90 z-[99998] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setViewPhoto(null)}>
-          <img src={viewPhoto} className="max-w-full max-h-full object-contain rounded-md shadow-2xl animate-in zoom-in-95 duration-300" alt="" onClick={e => e.stopPropagation()} />
-          <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1 rounded-full hover:bg-black/80 transition-colors" onClick={() => setViewPhoto(null)}>✕</button>
-        </div>
-      )}
+      {viewPhoto && (() => {
+        const imgs = viewPhoto.imgs || [];
+        const idx = viewPhoto.idx || 0;
+        return (
+          <div className="fixed inset-0 bg-black/90 z-[99998] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewPhoto(null)}>
+            <img src={imgs[idx]} className="max-w-full max-h-full object-contain rounded-md shadow-2xl animate-in zoom-in-95 duration-300" alt="" onClick={e => e.stopPropagation()} />
+            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1 rounded-full hover:bg-black/80 transition-colors" onClick={() => setViewPhoto(null)}>✕</button>
+            {imgs.length > 1 && (
+              <>
+                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-lg" onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: (idx - 1 + imgs.length) % imgs.length }); }}>‹</button>
+                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-lg" onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: (idx + 1) % imgs.length }); }}>›</button>
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5">
+                  {imgs.map((_, i) => <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === idx ? 'bg-white' : 'bg-white/40'}`} />)}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {tripToDelete && (
         <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
@@ -2848,159 +2936,281 @@ return (
            </div>
         </div>
       )}
-      {isExpenseModalOpen && (
+      {isExpenseModalOpen && (() => {
+        // 국가 → 화폐 코드/기호 변환 헬퍼 (country가 지역명으로 잘못 저장된 구버전 데이터도 역추적)
+        const resolveCountry = (country, region) => {
+          // 1순위: country가 알려진 국가명이면 그대로 사용
+          if (country && Object.keys(REGIONS_BY_COUNTRY).includes(country)) return country;
+          // 2순위: region으로 국가 역추적
+          if (region) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(region)) return cn; } }
+          // 3순위: country 자체가 지역명일 수도 있음 (구버전 버그 데이터)
+          if (country) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(country)) return cn; } }
+          return country || '';
+        };
+        const getCountryCurrency = (country, region) => {
+          const c = resolveCountry(country, region);
+          if (c === '한국') return { code: 'KRW', sym: '₩' };
+          if (c === '일본') return { code: 'JPY', sym: '¥' };
+          if (c === '중국') return { code: 'CNY', sym: '元' };
+          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
+          if (c === '영국') return { code: 'GBP', sym: '£' };
+          if (c === '태국') return { code: 'THB', sym: '฿' };
+          if (c === '베트남') return { code: 'VND', sym: '₫' };
+          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
+          if (c === '호주') return { code: 'AUD', sym: 'A$' };
+          return { code: 'USD', sym: '$' };
+        };
+        const toKrw = (localAmt, curCode) => {
+          if (!localAmt || isNaN(Number(localAmt))) return 0;
+          const r = rates && rates['KRW'] && rates[curCode] ? (rates['KRW'] / rates[curCode]) : 1350;
+          return Math.round(Number(localAmt) * r);
+        };
+
+        // 일정 일정 목록: 교통편·숙소 제외, D1→ 오름차순
+        const allPlans = (Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [])
+          .filter(p => !p.isTransport && !p.isAccommodation)
+          .sort((a, b) => (Number(a.day) - Number(b.day)) || S(a.time).localeCompare(S(b.time)));
+        const dayFiltered = expenseFilterDay === 'all' ? allPlans : allPlans.filter(p => String(p.day) === String(expenseFilterDay));
+        const fullyFiltered = expenseFilterTheme === 'all' ? dayFiltered : dayFiltered.filter(p => (p.theme || '기타') === expenseFilterTheme);
+        const planTotalKrw = fullyFiltered.reduce((sum, p) => sum + (Number(p.expenseKrw) || 0), 0);
+
+        // 기본지출: basicExpenses 배열 + 교통편 일정 + 숙소 일정 + 기타지출([기타] prefix)
+        const timelinePlans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+        const transportItems = timelinePlans
+          .filter(p => p.isTransport && !String(p.id).endsWith('_arr')) // 출발편만 (중복방지)
+          .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, category: '항공권/교통', isFromTimeline: true, planId: p.id }));
+        const accomItems = timelinePlans
+          .filter(p => p.isAccommodation)
+          .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, category: '숙소', isFromTimeline: true, planId: p.id }));
+        const manualItems = timelinePlans
+          .filter(p => p.id && String(p.id).startsWith('manual-exp-'))
+          .map(p => ({ id: p.id, name: p.place.replace(/^\[기타\]\s*/, ''), amtKrw: Number(p.expenseKrw) || 0, category: '기타', isFromTimeline: true, planId: p.id }));
+        const basicItems = [...basicExpenses, ...transportItems, ...accomItems, ...manualItems];
+        const basicTotalKrw = basicItems.reduce((sum, b) => sum + (Number(b.amtKrw) || 0), 0);
+
+        const grandTotal = planTotalKrw + basicTotalKrw;
+
+        return (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsExpenseModalOpen(false)}>
-          <div className={`${cardBg} p-5 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[85vh]`} onClick={e => e.stopPropagation()}>
-            <div className={`flex justify-between items-center mb-4 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+          <div className={`${cardBg} p-5 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]`} onClick={e => e.stopPropagation()}>
+            <div className={`flex justify-between items-center mb-3 border-b pb-3 flex-shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
               <h3 className={`font-black text-sm ${textMain}`}>💸 여행정산</h3>
               <button onClick={() => setIsExpenseModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors">✕</button>
             </div>
 
-{/* [수정됨] 기타 지출 수동 등록 및 스마트 Day 자동 계산 섹션 */}
-            <div className={`p-3 mb-4 rounded-xl border border-dashed shadow-sm ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-slate-50 border-slate-300'}`}>
-              <h4 className="text-[10px] font-black text-indigo-500 mb-2 flex justify-between items-center">
-                <span>기타 지출 💸</span>
-                <span className="text-[8px] opacity-70 bg-indigo-50 dark:bg-indigo-900/50 px-1.5 py-0.5 rounded">오늘 날짜 자동 연동 ✨</span>
-              </h4>
-              <div className="flex space-x-1.5">
-                <input id="manualExpName" type="text" placeholder="지출 내용 (예: 간식)" className={`flex-[2] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`} />
-                <input id="manualExpAmt" type="number" placeholder="금액" className={`flex-[1] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`} />
-                <button onClick={() => {
-const name = document.getElementById('manualExpName').value;
-                  const amt = document.getElementById('manualExpAmt').value;
-                  if(!name || !amt) { showToast("내용과 금액을 입력하세요."); return; }
-                  
-                  // [국가 기반 자동 환전 및 Day 계산 로직]
-                  let autoDay = 1;
-                  if (travelStartDate) {
-                    const today = new Date(); today.setHours(0,0,0,0);
-                    const start = new Date(travelStartDate); start.setHours(0,0,0,0);
-                    const diff = Math.floor((today - start) / (1000 * 60 * 60 * 24)) + 1;
-                    autoDay = diff < 1 ? 1 : (diff > maxDay ? maxDay : diff);
-                  }
-
-                  // 현재 설정된 지역의 국가 찾기
-                  let targetCountry = "";
-                  for (const [country, regions] of Object.entries(REGIONS_BY_COUNTRY)) {
-                    if (regions.includes(displayCityName)) { targetCountry = country; break; }
-                  }
-                  
-                  let curCode = 'USD';
-                  if (targetCountry === '한국') curCode = 'KRW'; 
-                  else if (targetCountry === '일본') curCode = 'JPY'; 
-                  else if (['프랑스','이탈리아','스페인','독일'].includes(targetCountry)) curCode = 'EUR'; 
-                  else if (targetCountry === '중국') curCode = 'CNY'; 
-                  else if (targetCountry === '미국') curCode = 'USD';
-                  else if (targetCountry === '영국') curCode = 'GBP';
-
-                  const krwVal = Math.round(amt * ((rates['KRW']||1350) / (rates[curCode]||1)));
-                  
-                  const newExp = {
-                      id: "manual-exp-" + Date.now(), day: autoDay, time: "상시", place: `[기타] ${name}`, theme: "기타", 
-                      expenseLocal: amt, expenseKrw: krwVal, isAccommodation: false, isTransport: false,
-                      country: targetCountry // 국가 정보 함께 저장하여 화폐 기호 연동
-                  };
-                  const updatedTimeline = [...planTimeline, newExp];
-                  setPlanTimeline(updatedTimeline);
-                  saveToDb({ plan_timeline: updatedTimeline });
-                  showToast(`Day ${autoDay} 지출이 ${targetCountry} 환율로 기록되었습니다! 💸`);
-                  document.getElementById('manualExpName').value = ''; document.getElementById('manualExpAmt').value = '';
-                }} className="bg-indigo-600 text-white px-3 py-1.5 text-[10px] font-bold rounded-md shadow-sm hover:bg-indigo-700 active:scale-95 transition-all">등록</button>
+            {/* 총 합계 */}
+            <div className={`p-3 rounded-2xl mb-3 flex flex-col items-center border shadow-md flex-shrink-0 ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-100'}`}>
+              <span className={`text-[10px] font-black uppercase tracking-wider mb-0.5 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-600'}`}>Total Expense</span>
+              <span className="text-2xl font-black text-rose-500">₩{grandTotal.toLocaleString()}</span>
+              <div className={`flex gap-3 mt-1 text-[9px] font-bold ${textMuted}`}>
+                <span>일정 ₩{planTotalKrw.toLocaleString()}</span>
+                <span>+</span>
+                <span>기본지출 ₩{basicTotalKrw.toLocaleString()}</span>
               </div>
             </div>
 
-            <div className="flex space-x-2 mb-3">
-              <select value={expenseFilterDay} onChange={e => setExpenseFilterDay(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-xs font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
-                <option value="all">모든 일차 (Day 전체)</option>
-                {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
-              </select>
-              <select value={expenseFilterTheme} onChange={e => setExpenseFilterTheme(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-xs font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
-                <option value="all">모든 테마</option>
-                <option value="교통편">교통편</option>
-                <option value="식당">식당</option>
-                <option value="디저트">디저트</option>
-                <option value="관광지">관광지</option>
-                <option value="쇼핑">쇼핑</option>
-                <option value="기타">기타</option>
-              </select>
-            </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-3 mb-3 scroll-smooth min-h-0">
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-2 mb-4 scroll-smooth">
-              {(() => {
-                const expensePlans = (Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : []).filter(p => Number(p.expenseLocal) > 0 || Number(p.expenseKrw) > 0);
-                const dayFiltered = expenseFilterDay === 'all' ? expensePlans : expensePlans.filter(p => String(p.day) === String(expenseFilterDay));
-                const fullyFiltered = expenseFilterTheme === 'all' ? dayFiltered : dayFiltered.filter(p => (p.theme || '기타') === expenseFilterTheme);
-
-                const totalKrw = fullyFiltered.reduce((sum, p) => sum + (Number(p.expenseKrw) || 0), 0);
-                const totalLocal = fullyFiltered.reduce((sum, p) => sum + (Number(p.expenseLocal) || 0), 0);
-
-const getLocalSym = (c) => {
-                  if (c === '한국') return '₩'; if (c === '일본' || c === '중국') return '¥'; if (['프랑스','이탈리아','스페인','독일'].includes(c)) return '€'; if (c === '영국') return '£'; return '$';
-                };
-
-                return (
-                  <div className="flex flex-col h-full">
-                    <div className={`p-4 rounded-2xl mb-4 flex flex-col items-center justify-center border shadow-md transition-all ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-100'}`}>
-                      <span className={`text-[10px] font-black ${isDarkMode ? 'text-indigo-300' : 'text-indigo-600'} mb-1 uppercase tracking-wider`}>Total Expense</span>
-                      <span className="text-2xl font-black text-rose-500 mb-1">₩{totalKrw.toLocaleString()}</span>
-                      <span className={`text-[10px] font-bold ${textMuted}`}>필터링된 지출 합계</span>
-                    </div>
-
-                    {fullyFiltered.length === 0 ? (
-                      <p className={`text-xs ${textMuted} text-center py-10 font-bold`}>기록된 지출 내역이 없습니다.</p>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-{fullyFiltered.map(plan => {
-                          const isCardActive = activeMobileCard === plan.id;
-                          return (
-                          <div key={plan.id} 
-                            onClick={(e) => { e.stopPropagation(); setActiveMobileCard(isCardActive ? null : plan.id); }}
-                            className={`flex flex-col p-2.5 rounded-xl border relative transition-all duration-300 cursor-pointer overflow-hidden ${isCardActive ? 'border-indigo-500 ring-1 ring-indigo-500 bg-indigo-50/10' : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-sm')} hover:shadow-md`}
-                          >
-                            <div className="flex flex-row items-center justify-between mb-2 w-full flex-nowrap">
-                               <div className="flex items-center space-x-1 flex-shrink-0 min-w-0">
-                                 <span className={`text-[7px] font-black px-1.5 py-0.5 rounded-md uppercase whitespace-nowrap ${isDarkMode ? 'bg-indigo-900 text-indigo-300' : 'bg-indigo-600 text-white'}`}>D{plan.day}</span>
-                                 <span className={`text-[8px] font-bold truncate opacity-80 ${textMuted}`}>{plan.theme}</span>
-                               </div>
-                               
-                               {/* [수정됨] 이모지 버튼 & 레이아웃 최적화 */}
-                               <div className={`flex space-x-1 flex-shrink-0 transition-all duration-300 ${isCardActive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                                  <button onClick={(e) => { 
-                                      e.stopPropagation(); 
-                                      setSelectedPlanInfo(plan); setIsExpenseModalOpen(false); setActiveMobileCard(null);
-                                  }} className="text-[11px] bg-indigo-100 dark:bg-indigo-900/50 p-1 rounded-md shadow-sm active:scale-75 transition-transform" title="수정">✏️</button>
-                                  <button onClick={(e) => {
-                                      e.stopPropagation();
-                                      const updated = planTimeline.map(p => String(p.id) === String(plan.id) ? { ...p, expenseLocal: "", expenseKrw: "" } : p);
-                                      setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
-                                      setActiveMobileCard(null);
-                                      showToast("지출 내역이 삭제되었습니다.");
-                                  }} className="text-[11px] bg-rose-100 dark:bg-rose-900/50 p-1 rounded-md shadow-sm active:scale-75 transition-transform" title="삭제">🗑️</button>
-                               </div>
-                            </div>
-
-                            <h4 className={`text-[10.5px] font-black truncate mb-2 leading-tight ${textMain}`}>{S(plan.place)}</h4>
-
-                            <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-100 dark:border-slate-700 w-full flex-nowrap gap-1">
-                               <span className={`text-[9px] font-bold whitespace-nowrap overflow-hidden text-ellipsis ${textMuted}`}>
-                                 {getLocalSym(plan.country)}{Number(plan.expenseLocal).toLocaleString()}
-                               </span>
-                               <span className="text-[11px] font-black text-rose-500 whitespace-nowrap flex-shrink-0">
-                                 ₩{Number(plan.expenseKrw).toLocaleString()}
-                               </span>
-                            </div>
-                          </div>
-                        )})}
+              {/* ── 기본지출 섹션 ── */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <h4 className={`text-[10px] font-black ${textMain}`}>📋 기본지출</h4>
+                  <span className={`text-[9px] font-bold text-rose-500`}>₩{basicTotalKrw.toLocaleString()}</span>
+                </div>
+                {/* 기본지출 추가 입력 */}
+                {(() => {
+                  const cats = ['항공권', '숙소', '교통', '투어', '기타'];
+                  return (
+                    <div className={`p-2.5 rounded-xl border border-dashed mb-2 ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                      <div className="flex gap-1.5 mb-1.5">
+                        <input id="basicExpName" type="text" placeholder="항목명 (예: 항공권)" className={`flex-[2] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`} />
+                        <input id="basicExpAmt" type="number" placeholder="원화 금액" className={`flex-[1] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`} />
                       </div>
-                    )}
+                      <div className="flex gap-1.5">
+                        <select id="basicExpCat" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`}>
+                          {cats.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <button onClick={() => {
+                          const name = document.getElementById('basicExpName').value.trim();
+                          const amt = document.getElementById('basicExpAmt').value;
+                          const cat = document.getElementById('basicExpCat').value;
+                          if (!name || !amt) { showToast("항목명과 금액을 입력하세요."); return; }
+                          setBasicExpenses(prev => [...prev, { id: 'basic-' + Date.now(), name, amtKrw: Number(amt), category: cat }]);
+                          document.getElementById('basicExpName').value = '';
+                          document.getElementById('basicExpAmt').value = '';
+                          showToast("기본지출이 추가되었습니다!");
+                        }} className="bg-indigo-600 text-white px-3 py-1.5 text-[10px] font-bold rounded-md hover:bg-indigo-700 active:scale-95 transition-all">추가</button>
+                      </div>
+                    </div>
+                  );
+                })()}
+                {basicItems.length === 0 ? (
+                  <p className={`text-[10px] ${textMuted} text-center py-2`}>기본지출 내역 없음</p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {basicItems.map(item => {
+                      const hasAmt = Number(item.amtKrw) > 0;
+                      const catColor = item.category === '항공권/교통' ? (isDarkMode ? 'bg-sky-900 text-sky-300' : 'bg-sky-500 text-white')
+                        : item.category === '숙소' ? (isDarkMode ? 'bg-emerald-900 text-emerald-300' : 'bg-emerald-500 text-white')
+                        : (isDarkMode ? 'bg-amber-900 text-amber-300' : 'bg-amber-500 text-white');
+                      return (
+                      <div key={item.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-sm'}`}>
+                        <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${catColor}`}>{item.category || '기타'}</span>
+                        <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>{item.name}</span>
+                        {/* 금액 클릭 → 금액 입력 모달 (timeline 항목만) */}
+                        {item.isFromTimeline ? (
+                          <button
+                            onClick={() => { const p = timelinePlans.find(tp => String(tp.id) === String(item.planId)); if (p) { setExpenseAmtModalPlan(p); setExpenseAmtValue(String(p.expenseLocal || p.expenseKrw || '')); } }}
+                            className={`text-[10px] font-black flex-shrink-0 transition-colors ${hasAmt ? 'text-rose-500 hover:text-rose-700' : (isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-300 hover:text-slate-500')}`}
+                          >₩{Number(item.amtKrw).toLocaleString()}</button>
+                        ) : (
+                          <span className={`text-[10px] font-black flex-shrink-0 ${hasAmt ? 'text-rose-500' : textMuted}`}>₩{Number(item.amtKrw).toLocaleString()}</span>
+                        )}
+                        <button onClick={() => {
+                          if (item.category === '기타' && item.isFromTimeline) {
+                            const updated = planTimeline.filter(p => String(p.id) !== String(item.planId));
+                            setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+                          } else if (!item.isFromTimeline) {
+                            setBasicExpenses(prev => prev.filter(b => b.id !== item.id));
+                          }
+                          // 교통편/숙소는 삭제 불가 (일정 탭에서 삭제)
+                        }} className={`text-[10px] transition-colors flex-shrink-0 ${(item.category === '기타' && item.isFromTimeline) || !item.isFromTimeline ? 'text-slate-300 hover:text-rose-400' : 'text-slate-200 cursor-not-allowed opacity-30'}`} title={item.isFromTimeline && item.category !== '기타' ? '일정 탭에서 삭제하세요' : '삭제'}>🗑️</button>
+                      </div>
+                      );
+                    })}
                   </div>
-                );
-              })()}
+                )}
+              </div>
+
+              {/* ── 여행일정 지출 섹션 ── */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <h4 className={`text-[10px] font-black ${textMain}`}>📅 여행일정 지출</h4>
+                  <span className={`text-[9px] font-bold text-rose-500`}>₩{planTotalKrw.toLocaleString()}</span>
+                </div>
+                {/* 필터 */}
+                <div className="flex gap-1.5 mb-2">
+                  <select value={expenseFilterDay} onChange={e => setExpenseFilterDay(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-lg`}>
+                    <option value="all">전체 Day</option>
+                    {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
+                  </select>
+                  <select value={expenseFilterTheme} onChange={e => setExpenseFilterTheme(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-lg`}>
+                    <option value="all">전체 테마</option>
+                    <option value="식당">식당</option>
+                    <option value="디저트">디저트</option>
+                    <option value="관광지">관광지</option>
+                    <option value="쇼핑">쇼핑</option>
+                    <option value="기타">기타</option>
+                  </select>
+                </div>
+                {fullyFiltered.length === 0 ? (
+                  <p className={`text-[10px] ${textMuted} text-center py-2`}>일정이 없습니다.</p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {fullyFiltered.map(plan => {
+                      const cur = getCountryCurrency(plan.country, plan.region);
+                      const showKrw = expenseCurrencyToggle[plan.id] === 'krw';
+                      const hasAmount = Number(plan.expenseLocal) > 0 || Number(plan.expenseKrw) > 0;
+                      const displayAmt = showKrw
+                        ? `₩${(Number(plan.expenseKrw) || 0).toLocaleString()}`
+                        : `${cur.sym}${(Number(plan.expenseLocal) || 0).toLocaleString()}`;
+                      return (
+                        <div key={plan.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-sm'}`}>
+                          <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${isDarkMode ? 'bg-indigo-900 text-indigo-300' : 'bg-indigo-600 text-white'}`}>D{plan.day}</span>
+                          <span className={`flex-1 text-[10px] font-bold truncate min-w-0 ${textMain}`}>{S(plan.place)}</span>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            {/* 금액 클릭 → 별도 모달 */}
+                            <button
+                              onClick={e => { e.stopPropagation(); setExpenseAmtModalPlan(plan); setExpenseAmtValue(String(plan.expenseLocal || "")); }}
+                              className={`text-[10px] font-black min-w-[52px] text-right transition-colors ${hasAmount ? 'text-rose-500 hover:text-rose-700' : (isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-300 hover:text-slate-500')}`}
+                            >{displayAmt}</button>
+                            {/* 화폐 단위 토글 */}
+                            <button
+                              onClick={e => { e.stopPropagation(); setExpenseCurrencyToggle(prev => ({ ...prev, [plan.id]: showKrw ? 'local' : 'krw' })); }}
+                              className={`text-[8px] font-bold px-1 py-0.5 rounded border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-400 hover:border-indigo-400 hover:text-indigo-300' : 'border-slate-200 text-slate-400 hover:border-indigo-400 hover:text-indigo-500'}`}
+                            >{showKrw ? '₩' : cur.sym}</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-            <button onClick={() => setIsExpenseModalOpen(false)} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">닫기</button>
+            <button onClick={() => setIsExpenseModalOpen(false)} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300 flex-shrink-0">닫기</button>
           </div>
         </div>
-      )}
+        );
+      })()}
+
+      {/* 금액 수정 모달 */}
+      {expenseAmtModalPlan && (() => {
+        const plan = expenseAmtModalPlan;
+        const resolveCountryAmt = (country, region) => {
+          if (country && Object.keys(REGIONS_BY_COUNTRY).includes(country)) return country;
+          if (region) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(region)) return cn; } }
+          if (country) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(country)) return cn; } }
+          return country || '';
+        };
+        const getCountryCurrency = (country, region) => {
+          const c = resolveCountryAmt(country, region);
+          if (c === '한국') return { code: 'KRW', sym: '₩' };
+          if (c === '일본') return { code: 'JPY', sym: '¥' };
+          if (c === '중국') return { code: 'CNY', sym: '元' };
+          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
+          if (c === '영국') return { code: 'GBP', sym: '£' };
+          if (c === '태국') return { code: 'THB', sym: '฿' };
+          if (c === '베트남') return { code: 'VND', sym: '₫' };
+          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
+          if (c === '호주') return { code: 'AUD', sym: 'A$' };
+          return { code: 'USD', sym: '$' };
+        };
+        const cur = getCountryCurrency(plan.country, plan.region);
+        const toKrw = (localAmt, curCode) => {
+          if (!localAmt || isNaN(Number(localAmt))) return 0;
+          const r = rates && rates['KRW'] && rates[curCode] ? (rates['KRW'] / rates[curCode]) : 1350;
+          return Math.round(Number(localAmt) * r);
+        };
+        const krwPreview = toKrw(expenseAmtValue, cur.code);
+        const saveAmt = () => {
+          const localAmt = expenseAmtValue;
+          const krwAmt = toKrw(localAmt, cur.code);
+          const updated = planTimeline.map(p => String(p.id) === String(plan.id) ? { ...p, expenseLocal: localAmt, expenseKrw: String(krwAmt) } : p);
+          setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+          setExpenseAmtModalPlan(null); setExpenseAmtValue("");
+          showToast("💸 금액이 저장되었습니다!");
+        };
+        return (
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[10000] flex items-center justify-center p-4" onClick={() => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); }}>
+            <div className={`${cardBg} p-6 rounded-3xl w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
+              <div className={`flex justify-between items-center mb-4 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                <h3 className={`font-black text-sm ${textMain}`}>💸 금액 입력</h3>
+                <button onClick={() => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); }} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+              </div>
+              <p className={`text-[11px] font-bold mb-1 truncate ${textMuted}`}>📍 {S(plan.place)}</p>
+              <p className={`text-[9px] mb-4 ${textMuted}`}>D{plan.day} · {S(plan.theme || '기타')}</p>
+              <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>지출 금액 ({cur.sym})</label>
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`text-sm font-black ${textMuted}`}>{cur.sym}</span>
+                <input
+                  type="number"
+                  value={expenseAmtValue}
+                  onChange={e => setExpenseAmtValue(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveAmt()}
+                  autoFocus
+                  placeholder="0"
+                  className={`flex-1 border rounded-xl p-3 text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`}
+                />
+              </div>
+              {expenseAmtValue && <p className={`text-[10px] font-bold text-center mb-4 ${textMuted}`}>≈ ₩{krwPreview.toLocaleString()} (자동 환산)</p>}
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); }} className={`flex-1 py-3 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
+                <button onClick={saveAmt} className="flex-1 bg-indigo-600 text-white py-3 rounded-xl text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">확인</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       
       {isWeatherModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsWeatherModalOpen(false)}>
@@ -3534,7 +3744,7 @@ const getLocalSym = (c) => {
         <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPlanInfo(null)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             {selectedPlanInfo.photo && !selectedPlanInfo.isTransport && (
-              <div className="w-full h-48 relative cursor-pointer" onClick={() => setViewPhoto(selectedPlanInfo.photo)}>
+              <div className="w-full h-48 relative cursor-pointer" onClick={() => openPhotoViewer(selectedPlanInfo.photos || selectedPlanInfo.photo)}>
                 <img src={selectedPlanInfo.photo} className="w-full h-full object-cover" alt="" />
                 <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md">
                   {S(selectedPlanInfo.time)}
@@ -4017,10 +4227,63 @@ const getLocalSym = (c) => {
               </div>
 
               <div className="flex flex-col space-y-1 w-full">
-                <input type="file" accept="image/*" ref={editFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, true)} className="hidden" />
-                <button type="button" onClick={() => editFileInputRef.current?.click()} className={`w-full py-1.5 text-[9px] font-bold border transition-all duration-300 flex items-center justify-center ${editingPlan.photo ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                  <span className="flex items-center">{editingPlan.photo ? "📸 사진 변경 (또는 Ctrl+V로 붙여넣기)" : "📸 사진 선택 (또는 Ctrl+V로 붙여넣기)"}</span>
-                </button>
+                <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>사진 (최대 3장 / Ctrl+V 붙여넣기)</label>
+                <input type="file" accept="image/*" multiple ref={editFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, true)} className="hidden" />
+                <div className="flex gap-1.5">
+                  {(Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : [])).map((img, i) => (
+                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 flex-shrink-0 shadow-sm">
+                      <img src={img} className="w-full h-full object-cover" alt="" />
+                      <button type="button" onClick={e => { e.stopPropagation(); setEditingPlan(prev => { const imgs = (Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : [])).filter((_, idx) => idx !== i); return {...prev, photos: imgs, photo: imgs[0] || ""}; }); }} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] leading-none hover:bg-black/90">✕</button>
+                      {i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-indigo-600/80 text-white text-[7px] text-center font-bold py-0.5">대표</div>}
+                    </div>
+                  ))}
+                  {(Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : [])).length < 3 && (
+                    <button type="button" onClick={() => editFileInputRef.current?.click()} className={`w-16 h-16 rounded-lg border-dashed border-2 flex flex-col items-center justify-center gap-0.5 flex-shrink-0 transition-colors ${isDarkMode ? 'border-slate-500 text-slate-400 hover:bg-slate-700' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
+                      <span className="text-lg leading-none">+</span>
+                      <span className="text-[8px] font-bold">사진 추가</span>
+                    </button>
+                  )}
+                </div>
+                {(Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : [])).length < 3 && (
+                  <input
+                    type="text"
+                    placeholder="URL 붙여넣기 후 Enter (웹 사진 복사 후 Ctrl+V)"
+                    className={`w-full border p-1.5 text-[9px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        const url = e.target.value.trim();
+                        if (!url) return;
+                        setEditingPlan(prev => {
+                          const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []);
+                          if (imgs.length >= 3) return prev;
+                          const newImgs = [...imgs, url];
+                          return { ...prev, photos: newImgs, photo: newImgs[0] };
+                        });
+                        e.target.value = '';
+                      }
+                    }}
+                    onPaste={e => {
+                      const items = e.clipboardData?.items;
+                      if (!items) return;
+                      for (let i = 0; i < items.length; i++) {
+                        if (items[i].type.indexOf('image') !== -1) {
+                          e.preventDefault();
+                          const file = items[i].getAsFile();
+                          compressImage(file, compressed => {
+                            setEditingPlan(prev => {
+                              const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []);
+                              if (imgs.length >= 3) return prev;
+                              const newImgs = [...imgs, compressed];
+                              return { ...prev, photos: newImgs, photo: newImgs[0] };
+                            });
+                          });
+                          e.target.value = '';
+                          return;
+                        }
+                      }
+                    }}
+                  />
+                )}
               </div>
 
               <div className="flex items-center space-x-2 my-1.5 px-1">
@@ -4056,8 +4319,9 @@ const planData = {
                           localName: editingPlan.localName ? S(editingPlan.localName) : updatedRests[matchedIndex].localName,
                           signature: editingPlan.features ? S(editingPlan.features) : updatedRests[matchedIndex].signature,
                           img: editingPlan.photo ? S(editingPlan.photo) : updatedRests[matchedIndex].img,
+                          imgs: Array.isArray(editingPlan.photos) && editingPlan.photos.length > 0 ? editingPlan.photos : updatedRests[matchedIndex].imgs,
                           isAccommodation: editingPlan.isAccommodation || editingPlan.theme === "숙소",
-                          theme: editingPlan.theme || "기타" // 핀 데이터에 테마 저장!
+                          theme: editingPlan.theme || "기타"
                       };
                       setCurrentRestaurants(updatedRests);
                       dbUpdates.current_restaurants = updatedRests;
@@ -4183,19 +4447,61 @@ const planData = {
               </div>
 
               <div className="flex flex-col space-y-1 w-full pt-1">
-                <input type="file" accept="image/*" ref={manualFileInputRef} onChange={handleManualPhotoUpload} className="hidden" />
-                <div className="flex gap-2">
-                  <input 
-                     type="text" 
-                     placeholder="이미지 URL 입력 / 복붙" 
-                     value={newManualPhoto} 
-                     onChange={e => setNewManualPhoto(e.target.value)} 
-                     className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-2 text-[9px] font-bold outline-none rounded transition-all duration-300`} 
-                  />
-                  <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`flex-1 py-2 text-[9px] font-bold rounded-lg border transition-all duration-300 flex items-center justify-center ${newManualPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                    <span className="flex items-center">📸 파일 첨부</span>
-                  </button>
+                <label className={`text-[9px] font-bold px-1 ${textMuted}`}>사진 (최대 3장) 📸</label>
+                <input type="file" accept="image/*" ref={manualFileInputRef} onChange={(e) => {
+                  const file = e.target.files?.[0]; if (!file) return;
+                  compressImage(file, (compressed) => {
+                    setNewManualPhotos(prev => prev.length < 3 ? [...prev, compressed] : prev);
+                    setNewManualPhoto(compressed);
+                  });
+                }} className="hidden" />
+                <div className="flex gap-1.5">
+                  {newManualPhotos.map((img, i) => (
+                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 shrink-0 cursor-pointer" onClick={() => openPhotoViewer(newManualPhotos, i)}>
+                      <img src={img} className="w-full h-full object-cover" alt="" />
+                      <button type="button" className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px]" onClick={e => { e.stopPropagation(); setNewManualPhotos(prev => { const n = prev.filter((_, j) => j !== i); setNewManualPhoto(n[0] || ''); return n; }); }}>✕</button>
+                      {i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[7px] text-center">대표</div>}
+                    </div>
+                  ))}
+                  {newManualPhotos.length < 3 && (
+                    <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`w-16 h-16 rounded-lg border-dashed border-2 flex flex-col items-center justify-center text-[8px] font-bold shrink-0 transition-colors ${isDarkMode ? 'border-slate-500 text-slate-400 hover:bg-slate-700' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
+                      <span className="text-lg">+</span>
+                      <span>사진 추가</span>
+                    </button>
+                  )}
                 </div>
+                {newManualPhotos.length < 3 && (
+                  <input
+                    type="text"
+                    placeholder="URL 붙여넣기 후 Enter (웹 사진 복사 후 Ctrl+V)"
+                    className={`w-full border p-1.5 text-[9px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        const url = e.target.value.trim();
+                        if (!url) return;
+                        setNewManualPhotos(prev => prev.length < 3 ? [...prev, url] : prev);
+                        setNewManualPhoto(url);
+                        e.target.value = '';
+                      }
+                    }}
+                    onPaste={e => {
+                      const items = e.clipboardData?.items;
+                      if (!items) return;
+                      for (let i = 0; i < items.length; i++) {
+                        if (items[i].type.indexOf('image') !== -1) {
+                          e.preventDefault();
+                          const file = items[i].getAsFile();
+                          compressImage(file, compressed => {
+                            setNewManualPhotos(prev => prev.length < 3 ? [...prev, compressed] : prev);
+                            setNewManualPhoto(compressed);
+                          });
+                          e.target.value = '';
+                          return;
+                        }
+                      }
+                    }}
+                  />
+                )}
               </div>
 
               <div className="flex items-center my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300 flex-wrap gap-y-2">
@@ -4826,7 +5132,8 @@ const planData = {
                           {/* 교통편이 이미 필터링되었으므로 조건부 렌더링을 제거하고 항상 예쁜 사진 영역을 띄웁니다. */}
                           <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} 
                                onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                            <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" />
+                            <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" onClick={plan.photo ? (e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); } : undefined} />
+                            {plan.photos && plan.photos.length > 1 && <div className="absolute top-1 right-1 bg-black/60 text-white text-[7px] font-bold px-1 py-0.5 rounded shadow-sm">📸 {plan.photos.length}</div>}
                             <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">
                               {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
                             </div>
@@ -5038,9 +5345,24 @@ const planData = {
                                   setNewPlace(S(pin.name));
                                   if (pin.localName) setNewLocalName(S(pin.localName));
                                   if (pin.signature) setNewFeatures(S(pin.signature));
-                                  if (pin.img) setNewPhoto(S(pin.img));
+                                  if (pin.imgs && pin.imgs.length > 0) { setNewPlanPhotos(pin.imgs); } else if (pin.img) { setNewPlanPhotos([S(pin.img)]); }
                                   if (pin.isAccommodation) setNewIsAccommodation(true);
                                   if (pin.theme) setNewTheme(S(pin.theme));
+                                  // 전역 여행 국가/지역을 기본값으로 사용 (핀 데이터 대신)
+                                  {
+                                    const globalC = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : globalManualCountry;
+                                    const globalR = globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : globalManualRegion;
+                                    if (globalC && Object.keys(REGIONS_BY_COUNTRY).includes(globalC)) {
+                                      setPlanCountry(globalC);
+                                      const inList = REGIONS_BY_COUNTRY[globalC]?.includes(globalR) ? globalR : '수동입력';
+                                      setPlanRegion(inList);
+                                      setManualRegion(inList === '수동입력' ? globalR : '');
+                                      setManualCountry('');
+                                    } else if (globalC) {
+                                      setPlanCountry('수동입력'); setManualCountry(globalC);
+                                      setPlanRegion('수동입력'); setManualRegion(globalR);
+                                    }
+                                  }
                                   setPinSelectOpen(false);
                                 }}
                                 className={`w-full text-left px-3 py-2 text-[10px] font-bold flex items-center gap-1 transition-colors ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-indigo-50'}`}
@@ -5067,20 +5389,53 @@ const planData = {
                   </div>
 
                   <div className="flex flex-col space-y-1 w-full pt-1">
-                    <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>사진 추가</label>
-                    <input type="file" accept="image/*" ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
-                    <div className="flex gap-2">
-                       <input 
-                         type="text" 
-                         placeholder="URL 입력 / 이미지 복붙" 
-                         value={newPhoto} 
-                         onChange={e => setNewPhoto(e.target.value)} 
-                         className={`flex-1 w-1/2 border p-1.5 text-[9px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`} 
-                       />
-                       <button type="button" onClick={() => planFileInputRef.current?.click()} className={`flex-1 w-1/2 py-1.5 text-[9px] font-bold rounded border transition-all duration-300 flex items-center justify-center ${newPhoto ? 'bg-indigo-50 border-indigo-300 text-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-dashed border-slate-500 text-slate-400 hover:bg-slate-600' : 'bg-white border-dashed border-slate-300 text-slate-400 hover:bg-slate-50')}`}>
-                         <span className="flex items-center">📸 파일 첨부</span>
-                       </button>
+                    <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>사진 추가 (최대 3장)</label>
+                    <input type="file" accept="image/*" multiple ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
+                    <div className="flex gap-1.5">
+                      {newPlanPhotos.map((img, i) => (
+                        <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 flex-shrink-0 shadow-sm">
+                          <img src={img} className="w-full h-full object-cover" alt="" />
+                          <button type="button" onClick={e => { e.stopPropagation(); setNewPlanPhotos(prev => prev.filter((_, idx) => idx !== i)); }} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] leading-none hover:bg-black/90">✕</button>
+                          {i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-indigo-600/80 text-white text-[7px] text-center font-bold py-0.5">대표</div>}
+                        </div>
+                      ))}
+                      {newPlanPhotos.length < 3 && (
+                        <button type="button" onClick={() => planFileInputRef.current?.click()} className={`w-16 h-16 rounded-lg border-dashed border-2 flex flex-col items-center justify-center gap-0.5 flex-shrink-0 transition-colors ${isDarkMode ? 'border-slate-500 text-slate-400 hover:bg-slate-700' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
+                          <span className="text-lg leading-none">+</span>
+                          <span className="text-[8px] font-bold">사진 추가</span>
+                        </button>
+                      )}
                     </div>
+                    {newPlanPhotos.length < 3 && (
+                      <input
+                        type="text"
+                        placeholder="URL 붙여넣기 후 Enter (웹 사진 복사 후 Ctrl+V)"
+                        className={`w-full border p-1.5 text-[9px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            const url = e.target.value.trim();
+                            if (!url) return;
+                            setNewPlanPhotos(prev => prev.length < 3 ? [...prev, url] : prev);
+                            e.target.value = '';
+                          }
+                        }}
+                        onPaste={e => {
+                          const items = e.clipboardData?.items;
+                          if (!items) return;
+                          for (let i = 0; i < items.length; i++) {
+                            if (items[i].type.indexOf('image') !== -1) {
+                              e.preventDefault();
+                              const file = items[i].getAsFile();
+                              compressImage(file, compressed => {
+                                setNewPlanPhotos(prev => prev.length < 3 ? [...prev, compressed] : prev);
+                              });
+                              e.target.value = '';
+                              return;
+                            }
+                          }
+                        }}
+                      />
+                    )}
                   </div>
 
                   <div className="flex items-center space-x-2 my-1.5 px-1 pb-1">
@@ -5140,8 +5495,9 @@ const planData = {
                                    {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
                                  </div>
                                  {plan.photo && (
-                                   <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500" onClick={(e) => { e.stopPropagation(); setViewPhoto(plan.photo); }}>
+                                   <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500" onClick={(e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); }}>
                                      <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
+                                     {plan.photos && plan.photos.length > 1 && <div className="absolute bottom-0 right-0 bg-black/60 text-white text-[7px] font-bold px-1 leading-tight rounded-tl">{plan.photos.length}</div>}
                                    </div>
                                  )}
                                </div>
@@ -5207,8 +5563,9 @@ const planData = {
                                   {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
                                 </div>
                                 {plan.photo && !plan.isTransport && (
-                                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500" onClick={(e) => { e.stopPropagation(); setViewPhoto(plan.photo); }}>
+                                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500" onClick={(e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); }}>
                                     <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
+                                    {plan.photos && plan.photos.length > 1 && <div className="absolute bottom-0 right-0 bg-black/60 text-white text-[7px] font-bold px-1 leading-tight rounded-tl">{plan.photos.length}</div>}
                                   </div>
                                 )}
                               </div>
