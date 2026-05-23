@@ -373,6 +373,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [expenseAmtModalPlan, setExpenseAmtModalPlan] = useState(null); // 금액 수정 모달 대상 plan
   const [expenseAmtValue, setExpenseAmtValue] = useState(""); // 금액 수정 모달 입력값
+  const [expenseAmtIsKrw, setExpenseAmtIsKrw] = useState(false); // 모달 내 화폐 토글
   const [expenseCurrencyToggle, setExpenseCurrencyToggle] = useState({}); // {planId: 'local'|'krw'}
   const [basicExpenses, setBasicExpenses] = useState([]); // 기본지출 항목 [{id, name, amtKrw, category}]
   const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
@@ -3012,9 +3013,29 @@ return (
 
         // 기본지출: basicExpenses 배열 + 교통편 일정 + 숙소 일정 + 기타지출([기타] prefix)
         const timelinePlans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-        const transportItems = timelinePlans
-          .filter(p => p.isTransport && !String(p.id).endsWith('_arr')) // 출발편만 (중복방지)
-          .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, category: '항공권/교통', isFromTimeline: true, planId: p.id }));
+        // 교통편: outbound/inbound dep 쌍을 왕복카드로 묶기
+        const transTypes = ['flight', 'train', 'bus'];
+        const transportItems = [];
+        transTypes.forEach(type => {
+          const dep = timelinePlans.find(p => p.id === `trans_${type}_outbound_dep`);
+          const arr = timelinePlans.find(p => p.id === `trans_${type}_inbound_dep`);
+          if (dep || arr) {
+            // 출발지/목적지 파싱
+            const depPlace = dep ? S(dep.place).replace(/[✈🚆🚌🛬]|출발|도착/g, '').trim() : '';
+            const arrPlace = arr ? S(arr.place).replace(/[✈🚆🚌🛬]|출발|도착/g, '').trim() : '';
+            const label = depPlace && arrPlace ? `${depPlace} ⇄ ${arrPlace}` : (depPlace || arrPlace || type);
+            const totalKrw = (Number(dep?.expenseKrw) || 0) + (Number(arr?.expenseKrw) || 0);
+            transportItems.push({ id: `transport_grouped_${type}`, name: label, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
+          } else {
+            // 구버전 데이터: isTransport이고 id가 trans_ 형식이 아닌 것들
+            timelinePlans.filter(p => p.isTransport && !String(p.id).startsWith('trans_') && !String(p.id).endsWith('_arr'))
+              .forEach(p => {
+                if (!transportItems.find(t => t.planId === p.id)) {
+                  transportItems.push({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, category: '항공권/교통', isFromTimeline: true, planId: p.id });
+                }
+              });
+          }
+        });
         const accomItems = timelinePlans
           .filter(p => p.isAccommodation)
           .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, category: '숙소', isFromTimeline: true, planId: p.id }));
@@ -3089,27 +3110,30 @@ return (
                       const catColor = item.category === '항공권/교통' ? (isDarkMode ? 'bg-sky-900 text-sky-300' : 'bg-sky-500 text-white')
                         : item.category === '숙소' ? (isDarkMode ? 'bg-emerald-900 text-emerald-300' : 'bg-emerald-500 text-white')
                         : (isDarkMode ? 'bg-amber-900 text-amber-300' : 'bg-amber-500 text-white');
+                      const openModal = () => {
+                        if (item.isGroupedTransport) {
+                          // 왕복카드: dep + arr 합산 금액 수정 → dep 기준으로 모달 열기
+                          const p = item.depPlan || item.arrPlan;
+                          if (p) { setExpenseAmtModalPlan({ ...p, _groupedTransport: item }); setExpenseAmtValue(String(p.expenseLocal || p.expenseKrw || '')); setExpenseAmtIsKrw(false); }
+                        } else if (item.isFromTimeline) {
+                          const p = timelinePlans.find(tp => String(tp.id) === String(item.planId));
+                          if (p) { setExpenseAmtModalPlan(p); setExpenseAmtValue(String(p.expenseLocal || p.expenseKrw || '')); setExpenseAmtIsKrw(false); }
+                        }
+                      };
+                      const canOpen = item.isFromTimeline;
                       return (
-                      <div key={item.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-sm'}`}>
+                      <div key={item.id} onClick={canOpen ? openModal : undefined} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 ${canOpen ? 'cursor-pointer active:scale-[0.98]' : ''} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
                         <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${catColor}`}>{item.category || '기타'}</span>
                         <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>{item.name}</span>
-                        {/* 금액 클릭 → 금액 입력 모달 (timeline 항목만) */}
-                        {item.isFromTimeline ? (
-                          <button
-                            onClick={() => { const p = timelinePlans.find(tp => String(tp.id) === String(item.planId)); if (p) { setExpenseAmtModalPlan(p); setExpenseAmtValue(String(p.expenseLocal || p.expenseKrw || '')); } }}
-                            className={`text-[10px] font-black flex-shrink-0 transition-colors ${hasAmt ? 'text-rose-500 hover:text-rose-700' : (isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-300 hover:text-slate-500')}`}
-                          >₩{Number(item.amtKrw).toLocaleString()}</button>
-                        ) : (
-                          <span className={`text-[10px] font-black flex-shrink-0 ${hasAmt ? 'text-rose-500' : textMuted}`}>₩{Number(item.amtKrw).toLocaleString()}</span>
-                        )}
-                        <button onClick={() => {
+                        <span className={`text-[10px] font-black flex-shrink-0 ${hasAmt ? 'text-rose-500' : textMuted}`}>₩{Number(item.amtKrw).toLocaleString()}</span>
+                        <button onClick={e => {
+                          e.stopPropagation();
                           if (item.category === '기타' && item.isFromTimeline) {
                             const updated = planTimeline.filter(p => String(p.id) !== String(item.planId));
                             setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
                           } else if (!item.isFromTimeline) {
                             setBasicExpenses(prev => prev.filter(b => b.id !== item.id));
                           }
-                          // 교통편/숙소는 삭제 불가 (일정 탭에서 삭제)
                         }} className={`text-[10px] transition-colors flex-shrink-0 ${(item.category === '기타' && item.isFromTimeline) || !item.isFromTimeline ? 'text-slate-300 hover:text-rose-400' : 'text-slate-200 cursor-not-allowed opacity-30'}`} title={item.isFromTimeline && item.category !== '기타' ? '일정 탭에서 삭제하세요' : '삭제'}>🗑️</button>
                       </div>
                       );
@@ -3145,27 +3169,18 @@ return (
                   <div className="flex flex-col gap-1">
                     {fullyFiltered.map(plan => {
                       const cur = getCountryCurrency(plan.country, plan.region);
-                      const showKrw = expenseCurrencyToggle[plan.id] === 'krw';
                       const hasAmount = Number(plan.expenseLocal) > 0 || Number(plan.expenseKrw) > 0;
-                      const displayAmt = showKrw
+                      const isKrw = cur.code === 'KRW';
+                      const displayAmt = isKrw
                         ? `₩${(Number(plan.expenseKrw) || 0).toLocaleString()}`
-                        : `${cur.sym}${(Number(plan.expenseLocal) || 0).toLocaleString()}`;
+                        : (Number(plan.expenseLocal) > 0
+                          ? `${cur.sym}${(Number(plan.expenseLocal) || 0).toLocaleString()}`
+                          : `₩${(Number(plan.expenseKrw) || 0).toLocaleString()}`);
                       return (
-                        <div key={plan.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-sm'}`}>
+                        <div key={plan.id} onClick={() => { setExpenseAmtModalPlan(plan); setExpenseAmtValue(String(plan.expenseLocal || plan.expenseKrw || "")); setExpenseAmtIsKrw(isKrw || !plan.expenseLocal); }} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 cursor-pointer active:scale-[0.98] ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
                           <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${isDarkMode ? 'bg-indigo-900 text-indigo-300' : 'bg-indigo-600 text-white'}`}>D{plan.day}</span>
                           <span className={`flex-1 text-[10px] font-bold truncate min-w-0 ${textMain}`}>{S(plan.place)}</span>
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            {/* 금액 클릭 → 별도 모달 */}
-                            <button
-                              onClick={e => { e.stopPropagation(); setExpenseAmtModalPlan(plan); setExpenseAmtValue(String(plan.expenseLocal || "")); }}
-                              className={`text-[10px] font-black min-w-[52px] text-right transition-colors ${hasAmount ? 'text-rose-500 hover:text-rose-700' : (isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-300 hover:text-slate-500')}`}
-                            >{displayAmt}</button>
-                            {/* 화폐 단위 토글 */}
-                            <button
-                              onClick={e => { e.stopPropagation(); setExpenseCurrencyToggle(prev => ({ ...prev, [plan.id]: showKrw ? 'local' : 'krw' })); }}
-                              className={`text-[8px] font-bold px-1 py-0.5 rounded border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-400 hover:border-indigo-400 hover:text-indigo-300' : 'border-slate-200 text-slate-400 hover:border-indigo-400 hover:text-indigo-500'}`}
-                            >{showKrw ? '₩' : cur.sym}</button>
-                          </div>
+                          <span className={`text-[10px] font-black flex-shrink-0 ${hasAmount ? 'text-rose-500' : (isDarkMode ? 'text-slate-500' : 'text-slate-300')}`}>{displayAmt}</span>
                         </div>
                       );
                     })}
@@ -3182,13 +3197,14 @@ return (
       {/* 금액 수정 모달 */}
       {expenseAmtModalPlan && (() => {
         const plan = expenseAmtModalPlan;
+        const isGrouped = !!plan._groupedTransport;
         const resolveCountryAmt = (country, region) => {
           if (country && Object.keys(REGIONS_BY_COUNTRY).includes(country)) return country;
           if (region) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(region)) return cn; } }
           if (country) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(country)) return cn; } }
           return country || '';
         };
-        const getCountryCurrency = (country, region) => {
+        const getCurModal = (country, region) => {
           const c = resolveCountryAmt(country, region);
           if (c === '한국') return { code: 'KRW', sym: '₩' };
           if (c === '일본') return { code: 'JPY', sym: '¥' };
@@ -3201,33 +3217,64 @@ return (
           if (c === '호주') return { code: 'AUD', sym: 'A$' };
           return { code: 'USD', sym: '$' };
         };
-        const cur = getCountryCurrency(plan.country, plan.region);
-        const toKrw = (localAmt, curCode) => {
-          if (!localAmt || isNaN(Number(localAmt))) return 0;
-          const r = rates && rates['KRW'] && rates[curCode] ? (rates['KRW'] / rates[curCode]) : 1350;
-          return Math.round(Number(localAmt) * r);
+        // 전역 여행 국가 기준으로 화폐 결정
+        const basePlan = isGrouped ? (plan._groupedTransport.depPlan || plan) : plan;
+        const cur = getCurModal(globalPlanCountry || basePlan.country, globalPlanRegion || basePlan.region);
+        const isLocalCurrency = !expenseAmtIsKrw && cur.code !== 'KRW';
+        const activeSym = expenseAmtIsKrw ? '₩' : cur.sym;
+        const activeCode = expenseAmtIsKrw ? 'KRW' : cur.code;
+        const toKrwModal = (amt, code) => {
+          if (!amt || isNaN(Number(amt))) return 0;
+          const r = rates && rates['KRW'] && rates[code] ? (rates['KRW'] / rates[code]) : 1350;
+          return Math.round(Number(amt) * r);
         };
-        const krwPreview = toKrw(expenseAmtValue, cur.code);
+        const krwPreview = expenseAmtIsKrw ? Number(expenseAmtValue) : toKrwModal(expenseAmtValue, cur.code);
+        const closeModal = () => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); setExpenseAmtIsKrw(false); };
         const saveAmt = () => {
-          const localAmt = expenseAmtValue;
-          const krwAmt = toKrw(localAmt, cur.code);
-          const updated = planTimeline.map(p => String(p.id) === String(plan.id) ? { ...p, expenseLocal: localAmt, expenseKrw: String(krwAmt) } : p);
+          const inputAmt = expenseAmtValue;
+          const localAmt = expenseAmtIsKrw ? '' : inputAmt;
+          const krwAmt = expenseAmtIsKrw ? inputAmt : String(toKrwModal(inputAmt, cur.code));
+          let updated = [...(Array.isArray(planTimeline) ? planTimeline : [])];
+          if (isGrouped) {
+            // 왕복카드: dep/arr 각각에 금액 저장 (반반으로 분배)
+            const half = Math.round((Number(krwAmt) || 0) / 2);
+            const halfLocal = localAmt ? String(Math.round(Number(localAmt) / 2)) : '';
+            const { depPlan, arrPlan } = plan._groupedTransport;
+            updated = updated.map(p => {
+              if (depPlan && String(p.id) === String(depPlan.id)) return { ...p, expenseLocal: halfLocal, expenseKrw: String(half) };
+              if (arrPlan && String(p.id) === String(arrPlan.id)) return { ...p, expenseLocal: halfLocal, expenseKrw: String(half) };
+              return p;
+            });
+          } else {
+            updated = updated.map(p => String(p.id) === String(plan.id) ? { ...p, expenseLocal: localAmt, expenseKrw: krwAmt } : p);
+          }
           setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
-          setExpenseAmtModalPlan(null); setExpenseAmtValue("");
+          closeModal();
           showToast("💸 금액이 저장되었습니다!");
         };
+        const titleLabel = isGrouped ? plan._groupedTransport.name : S(plan.place);
+        const subLabel = isGrouped ? '항공권/교통 (왕복)' : `D${plan.day} · ${S(plan.theme || '기타')}`;
         return (
-          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[10000] flex items-center justify-center p-4" onClick={() => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); }}>
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[10000] flex items-center justify-center p-4" onClick={closeModal}>
             <div className={`${cardBg} p-6 rounded-3xl w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
               <div className={`flex justify-between items-center mb-4 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                 <h3 className={`font-black text-sm ${textMain}`}>💸 금액 입력</h3>
-                <button onClick={() => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); }} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+                <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
               </div>
-              <p className={`text-[11px] font-bold mb-1 truncate ${textMuted}`}>📍 {S(plan.place)}</p>
-              <p className={`text-[9px] mb-4 ${textMuted}`}>D{plan.day} · {S(plan.theme || '기타')}</p>
-              <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>지출 금액 ({cur.sym})</label>
+              <p className={`text-[11px] font-bold mb-1 truncate ${textMuted}`}>📍 {titleLabel}</p>
+              <p className={`text-[9px] mb-4 ${textMuted}`}>{subLabel}</p>
+              <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>지출 금액</label>
               <div className="flex items-center gap-2 mb-2">
-                <span className={`text-sm font-black ${textMuted}`}>{cur.sym}</span>
+                {/* 화폐단위 클릭 → 원화/현지화 토글 */}
+                {cur.code !== 'KRW' ? (
+                  <button
+                    onClick={() => { setExpenseAmtIsKrw(p => !p); setExpenseAmtValue(""); }}
+                    className={`text-sm font-black px-2 py-1 rounded-lg border transition-all active:scale-95 ${expenseAmtIsKrw ? (isDarkMode ? 'bg-indigo-900 border-indigo-600 text-indigo-300' : 'bg-indigo-50 border-indigo-300 text-indigo-600') : (isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-indigo-300')}`}
+                    title={expenseAmtIsKrw ? '현지 화폐로 전환' : '원화로 전환'}
+                  >{activeSym}</button>
+                ) : (
+                  <span className={`text-sm font-black ${textMuted}`}>₩</span>
+                )}
                 <input
                   type="number"
                   value={expenseAmtValue}
@@ -3238,9 +3285,13 @@ return (
                   className={`flex-1 border rounded-xl p-3 text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`}
                 />
               </div>
-              {expenseAmtValue && <p className={`text-[10px] font-bold text-center mb-4 ${textMuted}`}>≈ ₩{krwPreview.toLocaleString()} (자동 환산)</p>}
+              {expenseAmtValue && cur.code !== 'KRW' && (
+                <p className={`text-[10px] font-bold text-center mb-4 ${textMuted}`}>
+                  {expenseAmtIsKrw ? `≈ ${cur.sym}${(Number(expenseAmtValue) / (rates && rates['KRW'] && rates[cur.code] ? rates['KRW'] / rates[cur.code] : 1350)).toFixed(0)} (현지화)` : `≈ ₩${krwPreview.toLocaleString()} (자동 환산)`}
+                </p>
+              )}
               <div className="flex gap-2 mt-4">
-                <button onClick={() => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); }} className={`flex-1 py-3 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
+                <button onClick={closeModal} className={`flex-1 py-3 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
                 <button onClick={saveAmt} className="flex-1 bg-indigo-600 text-white py-3 rounded-xl text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">확인</button>
               </div>
             </div>
