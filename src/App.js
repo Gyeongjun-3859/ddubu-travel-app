@@ -3097,26 +3097,30 @@ return (
                onClick={() => setViewPhoto(null)}
                onMouseDown={handleDragStart} onMouseUp={handleDragEnd}
                onTouchStart={handleDragStart} onTouchEnd={handleDragEnd}>
-            {/* 뒤에 겹쳐서 보이는 다음 사진 (카드 스택 효과) */}
-            {imgs.length > 1 && (
-              <>
-                {/* 2번째 뒤 카드 */}
-                {imgs.length > 2 && (
-                  <img src={imgs[(idx + 2) % imgs.length]}
-                       className="absolute max-w-[78%] max-h-[82%] object-contain rounded-md pointer-events-none select-none"
-                       style={{ opacity: 0.2, transform: 'translate(14px, 10px) scale(0.92)', zIndex: 6 }} alt="" />
-                )}
-                {/* 1번째 뒤 카드 */}
-                <img src={imgs[nextIdx]}
-                     className="absolute max-w-[78%] max-h-[82%] object-contain rounded-md pointer-events-none select-none"
-                     style={{ opacity: 0.45, transform: 'translate(8px, 6px) scale(0.96)', zIndex: 7 }} alt="" />
-              </>
-            )}
-            {/* 현재 사진 (메인) */}
-            <img src={imgs[idx]} className="relative max-w-[80%] max-h-[85%] object-contain rounded-md shadow-2xl select-none" style={{ zIndex: 10 }} alt=""
-                 onClick={e => e.stopPropagation()}
-                 onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
-                 onTouchStart={e => { e.stopPropagation(); handleDragStart(e); }} onTouchEnd={e => { e.stopPropagation(); handleDragEnd(e); }} />
+            {/* 카드 스택 컨테이너 — 모든 카드가 같은 기준점에서 offset */}
+            <div className="relative flex items-center justify-center" style={{ width: '80vw', maxWidth: 480, height: '75vh' }}>
+              {/* 3번째 뒤 카드 */}
+              {imgs.length > 2 && (
+                <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none select-none"
+                     style={{ opacity: 0.18, transform: 'translate(18px, 14px)', zIndex: 6, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+                  <img src={imgs[(idx + 2) % imgs.length]} className="w-full h-full object-cover" alt="" />
+                </div>
+              )}
+              {/* 2번째 뒤 카드 */}
+              {imgs.length > 1 && (
+                <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none select-none"
+                     style={{ opacity: 0.4, transform: 'translate(10px, 8px)', zIndex: 7, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+                  <img src={imgs[nextIdx]} className="w-full h-full object-cover" alt="" />
+                </div>
+              )}
+              {/* 메인 사진 */}
+              <div className="absolute inset-0 rounded-xl overflow-hidden shadow-2xl select-none" style={{ zIndex: 10 }}
+                   onClick={e => e.stopPropagation()}
+                   onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
+                   onTouchStart={e => { e.stopPropagation(); handleDragStart(e); }} onTouchEnd={e => { e.stopPropagation(); handleDragEnd(e); }}>
+                <img src={imgs[idx]} className="w-full h-full object-contain bg-black" alt="" />
+              </div>
+            </div>
             <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 20 }} onClick={() => setViewPhoto(null)}>✕</button>
             {imgs.length > 1 && (
               <>
