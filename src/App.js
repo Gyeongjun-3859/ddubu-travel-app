@@ -3124,45 +3124,49 @@ return (
           if (delta > 0) goPhotoNext(imgs, idx);
           else goPhotoPrev(imgs, idx);
         };
-        const CARD_W = 200;
-        const CARD_H = 280;
-        const X_GAP = 110;
+        const CARD_W = 300;
+        const CARD_H = 400;
+        const X_GAP = 160;
         const getCardStyle = (offset) => {
           const absOff = Math.abs(offset);
           const scale = absOff === 0 ? 1 : absOff === 1 ? 0.78 : 0.62;
-          const brightness = absOff === 0 ? 1 : absOff === 1 ? 0.55 : 0.35;
-          const opacity = absOff === 0 ? 1 : absOff === 1 ? 0.85 : 0.6;
+          const brightness = absOff === 0 ? 1 : absOff === 1 ? 0.5 : 0.3;
+          const opacity = absOff === 0 ? 1 : absOff === 1 ? 0.9 : 0.65;
           const zIndex = 10 - absOff;
           const tx = offset * X_GAP;
-          const ty = absOff === 0 ? 0 : absOff === 1 ? 24 : 42;
+          const ty = absOff === 0 ? 0 : absOff === 1 ? 28 : 50;
           return {
             position: 'absolute',
             width: CARD_W, height: CARD_H,
             left: '50%', top: '50%',
-            marginLeft: -CARD_W / 2, marginTop: -CARD_H / 2,
-            borderRadius: 16, overflow: 'hidden',
+            marginLeft: -CARD_W / 2, marginTop: -CARD_H / 2 - 30,
+            borderRadius: 18, overflow: 'hidden',
             transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
             filter: `brightness(${brightness})`,
             opacity, zIndex,
             transition: 'transform 0.32s cubic-bezier(.4,0,.2,1), opacity 0.32s, filter 0.32s',
-            boxShadow: absOff === 0 ? '0 20px 60px rgba(0,0,0,0.9)' : '0 8px 24px rgba(0,0,0,0.6)',
+            boxShadow: absOff === 0 ? '0 24px 64px rgba(0,0,0,0.95)' : '0 8px 24px rgba(0,0,0,0.6)',
             cursor: absOff === 0 ? 'default' : 'pointer',
             pointerEvents: 'none',
           };
         };
+        // 실제 존재하는 카드만 표시 (순환 없음): offset 범위에서 실제 인덱스가 유효한 것만
+        const offsets = [-2, -1, 0, 1, 2].filter(o => {
+          const ci = idx + o;
+          return ci >= 0 && ci < n;
+        });
         return (
-          <div className="fixed inset-0 bg-black/95 z-[99998] flex items-center justify-center backdrop-blur-sm"
+          <div className="fixed inset-0 bg-black/95 z-[99998] flex flex-col items-center justify-center backdrop-blur-sm"
                onPointerDown={onPointerDown} onPointerUp={onPointerUp}
                onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
                onWheel={onWheel}
                onClick={() => setViewPhoto(null)}>
-            {/* 카드 영역 — 클릭이 배경 닫힘으로 가지 않도록 stopPropagation, 단 드래그/wheel은 버블링 허용 */}
-            <div className="relative" style={{ width: '100vw', height: '80vh', pointerEvents: 'none' }}>
-              {[-2,-1,0,1,2].map(offset => {
-                if (n === 1 && offset !== 0) return null;
-                const ci = (idx + offset + n * 10) % n;
+            {/* 카드 영역 */}
+            <div className="relative flex-1 w-full" style={{ pointerEvents: 'none' }}>
+              {offsets.map(offset => {
+                const ci = idx + offset;
                 return (
-                  <div key={`${ci}-${offset}`} style={{ ...getCardStyle(offset), pointerEvents: 'auto' }}
+                  <div key={ci} style={{ ...getCardStyle(offset), pointerEvents: 'auto' }}
                        onClick={e => {
                          e.stopPropagation();
                          if (offset < 0) goPhotoPrev(imgs, idx);
@@ -3173,16 +3177,25 @@ return (
                 );
               })}
             </div>
-            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 30 }}
-                    onClick={e => { e.stopPropagation(); setViewPhoto(null); }}>✕</button>
+            {/* 하단 미니 썸네일 */}
             {n > 1 && (
-              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2" style={{ zIndex: 30 }}>
-                {imgs.map((_, i) => (
+              <div className="flex gap-2 pb-6 pt-2 px-4 flex-shrink-0" style={{ zIndex: 30 }}
+                   onClick={e => e.stopPropagation()}>
+                {imgs.map((img, i) => (
                   <div key={i} onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: i }); setViewPhotoAnim(null); }}
-                       className={`rounded-full transition-all cursor-pointer ${i === idx ? 'w-4 h-2 bg-white' : 'w-2 h-2 bg-white/35 hover:bg-white/60'}`} />
+                       className="relative flex-shrink-0 cursor-pointer transition-all duration-200"
+                       style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden',
+                         border: i === idx ? '2.5px solid white' : '2px solid rgba(255,255,255,0.25)',
+                         opacity: i === idx ? 1 : 0.55,
+                         transform: i === idx ? 'scale(1.12)' : 'scale(1)',
+                         boxShadow: i === idx ? '0 4px 16px rgba(0,0,0,0.7)' : 'none' }}>
+                    <img src={img} className="w-full h-full object-cover" alt="" draggable={false} />
+                  </div>
                 ))}
               </div>
             )}
+            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 30 }}
+                    onClick={e => { e.stopPropagation(); setViewPhoto(null); }}>✕</button>
           </div>
         );
       })()}
