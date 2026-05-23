@@ -1823,17 +1823,51 @@ function deletePackingItem(id) {
     document.head.appendChild(script);
   }, []);
 
-  // [NEW] 지도 탭 전환 시 잔상 해결을 위해 다중 타이머로 리사이즈 완벽 동기화
+  // [NEW] 지도 탭 전환 시 잔상 해결 + 최초 1회 자동 위치 이동
   useEffect(() => {
-    if (activeTab === 'map' && mapInstanceRef.current) {
-      const map = mapInstanceRef.current;
-      map.invalidateSize(true);
-      const timers = [10, 50, 150, 350, 500].map(t => setTimeout(() => map.invalidateSize(true), t));
-      return () => timers.forEach(clearTimeout);
-    }
-  }, [activeTab]);
+    if (activeTab !== 'map' || !mapInstanceRef.current) return;
+    const map = mapInstanceRef.current;
+    map.invalidateSize(true);
+    const timers = [10, 50, 150, 350, 500].map(t => setTimeout(() => map.invalidateSize(true), t));
 
-  // currentRestaurants가 바뀔 때마다 오버레이 상태 동기화
+    // 지도 탭 최초 진입 시 초기 위치 이동 — 이 시점엔 currentRestaurants가 state에 완전히 로드됨
+    if (!mapInitFlyDoneRef.current) {
+      const rests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+      const plans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+
+      if (rests.length === 0) {
+        setMapNoPinOverlay(true);
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(pos => {
+            mapInstanceRef.current && mapInstanceRef.current.setView([pos.coords.latitude, pos.coords.longitude], 13);
+          }, () => {});
+        }
+      } else {
+        setMapNoPinOverlay(false);
+        const now = new Date();
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+        const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
+        const todayD = new Date(now); todayD.setHours(0,0,0,0);
+        const diff = Math.round((todayD - startD) / 86400000);
+        const todayDay = diff + 1;
+        let targetPin = null;
+        if (diff >= 0 && plans.some(p => parseInt(p.day) === todayDay)) {
+          const todayPlans = plans.filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
+          const passed = todayPlans.filter(p => { const [h,m] = p.time.split(':').map(Number); return h*60+m <= nowMin; });
+          const mp = passed.length > 0 ? passed[passed.length-1] : todayPlans[0];
+          if (mp) targetPin = rests.find(r => S(r.name) === S(mp.place));
+        }
+        if (!targetPin) targetPin = rests.find(r => r.isAccommodation && r.lat && r.lng);
+        if (!targetPin) targetPin = rests.find(r => r.lat && r.lng);
+        if (targetPin?.lat) map.setView([targetPin.lat, targetPin.lng], 15);
+      }
+      mapInitFlyDoneRef.current = true;
+    }
+
+    return () => timers.forEach(clearTimeout);
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 핀이 생기면 오버레이 해제
   useEffect(() => {
     const rests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
     if (rests.length > 0) setMapNoPinOverlay(false);
@@ -2138,40 +2172,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
 
         mapInstanceRef.current = map;
 
-        // 지도 초기화 직후 최초 위치 이동 — ref로 항상 최신 데이터 참조
-        setTimeout(() => {
-          if (mapInitFlyDoneRef.current) return;
-          const rests = Array.isArray(currentRestaurantsRef.current) ? currentRestaurantsRef.current.filter(Boolean) : [];
-          const plans = Array.isArray(planTimelineRef.current) ? planTimelineRef.current.filter(Boolean) : [];
-          if (rests.length === 0) {
-            setMapNoPinOverlay(true);
-            if (navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition(pos => {
-                map.setView([pos.coords.latitude, pos.coords.longitude], 13);
-              }, () => {});
-            }
-            mapInitFlyDoneRef.current = true;
-            return;
-          }
-          setMapNoPinOverlay(false);
-          const now = new Date();
-          const nowMin = now.getHours() * 60 + now.getMinutes();
-          const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
-          const todayD = new Date(now); todayD.setHours(0,0,0,0);
-          const diff = Math.round((todayD - startD) / 86400000);
-          const todayDay = diff + 1;
-          let targetPin = null;
-          if (diff >= 0 && plans.some(p => parseInt(p.day) === todayDay)) {
-            const todayPlans = plans.filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
-            const passed = todayPlans.filter(p => { const [h,m] = p.time.split(':').map(Number); return h*60+m <= nowMin; });
-            const mp = passed.length > 0 ? passed[passed.length-1] : todayPlans[0];
-            if (mp) targetPin = rests.find(r => S(r.name) === S(mp.place));
-          }
-          if (!targetPin) targetPin = rests.find(r => r.isAccommodation && r.lat && r.lng);
-          if (!targetPin) targetPin = rests.find(r => r.lat && r.lng);
-          if (targetPin?.lat) map.setView([targetPin.lat, targetPin.lng], 15);
-          mapInitFlyDoneRef.current = true;
-        }, 500);
+        // 초기 위치 이동은 지도 탭 진입 시점 useEffect에서 처리
       } catch (err) {
         console.error("Leaflet initialization failed", err);
       }
