@@ -4501,6 +4501,11 @@ const planData = {
         className={`flex-1 flex flex-col min-w-0 h-full overflow-y-auto overflow-x-hidden relative z-10 transition-transform ${isRefreshing || pullDistance === 0 ? 'duration-300 ease-out' : 'duration-0'} ${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}
         style={{ transform: `translateY(${isRefreshing ? 80 : pullDistance}px)`, overscrollBehaviorY: 'contain' }}
         onTouchStart={(e) => {
+          const mapEl = document.getElementById('leaflet-map');
+          if (mapEl && mapEl.contains(e.target)) {
+            e.currentTarget.dataset.isPulling = 'false';
+            return;
+          }
           if (e.currentTarget.scrollTop <= 0) {
             e.currentTarget.dataset.startY = e.touches[0].clientY;
             e.currentTarget.dataset.isPulling = 'true';
@@ -5340,12 +5345,7 @@ return (
             </div>
             
             <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`}>
-              <div
-                className="w-full h-full rounded-3xl overflow-hidden relative"
-                onTouchStart={(e) => e.stopPropagation()}
-                onTouchMove={(e) => e.stopPropagation()}
-                onTouchEnd={(e) => e.stopPropagation()}
-              >
+              <div className="w-full h-full rounded-3xl overflow-hidden relative">
                 {!isLeafletLoaded && (
                   <div className={`absolute inset-0 z-0 flex flex-col items-center justify-center transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-400'}`}>
                     <span className="text-xl animate-spin inline-block mb-2">🔄</span>
