@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Capacitor } from '@capacitor/core';
 
 /*
   =============================================================================
@@ -57,6 +58,15 @@ const REGIONS_BY_COUNTRY = {
   "독일": ["베를린", "뮌헨", "프랑크푸르트"],
   "호주": ["시드니", "멜버른", "브리즈번"]
 };
+
+// Capacitor 앱 환경에서 외부 앱/URL 열기 (네이티브 앱 스킴 지원)
+function openExternalUrl(url) {
+  if (Capacitor.isNativePlatform()) {
+    Capacitor.openUrl(url);
+  } else {
+    window.open(url, '_blank');
+  }
+}
 
 const CITY_NAME_TO_EN = {
   "서울": "Seoul", "부산": "Busan", "제주": "Jeju", "인천": "Incheon", "경주": "Gyeongju", "순천": "Suncheon",
@@ -3734,14 +3744,15 @@ const getLocalSym = (c) => {
                 <button onClick={() => {
                   const dest = `${selectedPinInfo.lat},${selectedPinInfo.lng}`;
                   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-                  const isAndroid = /Android/i.test(navigator.userAgent);
-                  if (isIOS) {
-                    window.location.href = `comgooglemaps://?daddr=${dest}&directionsmode=walking`;
-                    setTimeout(() => { window.open(`https://maps.google.com/maps?daddr=${dest}&dirflg=w`, '_blank'); }, 1500);
-                  } else if (isAndroid) {
-                    window.location.href = `intent://maps.google.com/maps?daddr=${dest}&dirflg=w#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=https://maps.google.com/maps?daddr=${encodeURIComponent(dest)}%26dirflg=w;end`;
+                  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`;
+                  if (Capacitor.isNativePlatform()) {
+                    if (isIOS) {
+                      openExternalUrl(`comgooglemaps://?daddr=${dest}&directionsmode=walking`);
+                    } else {
+                      openExternalUrl(`geo:${selectedPinInfo.lat},${selectedPinInfo.lng}?q=${selectedPinInfo.lat},${selectedPinInfo.lng}`);
+                    }
                   } else {
-                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`, '_blank');
+                    window.open(webUrl, '_blank');
                   }
                 }} className="w-full mt-4 bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2">
                   <span>🧭</span><span>구글 네비게이션으로 길 안내</span>
@@ -4304,14 +4315,15 @@ const planData = {
                   setPinQuickView(null);
                   const dest = `${pinQuickView.lat},${pinQuickView.lng}`;
                   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-                  const isAndroid = /Android/i.test(navigator.userAgent);
-                  if (isIOS) {
-                    window.location.href = `comgooglemaps://?daddr=${dest}&directionsmode=walking`;
-                    setTimeout(() => { window.open(`https://maps.google.com/maps?daddr=${dest}&dirflg=w`, '_blank'); }, 1500);
-                  } else if (isAndroid) {
-                    window.location.href = `intent://maps.google.com/maps?daddr=${dest}&dirflg=w#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=https://maps.google.com/maps?daddr=${encodeURIComponent(dest)}%26dirflg=w;end`;
+                  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`;
+                  if (Capacitor.isNativePlatform()) {
+                    if (isIOS) {
+                      openExternalUrl(`comgooglemaps://?daddr=${dest}&directionsmode=walking`);
+                    } else {
+                      openExternalUrl(`geo:${pinQuickView.lat},${pinQuickView.lng}?q=${pinQuickView.lat},${pinQuickView.lng}`);
+                    }
                   } else {
-                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`, '_blank');
+                    window.open(webUrl, '_blank');
                   }
                 }} className="w-full bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1">
                   <span>🧭</span><span>현재 위치에서 길 안내</span>
@@ -4332,22 +4344,18 @@ const planData = {
           const dest = `${navDest.lat},${navDest.lng}`;
           const waypointStr = wps.map(w => `${w.lat},${w.lng}`).join('|');
           const dirflg = mode === 'driving' ? 'd' : mode === 'transit' ? 'r' : 'w';
+          const daddr = dest + (wps.length ? '+to:' + wps.map(w=>`${w.lat},${w.lng}`).join('+to:') : '');
           const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-          const isAndroid = /Android/i.test(navigator.userAgent);
+          const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}${waypointStr ? `&waypoints=${waypointStr}` : ''}&travelmode=${mode}`;
 
-          if (isIOS) {
-            // iOS: comgooglemaps:// 앱 스킴 → 미설치 시 웹으로 fallback
-            const appUrl = `comgooglemaps://?saddr=${origin}&daddr=${dest}${wps.length ? '+to:' + wps.map(w=>`${w.lat},${w.lng}`).join('+to:') : ''}&directionsmode=${mode}`;
-            const webUrl = `https://maps.google.com/maps?saddr=${origin}&daddr=${dest}${wps.length ? '+to:'+wps.map(w=>`${w.lat},${w.lng}`).join('+to:') : ''}&dirflg=${dirflg}`;
-            window.location.href = appUrl;
-            setTimeout(() => { window.open(webUrl, '_blank'); }, 1500);
-          } else if (isAndroid) {
-            // Android: intent 스킴으로 구글 맵 앱 직접 호출, 미설치 시 Play스토어/웹 fallback
-            const daddr = dest + (wps.length ? '+to:' + wps.map(w=>`${w.lat},${w.lng}`).join('+to:') : '');
-            window.location.href = `intent://maps.google.com/maps?saddr=${origin}&daddr=${daddr}&dirflg=${dirflg}#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=https://maps.google.com/maps?saddr=${encodeURIComponent(origin)}%26daddr=${encodeURIComponent(daddr)}%26dirflg=${dirflg};end`;
+          if (Capacitor.isNativePlatform()) {
+            if (isIOS) {
+              openExternalUrl(`comgooglemaps://?saddr=${origin}&daddr=${daddr}&directionsmode=${mode}`);
+            } else {
+              // Android 네이티브: geo: URI로 구글 맵 앱 직접 실행
+              openExternalUrl(`geo:${navDest.lat},${navDest.lng}?q=${navDest.lat},${navDest.lng}&mode=${dirflg}`);
+            }
           } else {
-            // PC 웹
-            const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}${waypointStr ? `&waypoints=${waypointStr}` : ''}&travelmode=${mode}`;
             window.open(webUrl, '_blank');
           }
           setIsNavModalOpen(false);
