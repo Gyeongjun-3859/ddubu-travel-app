@@ -1983,7 +1983,7 @@ function deletePackingItem(id) {
               setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
               
               if (Array.isArray(data.current_restaurants)) {
-              setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));              } else { setCurrentRestaurants([]); }
+              setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));              } else { setCurrentRestaurants([]); }
               
               if (Array.isArray(data.plan_timeline)) {
                const fallbackCityName = data.display_city_name ? S(data.display_city_name) : "";
@@ -2322,7 +2322,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           
           // [버그 수정 2] F5 새로고침 시 DB에서 rating과 review 필드 복원 (Fetch 매핑 로직 추가)
           if (Array.isArray(data.current_restaurants)) {
-          setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));          } else { setCurrentRestaurants([]); }
+          setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));          } else { setCurrentRestaurants([]); }
           
           if (Array.isArray(data.plan_timeline)) {
           const fallbackCityName2 = data.display_city_name ? S(data.display_city_name) : "";
@@ -2367,7 +2367,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           }
           
           if (Array.isArray(payload.new.current_restaurants)) {
-            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || '기타', rating: r.rating || 0, review: r.review || "" }));
+            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || '기타', rating: r.rating || 0, review: r.review || "" }));
             setCurrentRestaurants(cleanRests);
           }
           if (Array.isArray(payload.new.plan_timeline)) {
@@ -4511,7 +4511,7 @@ return (
         <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPinInfo(null)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             {selectedPinInfo.img && !S(selectedPinInfo.img).includes("unsplash") && (
-              <div className="w-full h-48 relative cursor-pointer" onClick={e => { e.stopPropagation(); const imgs = Array.isArray(selectedPinInfo.photos) && selectedPinInfo.photos.length > 0 ? selectedPinInfo.photos : [selectedPinInfo.img]; setViewPhoto({ imgs, idx: 0 }); }}>
+              <div className="w-full h-48 relative cursor-pointer" onClick={e => { e.stopPropagation(); const imgs = Array.isArray(selectedPinInfo.imgs) && selectedPinInfo.imgs.length > 0 ? selectedPinInfo.imgs : (Array.isArray(selectedPinInfo.photos) && selectedPinInfo.photos.length > 0 ? selectedPinInfo.photos : [selectedPinInfo.img]); setViewPhoto({ imgs, idx: 0 }); }}>
                 <img src={selectedPinInfo.img} className="w-full h-full object-cover" alt="" />
                 {selectedPinInfo.isAccommodation && <div className="absolute top-3 left-3 bg-yellow-400 text-white text-xs font-bold px-2 py-1 rounded shadow-md">숙소</div>}
                 <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors flex items-center justify-center">
