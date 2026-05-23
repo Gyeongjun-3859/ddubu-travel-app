@@ -68,6 +68,27 @@ function openExternalUrl(url) {
   }
 }
 
+// Android에서 구글 맵 앱으로 직접 길 안내 실행
+function openGoogleMapsNav(lat, lng, mode = 'driving') {
+  const dest = `${lat},${lng}`;
+  const dirflg = mode === 'driving' ? 'd' : mode === 'transit' ? 'r' : 'w';
+  const dirMode = mode === 'driving' ? 'driving' : mode === 'transit' ? 'transit' : 'walking';
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=${dirMode}`;
+
+  if (Capacitor.isNativePlatform()) {
+    if (isIOS) {
+      openExternalUrl(`comgooglemaps://?daddr=${dest}&directionsmode=${dirMode}`);
+    } else {
+      // Android: intent URI로 구글 맵 앱 직접 지정 실행
+      const intentUrl = `intent://maps.google.com/maps?daddr=${dest}&dirflg=${dirflg}#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=${encodeURIComponent(webUrl)};end`;
+      openExternalUrl(intentUrl);
+    }
+  } else {
+    window.open(webUrl, '_blank');
+  }
+}
+
 const CITY_NAME_TO_EN = {
   "서울": "Seoul", "부산": "Busan", "제주": "Jeju", "인천": "Incheon", "경주": "Gyeongju", "순천": "Suncheon",
   "도쿄": "Tokyo", "오사카": "Osaka", "후쿠오카": "Fukuoka", "교토": "Kyoto", "삿포로": "Sapporo",
@@ -3741,20 +3762,7 @@ const getLocalSym = (c) => {
               )}
               
               {selectedPinInfo.lat && selectedPinInfo.lng && (
-                <button onClick={() => {
-                  const dest = `${selectedPinInfo.lat},${selectedPinInfo.lng}`;
-                  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-                  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`;
-                  if (Capacitor.isNativePlatform()) {
-                    if (isIOS) {
-                      openExternalUrl(`comgooglemaps://?daddr=${dest}&directionsmode=walking`);
-                    } else {
-                      openExternalUrl(`geo:${selectedPinInfo.lat},${selectedPinInfo.lng}?q=${selectedPinInfo.lat},${selectedPinInfo.lng}`);
-                    }
-                  } else {
-                    window.open(webUrl, '_blank');
-                  }
-                }} className="w-full mt-4 bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2">
+                <button onClick={() => openGoogleMapsNav(selectedPinInfo.lat, selectedPinInfo.lng, 'driving')} className="w-full mt-4 bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2">
                   <span>🧭</span><span>구글 네비게이션으로 길 안내</span>
                 </button>
               )}
@@ -4311,21 +4319,7 @@ const planData = {
                 </button>
               )}
               {pinQuickView.lat && pinQuickView.lng && (
-                <button onClick={() => {
-                  setPinQuickView(null);
-                  const dest = `${pinQuickView.lat},${pinQuickView.lng}`;
-                  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-                  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`;
-                  if (Capacitor.isNativePlatform()) {
-                    if (isIOS) {
-                      openExternalUrl(`comgooglemaps://?daddr=${dest}&directionsmode=walking`);
-                    } else {
-                      openExternalUrl(`geo:${pinQuickView.lat},${pinQuickView.lng}?q=${pinQuickView.lat},${pinQuickView.lng}`);
-                    }
-                  } else {
-                    window.open(webUrl, '_blank');
-                  }
-                }} className="w-full bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1">
+                <button onClick={() => { setPinQuickView(null); openGoogleMapsNav(pinQuickView.lat, pinQuickView.lng, 'driving'); }} className="w-full bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1">
                   <span>🧭</span><span>현재 위치에서 길 안내</span>
                 </button>
               )}
@@ -4352,8 +4346,9 @@ const planData = {
             if (isIOS) {
               openExternalUrl(`comgooglemaps://?saddr=${origin}&daddr=${daddr}&directionsmode=${mode}`);
             } else {
-              // Android 네이티브: geo: URI로 구글 맵 앱 직접 실행
-              openExternalUrl(`geo:${navDest.lat},${navDest.lng}?q=${navDest.lat},${navDest.lng}&mode=${dirflg}`);
+              // Android 네이티브: intent URI로 구글 맵 앱 패키지 직접 지정 실행
+              const intentUrl = `intent://maps.google.com/maps?saddr=${origin}&daddr=${daddr}&dirflg=${dirflg}#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=${encodeURIComponent(webUrl)};end`;
+              openExternalUrl(intentUrl);
             }
           } else {
             window.open(webUrl, '_blank');
