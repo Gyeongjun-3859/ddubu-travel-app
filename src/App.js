@@ -1835,9 +1835,19 @@ function deletePackingItem(id) {
       const plans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
 
       if (rests.length === 0) {
-        // 핀 없음: 현재 위치로 이동, 토스트 메시지
-        showToast(`📍 ${displayCityName !== '선택된 지역 없음' ? displayCityName : '여행지'} — 등록된 핀이 없습니다`);
-        if (navigator.geolocation) {
+        // 핀 없음: 일정 지역명 → Nominatim 좌표 조회 → 현재 위치 순으로 폴백
+        const cityForMap = displayCityName !== '선택된 지역 없음' ? displayCityName : null;
+        if (cityForMap) {
+          const queryName = CITY_NAME_TO_EN[cityForMap] || cityForMap;
+          fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryName)}&limit=1&accept-language=en`)
+            .then(r => r.json())
+            .then(data => {
+              if (data && data[0] && mapInstanceRef.current) {
+                mapInstanceRef.current.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 12);
+              }
+            })
+            .catch(() => {});
+        } else if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(pos => {
             mapInstanceRef.current && mapInstanceRef.current.setView([pos.coords.latitude, pos.coords.longitude], 13);
           }, () => {});
