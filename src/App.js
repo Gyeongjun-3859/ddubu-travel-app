@@ -1200,16 +1200,16 @@ async function confirmDeleteTrip() {
         updatedTimeline = updatedTimeline.map(p => p && String(p.id) === String(pinLinkPlanId) ? {
           ...p, day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
           localName: S(newManualLocalName), features: S(newManualFeature), photo: S(newManualPhoto),
-          isAccommodation: Boolean(newManualIsAccommodation),
-          country: targetCountry, region: targetRegion // 핀 정보 연동 업데이트
+          isAccommodation: Boolean(newManualIsAccommodation), theme: S(newManualTheme) || "기타",
+          country: targetCountry, region: targetRegion
         } : p).sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
       } else {
         const newPlan = {
           id: Date.now().toString() + "_plan",
           day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
           localName: S(newManualLocalName), features: S(newManualFeature), photo: S(newManualPhoto),
-          country: targetCountry, region: targetRegion, // 핀 정보로 자동 연동
-          isAccommodation: Boolean(newManualIsAccommodation)
+          country: targetCountry, region: targetRegion,
+          isAccommodation: Boolean(newManualIsAccommodation), theme: S(newManualTheme) || "기타"
         };
         updatedTimeline = [...updatedTimeline, newPlan].sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
       }
@@ -5253,7 +5253,7 @@ const planData = {
                                  if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                                  else setActiveMobileCard(plan.id);
                                }}>
-                            <div className="bg-indigo-500 text-white font-black text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{plan.time === '99:99' ? '' : S(plan.time)}</div>
+                            {plan.time !== '99:99' && <div className="bg-indigo-500 text-white font-black text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{S(plan.time)}</div>}
                             <div className="flex-1 min-w-0 flex flex-col px-0.5">
                               <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
                                 {S(plan.place)}
@@ -5277,9 +5277,9 @@ const planData = {
                          if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                          else setActiveMobileCard(plan.id);
                       }}>
-                        <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">
+                        {(plan.isAccommodation || plan.time !== '99:99') && <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">
                           {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
-                        </div>
+                        </div>}
                         <div className="flex-1 min-w-0 flex flex-col px-0.5">
                           <span className={`text-[8px] sm:text-[11px] font-bold truncate transition-colors duration-300 ${textMain}`}>
                             {S(plan.place)} {plan.isAccommodation && '🏠'}
@@ -5354,9 +5354,9 @@ const planData = {
                                onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                             <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" onClick={plan.photo ? (e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); } : undefined} />
                             {plan.photos && plan.photos.length > 1 && <div className="absolute top-1 right-1 bg-black/60 text-white text-[7px] font-bold px-1 py-0.5 rounded shadow-sm">📸 {plan.photos.length}</div>}
-                            <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">
+                            {(plan.isAccommodation || plan.time !== '99:99') && <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">
                               {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
-                            </div>
+                            </div>}
                             <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
                           </div>
                           
@@ -5566,8 +5566,8 @@ const planData = {
                                   if (pin.localName) setNewLocalName(S(pin.localName));
                                   if (pin.signature) setNewFeatures(S(pin.signature));
                                   if (pin.imgs && pin.imgs.length > 0) { setNewPlanPhotos(pin.imgs); } else if (pin.img) { setNewPlanPhotos([S(pin.img)]); }
-                                  if (pin.isAccommodation) setNewIsAccommodation(true);
-                                  if (pin.theme) setNewTheme(S(pin.theme));
+                                  setNewIsAccommodation(Boolean(pin.isAccommodation));
+                                  setNewTheme(S(pin.theme) || "기타");
                                   // 전역 여행 국가/지역을 기본값으로 사용 (핀 데이터 대신)
                                   {
                                     const globalC = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : globalManualCountry;
@@ -5745,7 +5745,7 @@ const planData = {
                                        if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                                        else setActiveMobileCard(plan.id);
                                      }}>
-                                  <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{plan.time === '99:99' ? '' : S(plan.time)}</div>
+                                  {plan.time !== '99:99' && <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{S(plan.time)}</div>}
                                   <div className="flex-1 min-w-0 flex flex-col px-0.5">
                                     <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
                                       {S(plan.place)}
@@ -5766,7 +5766,7 @@ const planData = {
                             return (
                             <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
                               <div className="flex justify-between items-start mb-1">
-                                <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{plan.time === '99:99' ? '' : S(plan.time)}</span>
+                                {plan.time !== '99:99' && <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>}
                                 <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
