@@ -591,7 +591,9 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
     setNewManualPlaceName(S(pin.name));
     setNewManualLocalName(S(pin.localName));
     setNewManualFeature(pin.signature === "직접 추가한 장소" ? "" : S(pin.signature));
-    setNewManualPhoto(pin.img && !S(pin.img).includes("unsplash") ? S(pin.img) : "");
+    const pinImgs = Array.isArray(pin.imgs) && pin.imgs.length > 0 ? pin.imgs : (pin.img && !S(pin.img).includes("unsplash") ? [S(pin.img)] : []);
+    setNewManualPhoto(pinImgs[0] || "");
+    setNewManualPhotos(pinImgs);
     setNewManualIsAccommodation(Boolean(pin.isAccommodation));
     setNewManualIsLandmark(Boolean(pin.isLandmark));
     setNewManualTheme(pin.theme ? S(pin.theme) : "기타");
@@ -1201,10 +1203,12 @@ async function confirmDeleteTrip() {
       const targetCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || S(globalPlanCountry));
       const targetRegion = globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : (globalManualRegion || S(globalPlanRegion));
 
+      const pinFinalImgs = newManualPhotos.length > 0 ? newManualPhotos : (newManualPhoto ? [newManualPhoto] : []);
       if (pinLinkPlanId && pinLinkPlanId !== 'manual') {
         updatedTimeline = updatedTimeline.map(p => p && String(p.id) === String(pinLinkPlanId) ? {
           ...p, day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
-          localName: S(newManualLocalName), features: S(newManualFeature), photo: S(newManualPhoto),
+          localName: S(newManualLocalName), features: S(newManualFeature), photo: pinFinalImgs[0] || S(newManualPhoto),
+          photos: pinFinalImgs,
           isAccommodation: Boolean(newManualIsAccommodation), theme: S(newManualTheme) || "기타",
           country: targetCountry, region: targetRegion
         } : p).sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
@@ -1212,7 +1216,8 @@ async function confirmDeleteTrip() {
         const newPlan = {
           id: Date.now().toString() + "_plan",
           day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
-          localName: S(newManualLocalName), features: S(newManualFeature), photo: S(newManualPhoto),
+          localName: S(newManualLocalName), features: S(newManualFeature), photo: pinFinalImgs[0] || S(newManualPhoto),
+          photos: pinFinalImgs,
           country: targetCountry, region: targetRegion,
           isAccommodation: Boolean(newManualIsAccommodation), theme: S(newManualTheme) || "기타"
         };
@@ -3092,24 +3097,32 @@ return (
                onClick={() => setViewPhoto(null)}
                onMouseDown={handleDragStart} onMouseUp={handleDragEnd}
                onTouchStart={handleDragStart} onTouchEnd={handleDragEnd}>
-            {/* 뒤에 보이는 이전/다음 사진 (어둡게) */}
+            {/* 뒤에 겹쳐서 보이는 다음 사진 (카드 스택 효과) */}
             {imgs.length > 1 && (
               <>
-                <img src={imgs[prevIdx]} className="absolute left-4 top-1/2 -translate-y-1/2 w-[30%] max-h-[55%] object-contain rounded-md opacity-25 blur-[1px] scale-90 pointer-events-none select-none" alt="" />
-                <img src={imgs[nextIdx]} className="absolute right-4 top-1/2 -translate-y-1/2 w-[30%] max-h-[55%] object-contain rounded-md opacity-25 blur-[1px] scale-90 pointer-events-none select-none" alt="" />
+                {/* 2번째 뒤 카드 */}
+                {imgs.length > 2 && (
+                  <img src={imgs[(idx + 2) % imgs.length]}
+                       className="absolute max-w-[78%] max-h-[82%] object-contain rounded-md pointer-events-none select-none"
+                       style={{ opacity: 0.2, transform: 'translate(14px, 10px) scale(0.92)', zIndex: 6 }} alt="" />
+                )}
+                {/* 1번째 뒤 카드 */}
+                <img src={imgs[nextIdx]}
+                     className="absolute max-w-[78%] max-h-[82%] object-contain rounded-md pointer-events-none select-none"
+                     style={{ opacity: 0.45, transform: 'translate(8px, 6px) scale(0.96)', zIndex: 7 }} alt="" />
               </>
             )}
-            {/* 현재 사진 */}
-            <img src={imgs[idx]} className="relative max-w-[80%] max-h-[85%] object-contain rounded-md shadow-2xl z-10 select-none" alt=""
+            {/* 현재 사진 (메인) */}
+            <img src={imgs[idx]} className="relative max-w-[80%] max-h-[85%] object-contain rounded-md shadow-2xl select-none" style={{ zIndex: 10 }} alt=""
                  onClick={e => e.stopPropagation()}
                  onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
                  onTouchStart={e => { e.stopPropagation(); handleDragStart(e); }} onTouchEnd={e => { e.stopPropagation(); handleDragEnd(e); }} />
-            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors z-20 text-sm font-bold" onClick={() => setViewPhoto(null)}>✕</button>
+            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 20 }} onClick={() => setViewPhoto(null)}>✕</button>
             {imgs.length > 1 && (
               <>
-                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl z-20" onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: prevIdx }); }}>‹</button>
-                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl z-20" onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: nextIdx }); }}>›</button>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5 z-20">
+                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl" style={{ zIndex: 20 }} onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: prevIdx }); }}>‹</button>
+                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl" style={{ zIndex: 20 }} onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: nextIdx }); }}>›</button>
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5" style={{ zIndex: 20 }}>
                   {imgs.map((_, i) => <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === idx ? 'bg-white' : 'bg-white/35'}`} />)}
                 </div>
               </>
@@ -4931,12 +4944,19 @@ const planData = {
 
               <div className="flex flex-col space-y-1 w-full pt-1">
                 <label className={`text-[9px] font-bold px-1 ${textMuted}`}>사진 (최대 3장) 📸</label>
-                <input type="file" accept="image/*" ref={manualFileInputRef} onChange={(e) => {
-                  const file = e.target.files?.[0]; if (!file) return;
-                  compressImage(file, (compressed) => {
-                    setNewManualPhotos(prev => prev.length < 3 ? [...prev, compressed] : prev);
-                    setNewManualPhoto(compressed);
+                <input type="file" accept="image/*" multiple ref={manualFileInputRef} onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  files.forEach(file => {
+                    compressImage(file, (compressed) => {
+                      setNewManualPhotos(prev => {
+                        if (prev.length >= 3) return prev;
+                        const next = [...prev, compressed];
+                        setNewManualPhoto(next[0]);
+                        return next;
+                      });
+                    });
                   });
+                  e.target.value = '';
                 }} className="hidden" />
                 <div className="flex gap-1.5">
                   {newManualPhotos.map((img, i) => (
