@@ -343,11 +343,21 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const manualFileInputRef = useRef(null);
 
   const [viewPhoto, setViewPhoto] = useState(null); // {imgs: string[], idx: number} | null
+  const [viewPhotoAnim, setViewPhotoAnim] = useState(null); // 'left' | 'right' | null
   const [newManualPhotos, setNewManualPhotos] = useState([]); // 핀 등록 다중 사진
   const openPhotoViewer = (imgs, idx = 0) => {
     const arr = Array.isArray(imgs) ? imgs.filter(Boolean) : (imgs ? [imgs] : []);
     if (arr.length === 0) return;
     setViewPhoto({ imgs: arr, idx });
+    setViewPhotoAnim(null);
+  };
+  const goPhotoNext = (imgs, idx) => {
+    setViewPhotoAnim('left');
+    setTimeout(() => { setViewPhoto({ imgs, idx: (idx + 1) % imgs.length }); setViewPhotoAnim(null); }, 260);
+  };
+  const goPhotoPrev = (imgs, idx) => {
+    setViewPhotoAnim('right');
+    setTimeout(() => { setViewPhoto({ imgs, idx: (idx - 1 + imgs.length) % imgs.length }); setViewPhotoAnim(null); }, 260);
   };
   const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
   
@@ -3078,55 +3088,80 @@ return (
       {viewPhoto && (() => {
         const imgs = viewPhoto.imgs || [];
         const idx = viewPhoto.idx || 0;
-        const prevIdx = (idx - 1 + imgs.length) % imgs.length;
-        const nextIdx = (idx + 1) % imgs.length;
+        const n = imgs.length;
         let dragStartX = null;
-        const handleDragStart = (e) => { dragStartX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX; };
-        const handleDragEnd = (e) => {
+        const onDragStart = (e) => { dragStartX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX; };
+        const onDragEnd = (e) => {
           if (dragStartX === null) return;
           const endX = e.type === 'touchend' ? e.changedTouches[0].clientX : e.clientX;
           const diff = dragStartX - endX;
-          if (Math.abs(diff) > 40) {
-            if (diff > 0) setViewPhoto({ imgs, idx: nextIdx });
-            else setViewPhoto({ imgs, idx: prevIdx });
-          }
           dragStartX = null;
+          if (Math.abs(diff) < 40) return;
+          if (diff > 0 && n > 1) goPhotoNext(imgs, idx);
+          else if (diff < 0 && n > 1) goPhotoPrev(imgs, idx);
         };
+        // 각 카드의 스타일 계산: position=0(현재), 1(바로 뒤), 2(두 번째 뒤)
+        const cardStyle = (pos) => {
+          // pos 0=메인, 1=첫번째 뒤, 2=두번째 뒤
+          const scales   = [1,    0.88,  0.77];
+          const offX     = [0,    26,    46];   // px, 우측으로
+          const offY     = [0,    18,    32];   // px, 아래로
+          const opacities= [1,    0.65,  0.38];
+          const zIdxs    = [10,   7,     5];
+          const brightness = [1,  0.55,  0.35];
+          return {
+            position: 'absolute', inset: 0, borderRadius: 16, overflow: 'hidden',
+            transform: `translate(${offX[pos]}px, ${offY[pos]}px) scale(${scales[pos]})`,
+            transformOrigin: 'top left',
+            opacity: opacities[pos],
+            filter: `brightness(${brightness[pos]})`,
+            zIndex: zIdxs[pos],
+            transition: viewPhotoAnim ? 'none' : 'transform 0.28s cubic-bezier(.4,0,.2,1), opacity 0.28s, filter 0.28s',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+          };
+        };
+        // 현재 카드 애니메이션: left → 왼쪽으로 날아감
+        const mainAnimStyle = viewPhotoAnim === 'left'
+          ? { position:'absolute', inset:0, borderRadius:16, overflow:'hidden', transform:'translateX(-120%) scale(0.85)', opacity:0, zIndex:10, transition:'transform 0.26s cubic-bezier(.4,0,.2,1), opacity 0.22s', boxShadow:'0 12px 40px rgba(0,0,0,0.7)' }
+          : viewPhotoAnim === 'right'
+          ? { position:'absolute', inset:0, borderRadius:16, overflow:'hidden', transform:'translateX(120%) scale(0.85)', opacity:0, zIndex:10, transition:'transform 0.26s cubic-bezier(.4,0,.2,1), opacity 0.22s', boxShadow:'0 12px 40px rgba(0,0,0,0.7)' }
+          : cardStyle(0);
         return (
-          <div className="fixed inset-0 bg-black/92 z-[99998] flex items-center justify-center backdrop-blur-sm"
+          <div className="fixed inset-0 bg-black/93 z-[99998] flex items-center justify-center backdrop-blur-sm"
                onClick={() => setViewPhoto(null)}
-               onMouseDown={handleDragStart} onMouseUp={handleDragEnd}
-               onTouchStart={handleDragStart} onTouchEnd={handleDragEnd}>
-            {/* 카드 스택 컨테이너 — 모든 카드가 같은 기준점에서 offset */}
-            <div className="relative flex items-center justify-center" style={{ width: '80vw', maxWidth: 480, height: '75vh' }}>
-              {/* 3번째 뒤 카드 */}
-              {imgs.length > 2 && (
-                <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none select-none"
-                     style={{ opacity: 0.18, transform: 'translate(18px, 14px)', zIndex: 6, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-                  <img src={imgs[(idx + 2) % imgs.length]} className="w-full h-full object-cover" alt="" />
+               onMouseDown={onDragStart} onMouseUp={onDragEnd}
+               onTouchStart={onDragStart} onTouchEnd={onDragEnd}>
+            <div className="relative" style={{ width: '78vw', maxWidth: 440, height: '68vh' }}>
+              {/* 두 번째 뒤 카드 */}
+              {n > 2 && (
+                <div style={cardStyle(2)} className="pointer-events-none select-none">
+                  <img src={imgs[(idx + 2) % n]} className="w-full h-full object-cover" alt="" />
                 </div>
               )}
-              {/* 2번째 뒤 카드 */}
-              {imgs.length > 1 && (
-                <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none select-none"
-                     style={{ opacity: 0.4, transform: 'translate(10px, 8px)', zIndex: 7, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-                  <img src={imgs[nextIdx]} className="w-full h-full object-cover" alt="" />
+              {/* 첫 번째 뒤 카드 */}
+              {n > 1 && (
+                <div style={viewPhotoAnim === 'left'
+                       ? { ...cardStyle(0), transition: 'transform 0.26s cubic-bezier(.4,0,.2,1), opacity 0.26s, filter 0.26s' }
+                       : cardStyle(1)}
+                     className="pointer-events-none select-none">
+                  <img src={imgs[(idx + 1) % n]} className="w-full h-full object-cover" alt="" />
                 </div>
               )}
-              {/* 메인 사진 */}
-              <div className="absolute inset-0 rounded-xl overflow-hidden shadow-2xl select-none" style={{ zIndex: 10 }}
+              {/* 메인 카드 */}
+              <div style={mainAnimStyle} className="select-none"
                    onClick={e => e.stopPropagation()}
                    onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
-                   onTouchStart={e => { e.stopPropagation(); handleDragStart(e); }} onTouchEnd={e => { e.stopPropagation(); handleDragEnd(e); }}>
+                   onTouchStart={e => { e.stopPropagation(); onDragStart(e); }}
+                   onTouchEnd={e => { e.stopPropagation(); onDragEnd(e); }}>
                 <img src={imgs[idx]} className="w-full h-full object-contain bg-black" alt="" />
               </div>
             </div>
-            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 20 }} onClick={() => setViewPhoto(null)}>✕</button>
-            {imgs.length > 1 && (
+            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 30 }} onClick={() => setViewPhoto(null)}>✕</button>
+            {n > 1 && (
               <>
-                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl" style={{ zIndex: 20 }} onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: prevIdx }); }}>‹</button>
-                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl" style={{ zIndex: 20 }} onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: nextIdx }); }}>›</button>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5" style={{ zIndex: 20 }}>
+                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl" style={{ zIndex: 30 }} onClick={e => { e.stopPropagation(); goPhotoPrev(imgs, idx); }}>‹</button>
+                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl" style={{ zIndex: 30 }} onClick={e => { e.stopPropagation(); goPhotoNext(imgs, idx); }}>›</button>
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5" style={{ zIndex: 30 }}>
                   {imgs.map((_, i) => <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === idx ? 'bg-white' : 'bg-white/35'}`} />)}
                 </div>
               </>
@@ -4964,10 +4999,14 @@ const planData = {
                 }} className="hidden" />
                 <div className="flex gap-1.5">
                   {newManualPhotos.map((img, i) => (
-                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 shrink-0 cursor-pointer" onClick={() => openPhotoViewer(newManualPhotos, i)}>
+                    <div key={i} className={`relative w-16 h-16 rounded-lg overflow-hidden shrink-0 cursor-pointer border-2 ${i === 0 ? 'border-indigo-500' : 'border-slate-200'}`}
+                         onClick={() => {
+                           setNewManualPhotos(prev => { const next = [...prev]; const [sel] = next.splice(i, 1); next.unshift(sel); setNewManualPhoto(next[0]); return next; });
+                           showToast('⭐ 대표사진으로 설정했습니다!');
+                         }}>
                       <img src={img} className="w-full h-full object-cover" alt="" />
                       <button type="button" className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px]" onClick={e => { e.stopPropagation(); setNewManualPhotos(prev => { const n = prev.filter((_, j) => j !== i); setNewManualPhoto(n[0] || ''); return n; }); }}>✕</button>
-                      {i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[7px] text-center">대표</div>}
+                      {i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-indigo-500/80 text-white text-[7px] text-center font-bold">대표</div>}
                     </div>
                   ))}
                   {newManualPhotos.length < 3 && (
