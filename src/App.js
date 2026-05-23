@@ -2097,16 +2097,67 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     if (!isLeafletLoaded || !mapContainerRef.current || !window.L) return;
 
     if (!mapInstanceRef.current) {
-      if (mapContainerRef.current._leaflet_id) mapContainerRef.current._leaflet_id = null; 
-      
+      if (mapContainerRef.current._leaflet_id) mapContainerRef.current._leaflet_id = null;
+
       let initialLat = 37.5665;
       let initialLng = 126.9780;
-      
+
       const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
-      if (safeCurrentRestaurants.length > 0 && safeCurrentRestaurants[0] && safeCurrentRestaurants[0].lat) {
-        initialLat = safeCurrentRestaurants[0].lat;
-        initialLng = safeCurrentRestaurants[0].lng;
-      }
+      const safePlanTimelineInit = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+
+      // 현재 날짜/시간에 해당하는 일정 핀으로 초기 좌표 결정
+      (() => {
+        if (!travelStartDate || safeCurrentRestaurants.length === 0) return;
+        const now = new Date();
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+
+        // travelStartDate 기준으로 오늘이 몇 일차인지 계산
+        const start = new Date(travelStartDate);
+        start.setHours(0, 0, 0, 0);
+        const todayMidnight = new Date(now);
+        todayMidnight.setHours(0, 0, 0, 0);
+        const diffDays = Math.round((todayMidnight - start) / 86400000);
+        const todayDay = diffDays + 1; // 1-based
+
+        // 오늘 일정 중 현재 시각과 가장 가까운(이미 지났거나 진행중인) 일정 찾기
+        const todayPlans = safePlanTimelineInit
+          .filter(p => parseInt(p.day) === todayDay && p.time)
+          .sort((a, b) => S(a.time).localeCompare(S(b.time)));
+
+        let matchedPlan = null;
+        if (todayPlans.length > 0) {
+          // 현재 시각 이전 or 같은 마지막 일정
+          const passed = todayPlans.filter(p => {
+            const [h, m] = p.time.split(':').map(Number);
+            return h * 60 + m <= nowMin;
+          });
+          matchedPlan = passed.length > 0 ? passed[passed.length - 1] : todayPlans[0];
+        }
+
+        if (matchedPlan) {
+          // 일정에 연결된 핀의 좌표 찾기
+          const pin = safeCurrentRestaurants.find(r => r.name === matchedPlan.place || r.id === matchedPlan.pinId);
+          if (pin && pin.lat && pin.lng) {
+            initialLat = pin.lat;
+            initialLng = pin.lng;
+            return;
+          }
+        }
+
+        // 오늘 일정이 없거나 핀 매칭 실패 → 숙소로 폴백
+        const accommodation = safeCurrentRestaurants.find(r => r.isAccommodation && r.lat && r.lng);
+        if (accommodation) {
+          initialLat = accommodation.lat;
+          initialLng = accommodation.lng;
+          return;
+        }
+
+        // 숙소도 없으면 첫 번째 핀
+        if (safeCurrentRestaurants[0]?.lat) {
+          initialLat = safeCurrentRestaurants[0].lat;
+          initialLng = safeCurrentRestaurants[0].lng;
+        }
+      })();
 
       try {
         const map = window.L.map(mapContainerRef.current, { zoomControl: false }).setView([initialLat || 37.5665, initialLng || 126.9780], 13);
