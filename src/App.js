@@ -329,6 +329,8 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const manualFileInputRef = useRef(null);
 
   const [viewPhoto, setViewPhoto] = useState(null);
+  const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
+  const [mapNoPinOverlay, setMapNoPinOverlay] = useState(false); // 핀 없을 때 지역명 오버레이
   
   const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
   const [selectedPinInfo, setSelectedPinInfo] = useState(null);
@@ -844,8 +846,9 @@ const saveToDb = useCallback(async (updates) => {
       return;
     }
 
-    if (activeTripId === tripId) return; 
-    
+    if (activeTripId === tripId) return;
+
+    mapInitFlyDoneRef.current = false; // 여행 전환 시 지도 초기 이동 재실행
     setActiveTripId(S(tripId));
     showToast("여행 일정을 불러왔습니다.");
     await supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId);
@@ -1830,6 +1833,73 @@ function deletePackingItem(id) {
     }
   }, [activeTab]);
 
+  // 데이터 로드 완료 후 지도 최초 1회 자동 이동
+  useEffect(() => {
+    if (!isDbLoaded || mapInitFlyDoneRef.current) return;
+    if (!mapInstanceRef.current) return;
+
+    const safeRests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+    const safePlans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+
+    // 핀이 하나도 없으면 지역명 오버레이 표시
+    if (safeRests.length === 0) {
+      setMapNoPinOverlay(true);
+      // 현재 위치로 이동 시도
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          mapInstanceRef.current && mapInstanceRef.current.flyTo([pos.coords.latitude, pos.coords.longitude], 13);
+        }, () => {});
+      }
+      mapInitFlyDoneRef.current = true;
+      return;
+    }
+
+    setMapNoPinOverlay(false);
+
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const start = new Date(travelStartDate);
+    start.setHours(0, 0, 0, 0);
+    const todayMidnight = new Date(now);
+    todayMidnight.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((todayMidnight - start) / 86400000);
+    const todayDay = diffDays + 1;
+    const isTravelPeriod = diffDays >= 0 && safePlans.some(p => parseInt(p.day) === todayDay);
+
+    let targetPin = null;
+
+    if (isTravelPeriod) {
+      // 오늘 일차에 해당 → 현재 시각 기준 가장 가까운 일정 핀
+      const todayPlans = safePlans
+        .filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport)
+        .sort((a, b) => S(a.time).localeCompare(S(b.time)));
+      const passed = todayPlans.filter(p => {
+        const [h, m] = p.time.split(':').map(Number);
+        return h * 60 + m <= nowMin;
+      });
+      const matchedPlan = passed.length > 0 ? passed[passed.length - 1] : todayPlans[0];
+      if (matchedPlan) {
+        targetPin = safeRests.find(r => S(r.name) === S(matchedPlan.place));
+      }
+    }
+
+    // 여행 전/후이거나 매칭 실패 → 숙소
+    if (!targetPin) {
+      targetPin = safeRests.find(r => r.isAccommodation && r.lat && r.lng);
+    }
+
+    // 숙소도 없으면 첫 번째 핀
+    if (!targetPin) {
+      targetPin = safeRests.find(r => r.lat && r.lng);
+    }
+
+    if (targetPin && targetPin.lat && targetPin.lng) {
+      mapInstanceRef.current.flyTo([targetPin.lat, targetPin.lng], 15);
+    }
+
+    mapInitFlyDoneRef.current = true;
+  }, [isDbLoaded, currentRestaurants, planTimeline, travelStartDate]);
+
   useEffect(() => {
     if (!travelStartDate) return;
     const todayDate = new Date();
@@ -2099,65 +2169,9 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     if (!mapInstanceRef.current) {
       if (mapContainerRef.current._leaflet_id) mapContainerRef.current._leaflet_id = null;
 
-      let initialLat = 37.5665;
-      let initialLng = 126.9780;
-
-      const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
-      const safePlanTimelineInit = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-
-      // 현재 날짜/시간에 해당하는 일정 핀으로 초기 좌표 결정
-      (() => {
-        if (!travelStartDate || safeCurrentRestaurants.length === 0) return;
-        const now = new Date();
-        const nowMin = now.getHours() * 60 + now.getMinutes();
-
-        // travelStartDate 기준으로 오늘이 몇 일차인지 계산
-        const start = new Date(travelStartDate);
-        start.setHours(0, 0, 0, 0);
-        const todayMidnight = new Date(now);
-        todayMidnight.setHours(0, 0, 0, 0);
-        const diffDays = Math.round((todayMidnight - start) / 86400000);
-        const todayDay = diffDays + 1; // 1-based
-
-        // 오늘 일정 중 현재 시각과 가장 가까운(이미 지났거나 진행중인) 일정 찾기
-        const todayPlans = safePlanTimelineInit
-          .filter(p => parseInt(p.day) === todayDay && p.time)
-          .sort((a, b) => S(a.time).localeCompare(S(b.time)));
-
-        let matchedPlan = null;
-        if (todayPlans.length > 0) {
-          // 현재 시각 이전 or 같은 마지막 일정
-          const passed = todayPlans.filter(p => {
-            const [h, m] = p.time.split(':').map(Number);
-            return h * 60 + m <= nowMin;
-          });
-          matchedPlan = passed.length > 0 ? passed[passed.length - 1] : todayPlans[0];
-        }
-
-        if (matchedPlan) {
-          // 일정에 연결된 핀의 좌표 찾기
-          const pin = safeCurrentRestaurants.find(r => r.name === matchedPlan.place || r.id === matchedPlan.pinId);
-          if (pin && pin.lat && pin.lng) {
-            initialLat = pin.lat;
-            initialLng = pin.lng;
-            return;
-          }
-        }
-
-        // 오늘 일정이 없거나 핀 매칭 실패 → 숙소로 폴백
-        const accommodation = safeCurrentRestaurants.find(r => r.isAccommodation && r.lat && r.lng);
-        if (accommodation) {
-          initialLat = accommodation.lat;
-          initialLng = accommodation.lng;
-          return;
-        }
-
-        // 숙소도 없으면 첫 번째 핀
-        if (safeCurrentRestaurants[0]?.lat) {
-          initialLat = safeCurrentRestaurants[0].lat;
-          initialLng = safeCurrentRestaurants[0].lng;
-        }
-      })();
+      // 초기 좌표는 기본값(서울)으로 설정 — 실제 이동은 데이터 로드 후 useEffect에서 처리
+      const initialLat = 37.5665;
+      const initialLng = 126.9780;
 
       try {
         const map = window.L.map(mapContainerRef.current, { zoomControl: false }).setView([initialLat || 37.5665, initialLng || 126.9780], 13);
@@ -5335,6 +5349,17 @@ return (
                   </div>
                 )}
                 <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none"></div>
+                {mapNoPinOverlay && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center pointer-events-none">
+                    <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-3xl px-8 py-6 shadow-2xl flex flex-col items-center space-y-2">
+                      <span className="text-5xl">📍</span>
+                      <p className="text-2xl font-black text-slate-800 dark:text-white">
+                        {displayCityName !== "선택된 지역 없음" ? displayCityName : "여행지 미설정"}
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">등록된 핀이 없습니다</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
