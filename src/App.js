@@ -1823,6 +1823,18 @@ function deletePackingItem(id) {
     document.head.appendChild(script);
   }, []);
 
+  // 핀 드롭다운 외부 클릭 시 닫기
+  useEffect(() => {
+    if (!pinSelectOpen) return;
+    const handler = () => setPinSelectOpen(false);
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+    };
+  }, [pinSelectOpen]);
+
   // 숙소→현재일정→지역→현위치 순서로 지도 위치를 스마트하게 이동하는 공통 함수
   // 반환값: 핀/지역 데이터가 있어서 위치 이동을 확정했으면 true, 데이터가 없어서 미확정이면 false
   const flyToSmartPosition = useCallback((map, rests, plans) => {
@@ -5007,7 +5019,7 @@ const planData = {
                   {currentRestaurants.filter(r => r && r.name).length > 0 && (
                     <div className="flex flex-col space-y-1">
                       <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>내 핀에서 선택 📌</label>
-                      <div className="relative">
+                      <div className="relative" onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}>
                         <button
                           type="button"
                           onClick={() => setPinSelectOpen(v => !v)}
@@ -5093,8 +5105,8 @@ const planData = {
                 </div>
               </div>
 
-              <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 w-full overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
-                <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 h-auto sm:h-full pb-2 min-h-max sm:min-h-0">
+              <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 w-full overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 pb-2">
                   {tripDays.map(day => (
                     <div key={day} className={`flex-1 flex flex-col rounded-xl border min-h-[150px] overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
                       <div className={`py-1.5 flex flex-col items-center border-b flex-shrink-0 transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
@@ -5454,18 +5466,24 @@ return (
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
           overflow: hidden;
-        }
-        html {
-          overflow: hidden;
           scrollbar-width: none;
         }
-        html::-webkit-scrollbar { display: none; }
         body::-webkit-scrollbar { display: none; }
-        
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } 
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } 
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; transition: background 0.3s; }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; }
+        html { overflow: hidden; scrollbar-width: none; }
+        html::-webkit-scrollbar { display: none; }
+
+        /* 모든 스크롤바: 오버레이 방식으로 레이아웃 공간 미차지 */
+        * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+        *::-webkit-scrollbar { width: 4px; height: 4px; }
+        *::-webkit-scrollbar-track { background: transparent; }
+        *::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; transition: background 0.3s; }
+        *:hover::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.5); }
+        .dark *:hover::-webkit-scrollbar-thumb { background: rgba(71,85,105,0.6); }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.5); border-radius: 10px; }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71,85,105,0.6); }
         input[type="text"], input[type="password"], input[type="date"], select { font-variant-numeric: tabular-nums; }
         .leaflet-container { z-index: 10; font-family: inherit; background: transparent; border-radius: 1rem; transition: filter 0.3s; }
         .dark .leaflet-container { filter: brightness(0.8) contrast(1.2); }
