@@ -3037,16 +3037,14 @@ return (
           const dep = timelinePlans.find(p => p.id === `trans_${type}_outbound_dep`);
           const arr = timelinePlans.find(p => p.id === `trans_${type}_inbound_dep`);
           if (dep || arr) {
-            // 출발지/목적지 파싱 — country 필드로 국기 결정 (지역명 파싱보다 정확)
-            const depPlace = dep ? S(dep.place).replace(/[✈🚆🚌🛬️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
-            const arrPlace = arr ? S(arr.place).replace(/[✈🚆🚌🛬️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
-            const depFlag = dep?.country ? (COUNTRY_FLAG[dep.country] || getFlagForCity(dep.region || '') || '') : getFlagForCity(depPlace);
-            const arrFlag = arr?.country ? (COUNTRY_FLAG[arr.country] || getFlagForCity(arr.region || '') || '') : getFlagForCity(arrPlace);
-            const depLabel = depPlace ? `${depFlag} ${depPlace}` : '';
-            const arrLabel = arrPlace ? `${arrFlag} ${arrPlace}` : '';
-            const label = depLabel && arrLabel ? `${depLabel}  →  ${arrLabel}` : (depLabel || arrLabel || type);
+            // 출발지/목적지: place 텍스트에서 도시명 추출 후 getFlagForCity로 국기 결정
+            const depPlace = dep ? S(dep.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
+            const arrPlace = arr ? S(arr.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
+            // place 텍스트의 도시명으로 국기 검색 (country 필드는 둘 다 globalPlanCountry라 부정확)
+            const depFlag = getFlagForCity(depPlace) || '';
+            const arrFlag = getFlagForCity(arrPlace) || COUNTRY_FLAG[arr?.country] || '';
             const totalKrw = (Number(dep?.expenseKrw) || 0) + (Number(arr?.expenseKrw) || 0);
-            transportItems.push({ id: `transport_grouped_${type}`, name: label, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
+            transportItems.push({ id: `transport_grouped_${type}`, name: depPlace && arrPlace ? `${depPlace} / ${arrPlace}` : (depPlace || arrPlace || type), depFlag, arrFlag, depPlace, arrPlace, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
           } else {
             // 구버전 데이터: isTransport이고 id가 trans_ 형식이 아닌 것들
             timelinePlans.filter(p => p.isTransport && !String(p.id).startsWith('trans_') && !String(p.id).endsWith('_arr'))
@@ -3136,7 +3134,15 @@ return (
                       return (
                       <div key={item.id} onClick={canOpen ? openModal : undefined} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 ${canOpen ? 'cursor-pointer active:scale-[0.98]' : ''} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
                         <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${catColor}`}>{item.category || '기타'}</span>
-                        <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>{item.name}</span>
+                        {item.isGroupedTransport && item.depPlace && item.arrPlace ? (
+                          <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>
+                            {item.depFlag && <span>{item.depFlag}</span>}{item.depPlace}
+                            <span className="mx-1 text-slate-400">→</span>
+                            {item.arrFlag && <span>{item.arrFlag}</span>}{item.arrPlace}
+                          </span>
+                        ) : (
+                          <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>{item.name}</span>
+                        )}
                         <span className={`text-[10px] font-black flex-shrink-0 ${hasAmt ? 'text-rose-500' : textMuted}`}>{displayBasicAmt}</span>
                         <button onClick={e => {
                           e.stopPropagation();
