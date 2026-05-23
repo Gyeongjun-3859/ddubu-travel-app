@@ -3089,22 +3089,44 @@ return (
         const imgs = viewPhoto.imgs || [];
         const idx = viewPhoto.idx || 0;
         const n = imgs.length;
-        let dragStartX = null;
-        const onDragStart = (e) => { dragStartX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX; };
-        const onDragEnd = (e) => {
-          if (dragStartX === null) return;
-          const endX = e.type === 'touchend' ? e.changedTouches[0].clientX : e.clientX;
-          const diff = dragStartX - endX;
-          dragStartX = null;
-          if (Math.abs(diff) < 40) return;
-          if (diff > 0 && n > 1) goPhotoNext(imgs, idx);
-          else if (diff < 0 && n > 1) goPhotoPrev(imgs, idx);
+        // 드래그 추적 변수 (렌더 바깥에서 관리)
+        let _dragX = null;
+        let _wheelLock = false;
+        const onPointerDown = (e) => {
+          if (e.button !== undefined && e.button !== 0) return;
+          _dragX = e.clientX;
         };
-        // 하스스톤 카드 배열: 각 카드의 상대 위치(offset)를 idx 기준으로 계산
-        // offset = cardIdx - idx (중앙=0, 우측=+1,+2..., 좌측=-1,-2...)
-        const CARD_W = 200;   // 중앙 카드 기준 너비(px)
+        const onPointerUp = (e) => {
+          if (_dragX === null) return;
+          const diff = _dragX - e.clientX;
+          _dragX = null;
+          if (Math.abs(diff) < 30) return;
+          if (diff > 0) goPhotoNext(imgs, idx);
+          else goPhotoPrev(imgs, idx);
+        };
+        const onTouchStart = (e) => { _dragX = e.touches[0].clientX; };
+        const onTouchEnd = (e) => {
+          if (_dragX === null) return;
+          const diff = _dragX - e.changedTouches[0].clientX;
+          _dragX = null;
+          if (Math.abs(diff) < 30) return;
+          if (diff > 0) goPhotoNext(imgs, idx);
+          else goPhotoPrev(imgs, idx);
+        };
+        const onWheel = (e) => {
+          if (n < 2 || _wheelLock) return;
+          e.preventDefault();
+          // 수평(deltaX) 우선, 없으면 수직(deltaY)
+          const delta = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+          if (Math.abs(delta) < 10) return;
+          _wheelLock = true;
+          setTimeout(() => { _wheelLock = false; }, 400);
+          if (delta > 0) goPhotoNext(imgs, idx);
+          else goPhotoPrev(imgs, idx);
+        };
+        const CARD_W = 200;
         const CARD_H = 280;
-        const X_GAP = 110;    // 카드 간격
+        const X_GAP = 110;
         const getCardStyle = (offset) => {
           const absOff = Math.abs(offset);
           const scale = absOff === 0 ? 1 : absOff === 1 ? 0.78 : 0.62;
@@ -3121,40 +3143,38 @@ return (
             borderRadius: 16, overflow: 'hidden',
             transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
             filter: `brightness(${brightness})`,
-            opacity,
-            zIndex,
+            opacity, zIndex,
             transition: 'transform 0.32s cubic-bezier(.4,0,.2,1), opacity 0.32s, filter 0.32s',
             boxShadow: absOff === 0 ? '0 20px 60px rgba(0,0,0,0.9)' : '0 8px 24px rgba(0,0,0,0.6)',
             cursor: absOff === 0 ? 'default' : 'pointer',
+            pointerEvents: 'none',
           };
         };
-        // 보여줄 카드 범위: 현재 기준 ±2장
-        const visibleOffsets = [-2, -1, 0, 1, 2].filter(o => {
-          const ci = (idx + o + n * 10) % n;
-          return n > 1 || o === 0;
-        });
         return (
           <div className="fixed inset-0 bg-black/95 z-[99998] flex items-center justify-center backdrop-blur-sm"
-               onClick={() => setViewPhoto(null)}
-               onMouseDown={onDragStart} onMouseUp={onDragEnd}
-               onTouchStart={onDragStart} onTouchEnd={onDragEnd}>
-            <div className="relative" style={{ width: '100vw', height: '80vh' }}
-                 onClick={e => e.stopPropagation()}
-                 onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
-                 onTouchStart={e => { e.stopPropagation(); onDragStart(e); }}
-                 onTouchEnd={e => { e.stopPropagation(); onDragEnd(e); }}>
+               onPointerDown={onPointerDown} onPointerUp={onPointerUp}
+               onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
+               onWheel={onWheel}
+               onClick={() => setViewPhoto(null)}>
+            {/* 카드 영역 — 클릭이 배경 닫힘으로 가지 않도록 stopPropagation, 단 드래그/wheel은 버블링 허용 */}
+            <div className="relative" style={{ width: '100vw', height: '80vh', pointerEvents: 'none' }}>
               {[-2,-1,0,1,2].map(offset => {
                 if (n === 1 && offset !== 0) return null;
                 const ci = (idx + offset + n * 10) % n;
                 return (
-                  <div key={`${ci}-${offset}`} style={getCardStyle(offset)}
-                       onClick={e => { e.stopPropagation(); if (offset < 0) goPhotoPrev(imgs, idx); else if (offset > 0) goPhotoNext(imgs, idx); }}>
+                  <div key={`${ci}-${offset}`} style={{ ...getCardStyle(offset), pointerEvents: 'auto' }}
+                       onClick={e => {
+                         e.stopPropagation();
+                         if (offset < 0) goPhotoPrev(imgs, idx);
+                         else if (offset > 0) goPhotoNext(imgs, idx);
+                       }}>
                     <img src={imgs[ci]} className="w-full h-full object-cover" alt="" draggable={false} />
                   </div>
                 );
               })}
             </div>
-            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 30 }} onClick={() => setViewPhoto(null)}>✕</button>
+            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 30 }}
+                    onClick={e => { e.stopPropagation(); setViewPhoto(null); }}>✕</button>
             {n > 1 && (
               <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2" style={{ zIndex: 30 }}>
                 {imgs.map((_, i) => (
