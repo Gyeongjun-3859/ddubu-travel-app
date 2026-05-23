@@ -388,6 +388,11 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [expenseAmtIsKrw, setExpenseAmtIsKrw] = useState(false); // 모달 내 화폐 토글
   const [expenseCurrencyToggle, setExpenseCurrencyToggle] = useState({}); // {planId: 'local'|'krw'}
   const [basicExpenses, setBasicExpenses] = useState([]); // 기본지출 항목 [{id, name, amtKrw, category}]
+  const [isBasicExpAddOpen, setIsBasicExpAddOpen] = useState(false); // 기본지출 추가 모달
+  const [basicExpAddName, setBasicExpAddName] = useState('');
+  const [basicExpAddAmt, setBasicExpAddAmt] = useState('');
+  const [basicExpAddCat, setBasicExpAddCat] = useState('기타');
+  const [basicExpAddIsKrw, setBasicExpAddIsKrw] = useState(false);
   const [isTransportModalOpen, setIsTransportModalOpen] = useState(false);
   const [transType, setTransType] = useState('flight'); 
   const [transDir, setTransDir] = useState('outbound'); 
@@ -3032,14 +3037,14 @@ return (
           const dep = timelinePlans.find(p => p.id === `trans_${type}_outbound_dep`);
           const arr = timelinePlans.find(p => p.id === `trans_${type}_inbound_dep`);
           if (dep || arr) {
-            // 출발지/목적지 파싱
-            const depPlace = dep ? S(dep.place).replace(/[✈🚆🚌🛬]|출발|도착/g, '').trim() : '';
-            const arrPlace = arr ? S(arr.place).replace(/[✈🚆🚌🛬]|출발|도착/g, '').trim() : '';
-            const depFlag = getFlagForCity(depPlace) || (dep?.country ? (COUNTRY_FLAG[dep.country] || '') : '');
-            const arrFlag = getFlagForCity(arrPlace) || (arr?.country ? (COUNTRY_FLAG[arr.country] || '') : '');
-            const depLabel = depPlace ? `${depFlag}${depPlace}` : '';
-            const arrLabel = arrPlace ? `${arrFlag}${arrPlace}` : '';
-            const label = depLabel && arrLabel ? `${depLabel} - ${arrLabel}` : (depLabel || arrLabel || type);
+            // 출발지/목적지 파싱 — country 필드로 국기 결정 (지역명 파싱보다 정확)
+            const depPlace = dep ? S(dep.place).replace(/[✈🚆🚌🛬️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
+            const arrPlace = arr ? S(arr.place).replace(/[✈🚆🚌🛬️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
+            const depFlag = dep?.country ? (COUNTRY_FLAG[dep.country] || getFlagForCity(dep.region || '') || '') : getFlagForCity(depPlace);
+            const arrFlag = arr?.country ? (COUNTRY_FLAG[arr.country] || getFlagForCity(arr.region || '') || '') : getFlagForCity(arrPlace);
+            const depLabel = depPlace ? `${depFlag} ${depPlace}` : '';
+            const arrLabel = arrPlace ? `${arrFlag} ${arrPlace}` : '';
+            const label = depLabel && arrLabel ? `${depLabel}  →  ${arrLabel}` : (depLabel || arrLabel || type);
             const totalKrw = (Number(dep?.expenseKrw) || 0) + (Number(arr?.expenseKrw) || 0);
             transportItems.push({ id: `transport_grouped_${type}`, name: label, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
           } else {
@@ -3088,35 +3093,11 @@ return (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <h4 className={`text-[10px] font-black ${textMain}`}>📋 기본지출</h4>
-                  <span className={`text-[9px] font-bold text-rose-500`}>₩{basicTotalKrw.toLocaleString()}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[9px] font-bold text-rose-500`}>₩{basicTotalKrw.toLocaleString()}</span>
+                    <button onClick={() => { setBasicExpAddIsKrw(false); setBasicExpAddName(''); setBasicExpAddAmt(''); setBasicExpAddCat('기타'); setIsBasicExpAddOpen(true); }} className="bg-indigo-600 text-white px-2 py-0.5 text-[9px] font-bold rounded-lg hover:bg-indigo-700 active:scale-95 transition-all">+ 추가</button>
+                  </div>
                 </div>
-                {/* 기본지출 추가 입력 */}
-                {(() => {
-                  const cats = ['항공권', '숙소', '교통', '투어', '기타'];
-                  return (
-                    <div className={`p-2.5 rounded-xl border border-dashed mb-2 ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
-                      <div className="flex gap-1.5 mb-1.5">
-                        <input id="basicExpName" type="text" placeholder="항목명 (예: 항공권)" className={`flex-[2] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`} />
-                        <input id="basicExpAmt" type="number" placeholder="원화 금액" className={`flex-[1] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`} />
-                      </div>
-                      <div className="flex gap-1.5">
-                        <select id="basicExpCat" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-md`}>
-                          {cats.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <button onClick={() => {
-                          const name = document.getElementById('basicExpName').value.trim();
-                          const amt = document.getElementById('basicExpAmt').value;
-                          const cat = document.getElementById('basicExpCat').value;
-                          if (!name || !amt) { showToast("항목명과 금액을 입력하세요."); return; }
-                          setBasicExpenses(prev => [...prev, { id: 'basic-' + Date.now(), name, amtKrw: Number(amt), category: cat }]);
-                          document.getElementById('basicExpName').value = '';
-                          document.getElementById('basicExpAmt').value = '';
-                          showToast("기본지출이 추가되었습니다!");
-                        }} className="bg-indigo-600 text-white px-3 py-1.5 text-[10px] font-bold rounded-md hover:bg-indigo-700 active:scale-95 transition-all">추가</button>
-                      </div>
-                    </div>
-                  );
-                })()}
                 {basicItems.length === 0 ? (
                   <p className={`text-[10px] ${textMuted} text-center py-2`}>기본지출 내역 없음</p>
                 ) : (
@@ -3148,11 +3129,15 @@ return (
                         }
                       };
                       const canOpen = item.isFromTimeline;
+                      // 수동 추가 항목은 현지화로 표시 (amtLocal/sym 있으면)
+                      const displayBasicAmt = (!item.isFromTimeline && item.amtLocal && item.sym)
+                        ? `${item.sym}${Number(item.amtLocal).toLocaleString()}`
+                        : `₩${Number(item.amtKrw).toLocaleString()}`;
                       return (
                       <div key={item.id} onClick={canOpen ? openModal : undefined} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 ${canOpen ? 'cursor-pointer active:scale-[0.98]' : ''} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
                         <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${catColor}`}>{item.category || '기타'}</span>
                         <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>{item.name}</span>
-                        <span className={`text-[10px] font-black flex-shrink-0 ${hasAmt ? 'text-rose-500' : textMuted}`}>₩{Number(item.amtKrw).toLocaleString()}</span>
+                        <span className={`text-[10px] font-black flex-shrink-0 ${hasAmt ? 'text-rose-500' : textMuted}`}>{displayBasicAmt}</span>
                         <button onClick={e => {
                           e.stopPropagation();
                           if (item.category === '기타' && item.isFromTimeline) {
@@ -3332,6 +3317,80 @@ return (
         );
       })()}
       
+      {/* 기본지출 추가 모달 */}
+      {isBasicExpAddOpen && (() => {
+        const globalCur = (() => {
+          const c = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : globalManualCountry;
+          if (c === '한국') return { code: 'KRW', sym: '₩' };
+          if (c === '일본') return { code: 'JPY', sym: '¥' };
+          if (c === '중국') return { code: 'CNY', sym: '元' };
+          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
+          if (c === '영국') return { code: 'GBP', sym: '£' };
+          if (c === '태국') return { code: 'THB', sym: '฿' };
+          if (c === '베트남') return { code: 'VND', sym: '₫' };
+          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
+          if (c === '호주') return { code: 'AUD', sym: 'A$' };
+          return { code: 'USD', sym: '$' };
+        })();
+        const activeSym = basicExpAddIsKrw ? '₩' : globalCur.sym;
+        const toKrwAdd = (amt) => {
+          if (!amt || isNaN(Number(amt))) return 0;
+          if (basicExpAddIsKrw) return Number(amt);
+          const r = rates && rates['KRW'] && rates[globalCur.code] ? (rates['KRW'] / rates[globalCur.code]) : 1350;
+          return Math.round(Number(amt) * r);
+        };
+        const cats = ['항공권', '숙소', '교통', '투어', '기타'];
+        const closeAdd = () => { setIsBasicExpAddOpen(false); setBasicExpAddName(''); setBasicExpAddAmt(''); setBasicExpAddCat('기타'); setBasicExpAddIsKrw(false); };
+        const saveAdd = () => {
+          if (!basicExpAddName.trim() || !basicExpAddAmt) { showToast("항목명과 금액을 입력하세요."); return; }
+          const krwAmt = toKrwAdd(basicExpAddAmt);
+          const localAmt = basicExpAddIsKrw ? '' : basicExpAddAmt;
+          setBasicExpenses(prev => [...prev, { id: 'basic-' + Date.now(), name: basicExpAddName.trim(), amtKrw: krwAmt, amtLocal: localAmt, currency: basicExpAddIsKrw ? 'KRW' : globalCur.code, sym: basicExpAddIsKrw ? '₩' : globalCur.sym, category: basicExpAddCat }]);
+          showToast("기본지출이 추가되었습니다!");
+          closeAdd();
+        };
+        return (
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[10001] flex items-center justify-center p-4" onClick={closeAdd}>
+            <div className={`${cardBg} p-6 rounded-3xl w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
+              <div className={`flex justify-between items-center mb-4 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                <h3 className={`font-black text-sm ${textMain}`}>📋 기본지출 추가</h3>
+                <button onClick={closeAdd} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>항목명</label>
+                  <input type="text" value={basicExpAddName} onChange={e => setBasicExpAddName(e.target.value)} placeholder="예: 편의점, 택시" autoFocus className={`w-full border rounded-xl p-3 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
+                </div>
+                <div>
+                  <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>카테고리</label>
+                  <select value={basicExpAddCat} onChange={e => setBasicExpAddCat(e.target.value)} className={`w-full border rounded-xl p-3 text-xs font-bold outline-none ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`}>
+                    {cats.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>금액</label>
+                  <div className="flex items-center gap-2">
+                    {globalCur.code !== 'KRW' ? (
+                      <button onClick={() => { setBasicExpAddIsKrw(p => !p); setBasicExpAddAmt(''); }} className={`text-sm font-black px-2 py-1 rounded-lg border transition-all active:scale-95 ${basicExpAddIsKrw ? (isDarkMode ? 'bg-indigo-900 border-indigo-600 text-indigo-300' : 'bg-indigo-50 border-indigo-300 text-indigo-600') : (isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600')}`}>{activeSym}</button>
+                    ) : (
+                      <span className={`text-sm font-black ${textMuted}`}>₩</span>
+                    )}
+                    <input type="number" value={basicExpAddAmt} onChange={e => setBasicExpAddAmt(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveAdd()} placeholder="0" className={`flex-1 border rounded-xl p-3 text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
+                  </div>
+                  {basicExpAddAmt && globalCur.code !== 'KRW' && !basicExpAddIsKrw && (
+                    <p className={`text-[10px] font-bold text-center mt-1 ${textMuted}`}>≈ ₩{toKrwAdd(basicExpAddAmt).toLocaleString()} (자동 환산)</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 mt-5">
+                <button onClick={closeAdd} className={`flex-1 py-3 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
+                <button onClick={saveAdd} className="flex-1 bg-indigo-600 text-white py-3 rounded-xl text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">추가</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {isWeatherModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsWeatherModalOpen(false)}>
            <div className={`${cardBg} p-5 rounded-3xl w-full max-w-xs sm:max-w-sm shadow-2xl animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
