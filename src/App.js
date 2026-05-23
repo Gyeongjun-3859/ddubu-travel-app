@@ -3177,8 +3177,13 @@ return (
         // 렌터카: dep+arr을 하나의 카드로 그룹핑
         const rentalDep = timelinePlans.find(p => p.id === 'trans_rental_dep');
         const rentalArr = timelinePlans.find(p => p.id === 'trans_rental_arr');
-        if (rentalDep || rentalArr) {
-          const totalKrw = (Number(rentalDep?.expenseKrw) || 0) + (Number(rentalArr?.expenseKrw) || 0);
+        // basicExpenses에서 렌터카 항목 추출 (기본지출에 등록된 렌터카 → transport_grouped_rental에 합산)
+        const basicRentalItems = basicExpenses.filter(b => S(b.name).includes('렌터카') && b.category === '항공권/교통');
+        const basicRentalKrw = basicRentalItems.reduce((s, b) => s + (Number(b.amtKrw) || 0), 0);
+        const basicExpensesExcludingRental = basicExpenses.filter(b => !(S(b.name).includes('렌터카') && b.category === '항공권/교통'));
+        if (rentalDep || rentalArr || basicRentalItems.length > 0) {
+          const timelineKrw = (Number(rentalDep?.expenseKrw) || 0) + (Number(rentalArr?.expenseKrw) || 0);
+          const totalKrw = timelineKrw + basicRentalKrw;
           const meta = rentalDep?.rentalMeta || rentalArr?.rentalMeta || {};
           transportItems.push({ id: 'transport_grouped_rental', name: `🚗 렌터카${meta.company ? ` (${meta.company})` : ''}`, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: rentalDep, arrPlan: rentalArr, isRentalGrouped: true });
         }
@@ -3191,7 +3196,7 @@ return (
         const basicExpItems = timelinePlans
           .filter(p => p.id && String(p.id).startsWith('basic-exp-'))
           .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, amtLocal: p.expenseLocal || '', sym: p.sym || '', category: S(p.theme || '기타'), isFromTimeline: true, planId: p.id, dayLabel: `D${p.day}` }));
-        const basicItems = [...basicExpenses, ...transportItems, ...accomItems, ...manualItems, ...basicExpItems];
+        const basicItems = [...basicExpensesExcludingRental, ...transportItems, ...accomItems, ...manualItems, ...basicExpItems];
         const basicTotalKrw = basicItems.reduce((sum, b) => sum + (Number(b.amtKrw) || 0), 0);
 
         const grandTotal = planTotalKrw + basicTotalKrw;
@@ -5476,10 +5481,13 @@ const planData = {
                       const isTransportTheme = plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword));
 // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명에 교통수단 포함 시 전용 카드 적용)
                       if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
-                        // 렌터카 대여/반납 카드: 장소 복사 가능
                         const isRentalDep = plan.id === 'trans_rental_dep' || S(plan.place).includes('렌터카 대여');
                         const isRentalArr = plan.id === 'trans_rental_arr' || S(plan.place).includes('렌터카 반납');
-                        const rentalCopyPlace = isRentalDep ? (plan.rentalMeta?.depPlace || '') : isRentalArr ? (plan.rentalMeta?.arrPlace || '') : '';
+                        const isRentalCard = isRentalDep || isRentalArr;
+                        const rentalMeta = plan.rentalMeta || {};
+                        const rentalPlace = isRentalDep ? rentalMeta.depPlace : isRentalArr ? rentalMeta.arrPlace : '';
+                        const rentalCompany = rentalMeta.company || S(plan.localName);
+                        const rentalCarType = rentalMeta.carType || '';
                         return (
                           <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group`}
                                onClick={(e) => {
@@ -5493,15 +5501,17 @@ const planData = {
                                 {S(plan.place)}
                               </span>
                               <div className="flex flex-col sm:flex-row sm:items-center mt-0.5 gap-0.5 sm:gap-2">
-                                 {plan.localName && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">🏢 {S(plan.localName)}</span>}
-                                 {/* 렌터카: 장소 복사 버튼 */}
-                                 {(isRentalDep || isRentalArr) && rentalCopyPlace ? (
-                                   <span className="text-[7px] sm:text-[9px] text-indigo-500 font-bold truncate cursor-pointer hover:opacity-70 active:scale-95 transition-all" onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(rentalCopyPlace).then(() => showToast('📋 장소가 복사되었습니다!')); }}>
-                                     📋 {rentalCopyPlace} <span className="text-[6px] bg-indigo-100 dark:bg-indigo-900 px-1 rounded">복사</span>
-                                   </span>
-                                 ) : (
-                                   plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>
-                                 )}
+                                {isRentalCard ? (
+                                  <>
+                                    {rentalPlace && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">📍 {rentalPlace}</span>}
+                                    {(rentalCompany || rentalCarType) && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{[rentalCompany, rentalCarType].filter(Boolean).join(' · ')}</span>}
+                                  </>
+                                ) : (
+                                  <>
+                                    {plan.localName && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">🏢 {S(plan.localName)}</span>}
+                                    {plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>}
+                                  </>
+                                )}
                               </div>
                             </div>
                             <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
