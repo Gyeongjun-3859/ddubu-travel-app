@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
 
 /*
   =============================================================================
@@ -59,23 +60,21 @@ const REGIONS_BY_COUNTRY = {
   "호주": ["시드니", "멜버른", "브리즈번"]
 };
 
-// Capacitor 앱 환경에서 외부 앱/URL 열기 (네이티브 앱 스킴 지원)
-function openExternalUrl(url) {
+// 외부 URL 열기 - 네이티브는 Browser 플러그인, 웹은 window.open
+async function openExternalUrl(url) {
   if (Capacitor.isNativePlatform()) {
-    Capacitor.openUrl(url);
+    await Browser.open({ url });
   } else {
     window.open(url, '_blank');
   }
 }
 
-// 구글 맵 길 안내 실행 (네이티브 앱 → 외부 브라우저 순으로 폴백)
+// 구글 맵 길 안내 실행
 function openGoogleMapsNav(lat, lng, mode = 'driving') {
   const dest = `${lat},${lng}`;
   const dirMode = mode === 'driving' ? 'driving' : mode === 'transit' ? 'transit' : 'walking';
-  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=${dirMode}`;
-  // Capacitor.openUrl()은 네이티브/웹 모두 외부 브라우저로 열림
-  // 브라우저에서 maps.google.com을 열면 구글 맵 앱으로 자동 연결됨
-  openExternalUrl(webUrl);
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=${dirMode}`;
+  openExternalUrl(url);
 }
 
 const CITY_NAME_TO_EN = {
