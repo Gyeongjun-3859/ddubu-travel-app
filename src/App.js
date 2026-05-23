@@ -1833,10 +1833,10 @@ function deletePackingItem(id) {
     }
   }, [activeTab]);
 
-  // 데이터 로드 완료 후 지도 최초 1회 자동 이동
+  // 데이터 로드 완료 후 지도 최초 1회 자동 이동 (지도가 이미 있을 때 대비)
   useEffect(() => {
     if (!isDbLoaded || mapInitFlyDoneRef.current) return;
-    if (!mapInstanceRef.current) return;
+    if (!mapInstanceRef.current) return; // 지도 없으면 지도 초기화 시점에 위 코드가 처리함
 
     const safeRests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
     const safePlans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
@@ -2198,6 +2198,40 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
         });
 
         mapInstanceRef.current = map;
+
+        // 지도 초기화 직후 최초 위치 이동 (데이터가 이미 로드된 상태)
+        if (!mapInitFlyDoneRef.current && isDbLoaded) {
+          const rests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+          const plans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+          const getInitialPin = () => {
+            if (rests.length === 0) return null;
+            const now = new Date();
+            const nowMin = now.getHours() * 60 + now.getMinutes();
+            const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
+            const todayD = new Date(now); todayD.setHours(0,0,0,0);
+            const diff = Math.round((todayD - startD) / 86400000);
+            const todayDay = diff + 1;
+            if (diff >= 0 && plans.some(p => parseInt(p.day) === todayDay)) {
+              const todayPlans = plans.filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
+              const passed = todayPlans.filter(p => { const [h,m] = p.time.split(':').map(Number); return h*60+m <= nowMin; });
+              const mp = passed.length > 0 ? passed[passed.length-1] : todayPlans[0];
+              if (mp) { const pin = rests.find(r => S(r.name) === S(mp.place)); if (pin?.lat) return pin; }
+            }
+            return rests.find(r => r.isAccommodation && r.lat && r.lng) || rests.find(r => r.lat && r.lng);
+          };
+          const pin = getInitialPin();
+          if (pin) {
+            map.setView([pin.lat, pin.lng], 15);
+          } else if (rests.length === 0) {
+            setMapNoPinOverlay(true);
+            if (navigator.geolocation) {
+              navigator.geolocation.getCurrentPosition(pos => {
+                map.setView([pos.coords.latitude, pos.coords.longitude], 13);
+              }, () => {});
+            }
+          }
+          mapInitFlyDoneRef.current = true;
+        }
       } catch (err) {
         console.error("Leaflet initialization failed", err);
       }
