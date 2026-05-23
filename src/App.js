@@ -3137,7 +3137,7 @@ return (
                         {item.isGroupedTransport && item.depPlace && item.arrPlace ? (
                           <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>
                             {item.depFlag && <span>{item.depFlag}</span>}{item.depPlace}
-                            <span className="mx-1 text-slate-400">→</span>
+                            <span className="mx-1 text-slate-400 font-black">&#8596;</span>
                             {item.arrFlag && <span>{item.arrFlag}</span>}{item.arrPlace}
                           </span>
                         ) : (
