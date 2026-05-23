@@ -270,6 +270,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [globalManualRegion, setGlobalManualRegion] = useState("");
 
   const [newDay, setNewDay] = useState(1);
+  const [editingPlanId, setEditingPlanId] = useState(null); // null이면 새 등록, id 있으면 수정 모드
   const [newTime, setNewTime] = useState("");
   const [newPlace, setNewPlace] = useState("");
   const [newLocalName, setNewLocalName] = useState("");
@@ -404,9 +405,13 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
     train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } },
     bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }
   });
+  const initialRentalState = { company: '', carType: '', depPlace: '', arrPlace: '', depTime: '', arrTime: '', days: [], photos: [] };
+  const [rentalCarData, setRentalCarData] = useState({ ...initialRentalState });
+  const rentalFileInputRef = useRef(null);
 
   const [panelRatio, setPanelRatio] = useState(50); 
   const dragRef = useRef(false);
+  const planAddFormRef = useRef(null);
 
 const [activeMobileCard, setActiveMobileCard] = useState(null);
   // [추가] 여행일기 작성을 위한 상태 변수
@@ -1355,13 +1360,24 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
     let updatedTimeline = [...safePlanTimeline];
 
     const finalPlanImgs = newPlanPhotos.length > 0 ? newPlanPhotos : (newPhoto ? [newPhoto] : []);
-    const planData = {
-      id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: finalPlanImgs[0] || "", photos: finalPlanImgs,
-      country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), theme: S(newTheme)
-    };
 
-    updatedTimeline.push(planData);
-    showToast(newIsAccommodation ? "🏠 전 일정 숙소로 등록되었습니다!" : "스케줄에 등록 성공! ✨");
+    if (editingPlanId) {
+      // 수정 모드: 기존 일정 업데이트
+      updatedTimeline = updatedTimeline.map(p =>
+        String(p.id) === String(editingPlanId)
+          ? { ...p, day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: finalPlanImgs[0] || p.photo || "", photos: finalPlanImgs.length > 0 ? finalPlanImgs : (p.photos || []), country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), theme: S(newTheme) }
+          : p
+      );
+      showToast("✅ 일정이 수정되었습니다!");
+    } else {
+      // 새 등록 모드
+      const planData = {
+        id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: finalPlanImgs[0] || "", photos: finalPlanImgs,
+        country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), theme: S(newTheme)
+      };
+      updatedTimeline.push(planData);
+      showToast(newIsAccommodation ? "🏠 전 일정 숙소로 등록되었습니다!" : "스케줄에 등록 성공! ✨");
+    }
 
     updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
     setPlanTimeline(updatedTimeline); 
@@ -1430,6 +1446,39 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
         let seatNum = "";
         let depTime = p.time || "";
         let arrTime = "";
+
+        // 렌터카 수정: trans_rental_dep/arr 클릭 시 렌터카 탭으로 데이터 로드
+        if (p.id === 'trans_rental_dep' || p.id === 'trans_rental_arr') {
+            const safeTimeline = Array.isArray(planTimeline) ? planTimeline : [];
+            const rentalDep = safeTimeline.find(item => item.id === 'trans_rental_dep');
+            const rentalArr = safeTimeline.find(item => item.id === 'trans_rental_arr');
+            const meta = rentalDep?.rentalMeta || rentalArr?.rentalMeta || {};
+            // fallback: rentalMeta 없을 경우 features 텍스트에서 파싱
+            const depFeat = S(rentalDep?.features);
+            const arrFeat = S(rentalArr?.features);
+            const parseDepPlace = depFeat.replace(/대여장소:\s*/, '').split('|')[0].trim();
+            const parseArrPlace = arrFeat.replace(/반납장소:\s*/, '').split('|')[0].trim();
+            const parseCarType = (() => { const m = depFeat.match(/\|\s*([^|]+)\s*$/); return m ? m[1].trim() : ''; })();
+            const parseDays = (() => {
+              const items = [];
+              if (rentalDep) items.push(Number(rentalDep.day) || 1);
+              if (rentalArr) items.push(Number(rentalArr.day) || 1);
+              return [...new Set(items)].sort((a,b)=>a-b);
+            })();
+            setRentalCarData({
+                company: meta.company || S(rentalDep?.localName) || S(rentalArr?.localName) || '',
+                carType: meta.carType || parseCarType || '',
+                depPlace: meta.depPlace || parseDepPlace || '',
+                arrPlace: meta.arrPlace || parseArrPlace || '',
+                depTime: meta.depTime || S(rentalDep?.time).replace('99:99','') || '',
+                arrTime: meta.arrTime || S(rentalArr?.time).replace('99:99','') || '',
+                days: meta.days && meta.days.length > 0 ? meta.days : parseDays,
+                photos: meta.photos && meta.photos.length > 0 ? meta.photos : (rentalDep?.photos || (rentalDep?.photo ? [rentalDep.photo] : [])),
+            });
+            setTransType('rental');
+            setIsTransportModalOpen(true);
+            return;
+        }
 
         if (p.id && String(p.id).startsWith('trans_')) {
             // --- 1. 최신 버전 데이터 (출발/도착 분리형) 완벽 파싱 ---
@@ -1568,6 +1617,30 @@ function handleDeletePlan(id) {
     setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewPlanPhotos([]); setNewIsAccommodation(false); setNewTheme("기타"); setPinSelectOpen(false);
     setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion);
     setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : ""); setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
+    setEditingPlanId(null);
+  }
+
+  function loadPlanToForm(plan) {
+    setNewDay(Number(plan.day) || 1);
+    setNewTime(plan.time === '99:99' ? '' : S(plan.time));
+    setNewPlace(S(plan.place));
+    setNewLocalName(S(plan.localName));
+    setNewFeatures(S(plan.features));
+    setNewTheme(S(plan.theme) || '기타');
+    setNewIsAccommodation(Boolean(plan.isAccommodation));
+    const imgs = Array.isArray(plan.photos) && plan.photos.length > 0 ? plan.photos : (plan.photo ? [plan.photo] : []);
+    setNewPlanPhotos(imgs);
+    // 국가/지역 세팅
+    const c = S(plan.country); const r = S(plan.region);
+    if (c && Object.keys(REGIONS_BY_COUNTRY).includes(c)) {
+      setPlanCountry(c); setPlanRegion(r); setManualCountry(''); setManualRegion('');
+    } else if (c) {
+      setPlanCountry('수동입력'); setManualCountry(c); setPlanRegion('수동입력'); setManualRegion(r);
+    }
+    setPinSelectOpen(false);
+    setTimeout(() => planAddFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+    setEditingPlanId(plan.id);
+    showToast('✏️ 일정 정보를 불러왔습니다!');
   }
 
   function handleTimeInput(e, setter) {
@@ -1690,6 +1763,44 @@ function handleDeletePlan(id) {
       });
     });
 
+    // 렌터카 처리
+    if (transType === 'rental') {
+      const r = rentalCarData;
+      if (r.days.length === 0) { showToast("렌터카 사용 일수를 선택해주세요."); return; }
+      if (!r.depPlace && !r.arrPlace) { showToast("대여 장소 또는 반납 장소를 입력해주세요."); return; }
+      const sortedDays = [...r.days].sort((a,b) => a-b);
+      const firstDay = sortedDays[0];
+      const lastDay = sortedDays[sortedDays.length - 1];
+      const rentalDepId = 'trans_rental_dep';
+      const rentalArrId = 'trans_rental_arr';
+      updatedTimeline = updatedTimeline.filter(p => p.id !== rentalDepId && p.id !== rentalArrId);
+      const rentalMeta = { depPlace: r.depPlace, depTime: r.depTime, arrPlace: r.arrPlace, arrTime: r.arrTime, days: sortedDays, company: r.company, carType: r.carType || '', photos: r.photos || [] };
+      const rentalPhoto = (r.photos && r.photos[0]) || '';
+      // 대여 첫날
+      updatedTimeline.push({
+        id: rentalDepId, day: firstDay, time: r.depTime || '99:99',
+        place: `🚗 렌터카 대여`, localName: r.company || '',
+        features: `대여장소: ${r.depPlace || ''}${r.carType ? ` | ${r.carType}` : ''}`,
+        photo: rentalPhoto, photos: r.photos || [],
+        country: S(globalPlanCountry), region: S(globalPlanRegion),
+        isAccommodation: false, isTransport: true, theme: '교통편',
+        rentalMeta,
+      });
+      // 반납: 같은 날이어도 항상 별개 아이템으로 생성
+      if (r.arrPlace || r.arrTime) {
+        updatedTimeline.push({
+          id: rentalArrId, day: lastDay, time: r.arrTime || '99:99',
+          place: `🏁 렌터카 반납`, localName: r.company || '',
+          features: `반납장소: ${r.arrPlace || ''}${r.carType ? ` | ${r.carType}` : ''}`,
+          photo: rentalPhoto, photos: r.photos || [],
+          country: S(globalPlanCountry), region: S(globalPlanRegion),
+          isAccommodation: false, isTransport: true, theme: '교통편',
+          rentalMeta,
+        });
+      }
+      hasAnyData = true;
+    }
+
     if (!hasAnyData) {
        showToast("출발지와 도착지를 한 방향 이상 입력해주세요.");
        return;
@@ -1707,6 +1818,7 @@ function handleDeletePlan(id) {
       train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } },
       bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }
     });
+    setRentalCarData({ ...initialRentalState });
   }
   
   function handleEditFlight(dir) {
@@ -1853,7 +1965,7 @@ function deletePackingItem(id) {
                const fallbackCityName = data.display_city_name ? S(data.display_city_name) : "";
                let fallbackCountry = ""; let fallbackRegion = fallbackCityName;
                if (fallbackCityName) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName)) { fallbackCountry = cn; break; } } }
-               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));              } else { setPlanTimeline([]); }
+               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));              } else { setPlanTimeline([]); }
 
               loaded = true;
             }
@@ -2192,7 +2304,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           const fallbackCityName2 = data.display_city_name ? S(data.display_city_name) : "";
           let fallbackCountry2 = ""; let fallbackRegion2 = fallbackCityName2;
           if (fallbackCityName2) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName2)) { fallbackCountry2 = cn; break; } } }
-          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
+          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
         } else {
            setDisplayCityName("선택된 지역 없음");
            setCurrentRestaurants([]);
@@ -2238,7 +2350,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
             const fallbackCityName3 = payload.new.display_city_name ? S(payload.new.display_city_name) : "";
             let fallbackCountry3 = ""; let fallbackRegion3 = fallbackCityName3;
             if (fallbackCityName3) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName3)) { fallbackCountry3 = cn; break; } } }
-            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
+            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
             setPlanTimeline(cleanPlans);
           }
         }
@@ -2491,8 +2603,16 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
   
   // [NEW] 데일리 일정 필터링 방식 혁신: 숙소 연박 무조건 포함 + 일반일정 시간순 정렬
   const dayAccoms = safePlanTimeline.filter(p => p && p.isAccommodation);
-  const dayPlans = safePlanTimeline.filter(p => p && !p.isAccommodation && parseInt(p.day || 1) === safeDashboardDay).sort((a,b) => S(a?.time).localeCompare(S(b?.time)));
-  const todayPlans = [...dayAccoms, ...dayPlans];
+  // trans_rental_ 아이템이 있으면 place에 '렌터카'가 포함된 비-trans_rental_ 항목(여행정산 중복) 숨기기
+  const hasRentalTransItems = safePlanTimeline.some(p => p && (p.id === 'trans_rental_dep' || p.id === 'trans_rental_arr'));
+  const dayPlans = safePlanTimeline.filter(p => {
+    if (!p || p.isAccommodation) return false;
+    if (parseInt(p.day || 1) !== safeDashboardDay) return false;
+    // 렌터카 교통권 아이템이 있으면 여행정산에서 별도 저장된 렌터카 일정 숨기기
+    if (hasRentalTransItems && !String(p.id).startsWith('trans_rental_') && S(p.place).includes('렌터카')) return false;
+    return true;
+  }).sort((a,b) => S(a?.time).localeCompare(S(b?.time)));
+  const todayPlans = [...dayAccoms, ...dayPlans]; // isTransport(렌터카 포함) 이미 dayPlans에 포함됨
   
   const safeMaxDay = (typeof maxDay === 'number' && maxDay > 0 && maxDay < 100) ? maxDay : 4;
   const tripDays = Array.from({length: safeMaxDay}, (_, i) => i + 1);
@@ -3038,10 +3158,8 @@ return (
           const dep = timelinePlans.find(p => p.id === `trans_${type}_outbound_dep`);
           const arr = timelinePlans.find(p => p.id === `trans_${type}_inbound_dep`);
           if (dep || arr) {
-            // 출발지/목적지: place 텍스트에서 도시명 추출 후 getFlagForCity로 국기 결정
             const depPlace = dep ? S(dep.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
             const arrPlace = arr ? S(arr.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
-            // place 텍스트의 도시명으로 국기 검색 (country 필드는 둘 다 globalPlanCountry라 부정확)
             const depFlag = getFlagForCity(depPlace) || '';
             const arrFlag = getFlagForCity(arrPlace) || COUNTRY_FLAG[arr?.country] || '';
             const totalKrw = (Number(dep?.expenseKrw) || 0) + (Number(arr?.expenseKrw) || 0);
@@ -3056,6 +3174,14 @@ return (
               });
           }
         });
+        // 렌터카: dep+arr을 하나의 카드로 그룹핑
+        const rentalDep = timelinePlans.find(p => p.id === 'trans_rental_dep');
+        const rentalArr = timelinePlans.find(p => p.id === 'trans_rental_arr');
+        if (rentalDep || rentalArr) {
+          const totalKrw = (Number(rentalDep?.expenseKrw) || 0) + (Number(rentalArr?.expenseKrw) || 0);
+          const meta = rentalDep?.rentalMeta || rentalArr?.rentalMeta || {};
+          transportItems.push({ id: 'transport_grouped_rental', name: `🚗 렌터카${meta.company ? ` (${meta.company})` : ''}`, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: rentalDep, arrPlan: rentalArr, isRentalGrouped: true });
+        }
         const accomItems = timelinePlans
           .filter(p => p.isAccommodation)
           .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, category: '숙소', isFromTimeline: true, planId: p.id }));
@@ -3276,13 +3402,11 @@ return (
           const krwAmt = expenseAmtIsKrw ? inputAmt : String(toKrwModal(inputAmt, cur.code));
           let updated = [...(Array.isArray(planTimeline) ? planTimeline : [])];
           if (isGrouped) {
-            // 왕복카드: dep/arr 각각에 금액 저장 (반반으로 분배)
-            const half = Math.round((Number(krwAmt) || 0) / 2);
-            const halfLocal = localAmt ? String(Math.round(Number(localAmt) / 2)) : '';
+            // 왕복카드: 전체 금액을 dep에 저장, arr는 0 (반반 분배시 홀수 반올림 오차 방지)
             const { depPlan, arrPlan } = plan._groupedTransport;
             updated = updated.map(p => {
-              if (depPlan && String(p.id) === String(depPlan.id)) return { ...p, expenseLocal: halfLocal, expenseKrw: String(half) };
-              if (arrPlan && String(p.id) === String(arrPlan.id)) return { ...p, expenseLocal: halfLocal, expenseKrw: String(half) };
+              if (depPlan && String(p.id) === String(depPlan.id)) return { ...p, expenseLocal: localAmt, expenseKrw: krwAmt };
+              if (arrPlan && String(p.id) === String(arrPlan.id)) return { ...p, expenseLocal: '', expenseKrw: '0' };
               return p;
             });
           } else {
@@ -3316,9 +3440,10 @@ return (
                   <span className={`text-sm font-black ${textMuted}`}>₩</span>
                 )}
                 <input
-                  type="number"
-                  value={expenseAmtValue}
-                  onChange={e => setExpenseAmtValue(e.target.value)}
+                  type="text"
+                  inputMode="numeric"
+                  value={expenseAmtValue ? Number(expenseAmtValue).toLocaleString() : ''}
+                  onChange={e => { const raw = e.target.value.replace(/,/g, ''); if (raw === '' || /^\d*$/.test(raw)) setExpenseAmtValue(raw); }}
                   onKeyDown={e => e.key === 'Enter' && saveAmt()}
                   autoFocus
                   placeholder="0"
@@ -3416,7 +3541,7 @@ return (
                     ) : (
                       <span className={`text-sm font-black ${textMuted}`}>₩</span>
                     )}
-                    <input type="number" value={basicExpAddAmt} onChange={e => setBasicExpAddAmt(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveAdd()} placeholder="0" className={`flex-1 border rounded-xl p-3 text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
+                    <input type="text" inputMode="numeric" value={basicExpAddAmt ? Number(basicExpAddAmt).toLocaleString() : ''} onChange={e => { const raw = e.target.value.replace(/,/g, ''); if (raw === '' || /^\d*$/.test(raw)) setBasicExpAddAmt(raw); }} onKeyDown={e => e.key === 'Enter' && saveAdd()} placeholder="0" className={`flex-1 border rounded-xl p-3 text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
                   </div>
                   {basicExpAddAmt && globalCur.code !== 'KRW' && !basicExpAddIsKrw && (
                     <p className={`text-[10px] font-bold text-center mt-1 ${textMuted}`}>≈ ₩{toKrwAdd(basicExpAddAmt).toLocaleString()} (자동 환산)</p>
@@ -3963,12 +4088,17 @@ return (
       {selectedPlanInfo && (
         <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPlanInfo(null)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
-            {selectedPlanInfo.photo && !selectedPlanInfo.isTransport && (
-              <div className="w-full h-48 relative cursor-pointer" onClick={() => openPhotoViewer(selectedPlanInfo.photos || selectedPlanInfo.photo)}>
+            {selectedPlanInfo.photo && (
+              <div className="w-full h-48 relative cursor-pointer" onClick={() => openPhotoViewer(selectedPlanInfo.photos && selectedPlanInfo.photos.length > 0 ? selectedPlanInfo.photos : [selectedPlanInfo.photo])}>
                 <img src={selectedPlanInfo.photo} className="w-full h-full object-cover" alt="" />
-                <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md">
-                  {S(selectedPlanInfo.time)}
-                </div>
+                {selectedPlanInfo.time && selectedPlanInfo.time !== '99:99' && (
+                  <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md">
+                    {S(selectedPlanInfo.time)}
+                  </div>
+                )}
+                {selectedPlanInfo.photos && selectedPlanInfo.photos.length > 1 && (
+                  <div className="absolute top-3 right-3 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md">📷 {selectedPlanInfo.photos.length}</div>
+                )}
                 <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors duration-200 flex items-center justify-center">
                   <span className="opacity-0 hover:opacity-100 text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full transition-opacity duration-200">🔍 크게 보기</span>
                 </div>
@@ -3979,10 +4109,39 @@ return (
                 <h3 className="text-lg font-black text-slate-900 dark:text-slate-100 leading-tight">
                    {S(selectedPlanInfo.place)} {selectedPlanInfo.isAccommodation ? '🏠' : ''}
                 </h3>
-                {(!selectedPlanInfo.photo || selectedPlanInfo.isTransport) && <span className="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold px-2 py-1 rounded shadow-sm shrink-0 whitespace-nowrap ml-2">{S(selectedPlanInfo.time)}</span>}
+                {/* 사진 없을 때만 우측에 시간 뱃지 표시 (사진 있을 때는 사진 위 좌측에 이미 표시됨) */}
+                {!selectedPlanInfo.photo && selectedPlanInfo.time && selectedPlanInfo.time !== '99:99' && (
+                  <span className="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold px-2 py-1 rounded shadow-sm shrink-0 whitespace-nowrap ml-2">{S(selectedPlanInfo.time)}</span>
+                )}
               </div>
               
-              {selectedPlanInfo.localName && (
+              {/* 렌터카 대여/반납: 장소 복사 */}
+              {(selectedPlanInfo.id === 'trans_rental_dep' || selectedPlanInfo.id === 'trans_rental_arr') && selectedPlanInfo.rentalMeta ? (() => {
+                const meta = selectedPlanInfo.rentalMeta;
+                const isDep = selectedPlanInfo.id === 'trans_rental_dep';
+                const mainPlace = isDep ? meta.depPlace : meta.arrPlace;
+                const subPlace = isDep ? meta.arrPlace : meta.depPlace;
+                const mainLabel = isDep ? '🚗 대여장소' : '🏁 반납장소';
+                const subLabel = isDep ? '🏁 반납장소' : '🚗 대여장소';
+                return (
+                  <div className="flex flex-col gap-1.5 mb-3">
+                    {mainPlace && (
+                      <div className="flex items-center text-sm font-bold text-indigo-500 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, mainPlace)}>
+                        <span className="mr-2">{mainLabel}: {mainPlace}</span>
+                        <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800 shrink-0">복사</span>
+                      </div>
+                    )}
+                    {subPlace && (
+                      <div className="flex items-center text-xs font-bold text-slate-400 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, subPlace)}>
+                        <span className="mr-2">{subLabel}: {subPlace}</span>
+                        <span className="text-[10px] bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-600 shrink-0">복사</span>
+                      </div>
+                    )}
+                    {meta.carType && <p className="text-xs text-slate-500 font-bold">🚙 {meta.carType}</p>}
+                    {meta.company && <p className="text-xs text-slate-400 font-bold">🏢 {meta.company}</p>}
+                  </div>
+                );
+              })() : selectedPlanInfo.localName && (
                 <div className="flex items-center text-sm font-bold text-indigo-500 mb-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, selectedPlanInfo.localName)}>
                   <span className="mr-2">📍 {S(selectedPlanInfo.localName)}</span>
                   <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800">복사</span>
@@ -4159,10 +4318,11 @@ return (
                 <div className="flex space-x-2 mb-2">
                  <div className="flex-1">
                     <label className="text-[9px] font-bold text-slate-500 mb-1 flex justify-between"><span>현지 지출액</span><span className="text-indigo-400 font-black">자동환전 ✨</span></label>
-                    <input type="number" placeholder="금액 입력" value={settleLocal} onChange={e => {
-                      const val = e.target.value;
-                      setSettleLocal(val);
-                      if(val && !isNaN(val)) {
+                    <input type="text" inputMode="numeric" placeholder="금액 입력" value={settleLocal ? Number(settleLocal).toLocaleString() : ''} onChange={e => {
+                      const raw = e.target.value.replace(/,/g, '');
+                      if (raw !== '' && !/^\d*$/.test(raw)) return;
+                      setSettleLocal(raw);
+                      if(raw && !isNaN(raw)) {
                         let curCode = 'USD';
                         const c = selectedPlanInfo.country;
                         if (c === '한국') curCode = 'KRW';
@@ -4171,17 +4331,17 @@ return (
                         else if (c === '중국') curCode = 'CNY';
                         else if (c === '영국') curCode = 'GBP';
                         else if (c === '호주') curCode = 'AUD';
-                        
+
                         const rate = rates[curCode] || 1;
                         const krwRate = rates['KRW'] || 1350;
-                        const krwVal = val * (krwRate / rate);
+                        const krwVal = raw * (krwRate / rate);
                         setSettleKrw(Math.round(krwVal));
                       } else { setSettleKrw(""); }
                     }} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
                   </div>
                   <div className="flex-1">
                     <label className="text-[9px] font-bold text-slate-500 mb-1 block">원화 환산액(₩)</label>
-                    <input type="number" placeholder="자동계산" value={settleKrw} onChange={e => setSettleKrw(e.target.value)} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
+                    <input type="text" inputMode="numeric" placeholder="자동계산" value={settleKrw ? Number(settleKrw).toLocaleString() : ''} onChange={e => { const raw = e.target.value.replace(/,/g, ''); if (raw === '' || /^\d*$/.test(raw)) setSettleKrw(raw); }} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
                   </div>
                 </div>
                 <button onClick={() => {
@@ -4228,9 +4388,12 @@ return (
         <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPinInfo(null)}>
           <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             {selectedPinInfo.img && !S(selectedPinInfo.img).includes("unsplash") && (
-              <div className="w-full h-48 relative">
+              <div className="w-full h-48 relative cursor-pointer" onClick={e => { e.stopPropagation(); const imgs = Array.isArray(selectedPinInfo.photos) && selectedPinInfo.photos.length > 0 ? selectedPinInfo.photos : [selectedPinInfo.img]; setViewPhoto({ imgs, idx: 0 }); }}>
                 <img src={selectedPinInfo.img} className="w-full h-full object-cover" alt="" />
                 {selectedPinInfo.isAccommodation && <div className="absolute top-3 left-3 bg-yellow-400 text-white text-xs font-bold px-2 py-1 rounded shadow-md">숙소</div>}
+                <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors flex items-center justify-center">
+                  <span className="opacity-0 hover:opacity-100 text-white text-2xl drop-shadow">🔍</span>
+                </div>
               </div>
             )}
             <div className="p-5 flex flex-col">
@@ -4299,18 +4462,23 @@ return (
             </div>
             
             <div className="p-4 space-y-3">
-              <div className={`grid grid-cols-3 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-1 rounded-lg`}>
+              <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-1 rounded-lg`}>
                  <button onClick={() => {setTransType('flight'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'flight' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>✈️ 항공권</button>
                  <button onClick={() => {setTransType('train'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'train' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚆 기차</button>
                  <button onClick={() => {setTransType('bus'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'bus' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚌 버스</button>
+                 <button onClick={() => setTransType('rental')} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'rental' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚗 렌터카</button>
               </div>
 
+              {transType !== 'rental' && (
               <div className="flex space-x-2 items-center">
                  <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>가는 편 (Outbound)</button>
                  <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'inbound' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>오는 편 (Inbound)</button>
                  <button onClick={() => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...initialTransState}}}))} className="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-500 rounded border hover:bg-slate-200 transition-colors duration-300">초기화</button>
               </div>
+              )}
 
+              {transType !== 'rental' ? (
+              <>
               <div className="flex flex-col space-y-1 animate-in fade-in duration-300">
                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택 (Day)</label>
                  <select value={modalTransData[transType][transDir].day} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], day: parseInt(e.target.value)}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer transition-all duration-300`}>
@@ -4346,6 +4514,68 @@ return (
                   <input type="text" maxLength="5" placeholder="12:00" value={modalTransData[transType][transDir].arrTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], arrTime: val}}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 transition-all duration-300 focus:border-indigo-500 outline-none`} />
                 </div>
               </div>
+              </>
+              ) : (
+              /* 렌터카 폼 */
+              <div className="space-y-3 animate-in fade-in duration-300">
+                <div>
+                  <label className={`text-[9px] font-bold ${textMuted} px-1 mb-1 block`}>렌터카 사용 기간 (Day 선택, 복수 선택 가능)</label>
+                  <div className={`grid grid-cols-4 gap-1 p-1 rounded-lg border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                    {tripDays.map(d => (
+                      <button key={d} type="button" onClick={() => setRentalCarData(prev => ({ ...prev, days: prev.days.includes(d) ? prev.days.filter(x => x !== d) : [...prev.days, d].sort((a,b)=>a-b) }))} className={`py-1.5 text-[10px] font-bold rounded transition-all duration-200 ${rentalCarData.days.includes(d) ? 'bg-indigo-600 text-white shadow-md' : (isDarkMode ? 'text-slate-400 hover:bg-slate-600' : 'text-slate-400 hover:bg-slate-100')}`}>D{d}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex space-x-2">
+                  <div className="flex flex-col space-y-1 flex-1">
+                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>렌터카 업체</label>
+                    <input type="text" placeholder="Toyota Rent a Car" value={rentalCarData.company} onChange={e => setRentalCarData(prev => ({...prev, company: e.target.value}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg focus:border-indigo-500 outline-none`} />
+                  </div>
+                  <div className="flex flex-col space-y-1 flex-1">
+                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>차종</label>
+                    <input type="text" placeholder="Toyota Yaris" value={rentalCarData.carType} onChange={e => setRentalCarData(prev => ({...prev, carType: e.target.value}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg focus:border-indigo-500 outline-none`} />
+                  </div>
+                </div>
+                <div className="flex space-x-2">
+                  <div className="flex flex-col space-y-1 flex-1">
+                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>🚗 대여 장소</label>
+                    <input type="text" placeholder="공항 렌터카 센터" value={rentalCarData.depPlace} onChange={e => setRentalCarData(prev => ({...prev, depPlace: e.target.value}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg focus:border-indigo-500 outline-none`} />
+                    <input type="text" maxLength="5" placeholder="10:00" value={rentalCarData.depTime} onChange={e => handleTimeInput(e, val => setRentalCarData(prev => ({...prev, depTime: val})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 focus:border-indigo-500 outline-none`} />
+                  </div>
+                  <div className="flex flex-col items-center justify-center text-slate-400 font-bold w-8 pt-4">→</div>
+                  <div className="flex flex-col space-y-1 flex-1">
+                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>🏁 반납 장소</label>
+                    <input type="text" placeholder="공항 렌터카 센터" value={rentalCarData.arrPlace} onChange={e => setRentalCarData(prev => ({...prev, arrPlace: e.target.value}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg focus:border-indigo-500 outline-none`} />
+                    <input type="text" maxLength="5" placeholder="18:00" value={rentalCarData.arrTime} onChange={e => handleTimeInput(e, val => setRentalCarData(prev => ({...prev, arrTime: val})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 focus:border-indigo-500 outline-none`} />
+                  </div>
+                </div>
+                {/* 사진 추가 */}
+                <div>
+                  <label className={`text-[9px] font-bold ${textMuted} px-1 mb-1 block`}>사진 (최대 3장)</label>
+                  <input type="file" accept="image/*" multiple ref={rentalFileInputRef} className="hidden" onChange={e => {
+                    const files = Array.from(e.target.files || []);
+                    files.forEach(file => compressImage(file, compressed => {
+                      setRentalCarData(prev => prev.photos.length < 3 ? { ...prev, photos: [...prev.photos, compressed] } : prev);
+                    }));
+                    e.target.value = '';
+                  }} />
+                  <div className="flex gap-1.5">
+                    {(rentalCarData.photos || []).map((img, i) => (
+                      <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 flex-shrink-0">
+                        <img src={img} className="w-full h-full object-cover" alt="" />
+                        <button type="button" onClick={() => setRentalCarData(prev => ({ ...prev, photos: prev.photos.filter((_, idx) => idx !== i) }))} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px]">✕</button>
+                      </div>
+                    ))}
+                    {(rentalCarData.photos || []).length < 3 && (
+                      <button type="button" onClick={() => rentalFileInputRef.current?.click()} className={`w-14 h-14 rounded-lg border-dashed border-2 flex flex-col items-center justify-center gap-0.5 flex-shrink-0 transition-colors ${isDarkMode ? 'border-slate-500 text-slate-400 hover:bg-slate-700' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
+                        <span className="text-lg leading-none">+</span>
+                        <span className="text-[7px] font-bold">사진</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              )}
 
               <button onClick={handleSaveTransport} className={`w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-3 text-xs font-bold shadow-md active:scale-95 transition-all duration-300 mt-2`}>
                 일괄 등록하기 ✨
@@ -4451,10 +4681,10 @@ return (
                 <input type="file" accept="image/*" multiple ref={editFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, true)} className="hidden" />
                 <div className="flex gap-1.5">
                   {(Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : [])).map((img, i) => (
-                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 flex-shrink-0 shadow-sm">
+                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border flex-shrink-0 shadow-sm cursor-pointer" style={{borderColor: i === 0 ? '#6366f1' : undefined}} onClick={e => { e.stopPropagation(); if (i !== 0) setEditingPlan(prev => { const imgs = (Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : [])); const arr = [...imgs]; arr.splice(i, 1); arr.unshift(img); return { ...prev, photos: arr, photo: arr[0] }; }); }}>
                       <img src={img} className="w-full h-full object-cover" alt="" />
                       <button type="button" onClick={e => { e.stopPropagation(); setEditingPlan(prev => { const imgs = (Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : [])).filter((_, idx) => idx !== i); return {...prev, photos: imgs, photo: imgs[0] || ""}; }); }} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] leading-none hover:bg-black/90">✕</button>
-                      {i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-indigo-600/80 text-white text-[7px] text-center font-bold py-0.5">대표</div>}
+                      <div className={`absolute bottom-0 left-0 right-0 text-white text-[7px] text-center font-bold py-0.5 ${i === 0 ? 'bg-indigo-600/80' : 'bg-black/40'}`}>{i === 0 ? '대표' : '탭=대표'}</div>
                     </div>
                   ))}
                   {(Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : [])).length < 3 && (
@@ -5246,10 +5476,14 @@ const planData = {
                       const isTransportTheme = plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword));
 // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명에 교통수단 포함 시 전용 카드 적용)
                       if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
+                        // 렌터카 대여/반납 카드: 장소 복사 가능
+                        const isRentalDep = plan.id === 'trans_rental_dep' || S(plan.place).includes('렌터카 대여');
+                        const isRentalArr = plan.id === 'trans_rental_arr' || S(plan.place).includes('렌터카 반납');
+                        const rentalCopyPlace = isRentalDep ? (plan.rentalMeta?.depPlace || '') : isRentalArr ? (plan.rentalMeta?.arrPlace || '') : '';
                         return (
                           <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group`}
-                               onClick={(e) => { 
-                                 e.stopPropagation(); 
+                               onClick={(e) => {
+                                 e.stopPropagation();
                                  if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                                  else setActiveMobileCard(plan.id);
                                }}>
@@ -5260,7 +5494,14 @@ const planData = {
                               </span>
                               <div className="flex flex-col sm:flex-row sm:items-center mt-0.5 gap-0.5 sm:gap-2">
                                  {plan.localName && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">🏢 {S(plan.localName)}</span>}
-                                 {plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>}
+                                 {/* 렌터카: 장소 복사 버튼 */}
+                                 {(isRentalDep || isRentalArr) && rentalCopyPlace ? (
+                                   <span className="text-[7px] sm:text-[9px] text-indigo-500 font-bold truncate cursor-pointer hover:opacity-70 active:scale-95 transition-all" onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(rentalCopyPlace).then(() => showToast('📋 장소가 복사되었습니다!')); }}>
+                                     📋 {rentalCopyPlace} <span className="text-[6px] bg-indigo-100 dark:bg-indigo-900 px-1 rounded">복사</span>
+                                   </span>
+                                 ) : (
+                                   plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>
+                                 )}
                               </div>
                             </div>
                             <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
@@ -5459,7 +5700,7 @@ const planData = {
             </div>
             
             <div className={`flex-1 flex flex-col md:flex-row overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar transition-colors duration-300 ${cardBg}`}>
-              <div className={`w-full md:w-[22rem] lg:w-96 p-3 sm:p-4 border-b md:border-b-0 md:border-r flex flex-col flex-shrink-0 md:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
+              <div ref={planAddFormRef} className={`w-full md:w-[22rem] lg:w-96 p-3 sm:p-4 border-b md:border-b-0 md:border-r flex flex-col flex-shrink-0 md:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
                 <div className="space-y-2 mt-1">
                   <div className="flex items-center justify-between mb-1">
                     <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>일차 선택</label>
@@ -5613,10 +5854,10 @@ const planData = {
                     <input type="file" accept="image/*" multiple ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
                     <div className="flex gap-1.5">
                       {newPlanPhotos.map((img, i) => (
-                        <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 flex-shrink-0 shadow-sm">
+                        <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border flex-shrink-0 shadow-sm cursor-pointer" style={{borderColor: i === 0 ? '#6366f1' : undefined}} onClick={e => { e.stopPropagation(); if (i !== 0) setNewPlanPhotos(prev => { const arr = [...prev]; arr.splice(i, 1); arr.unshift(img); return arr; }); }}>
                           <img src={img} className="w-full h-full object-cover" alt="" />
                           <button type="button" onClick={e => { e.stopPropagation(); setNewPlanPhotos(prev => prev.filter((_, idx) => idx !== i)); }} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] leading-none hover:bg-black/90">✕</button>
-                          {i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-indigo-600/80 text-white text-[7px] text-center font-bold py-0.5">대표</div>}
+                          <div className={`absolute bottom-0 left-0 right-0 text-white text-[7px] text-center font-bold py-0.5 ${i === 0 ? 'bg-indigo-600/80' : 'bg-black/40'}`}>{i === 0 ? '대표' : '탭=대표'}</div>
                         </div>
                       ))}
                       {newPlanPhotos.length < 3 && (
@@ -5664,8 +5905,11 @@ const planData = {
                   </div>
 
                   <div className="pt-1 flex space-x-2">
-                    <button onClick={handleSavePlan} className="w-full bg-indigo-600 text-white rounded py-2.5 text-[11px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">
-                      <span>스케줄에 등록! ✨</span>
+                    {editingPlanId && (
+                      <button onClick={resetPlanForm} className={`px-3 py-2.5 rounded text-[11px] font-bold border transition-all duration-300 active:scale-95 ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>초기화</button>
+                    )}
+                    <button onClick={handleSavePlan} className={`flex-1 text-white rounded py-2.5 text-[11px] font-bold shadow-md active:scale-95 transition-all duration-300 ${editingPlanId ? 'bg-orange-500 hover:bg-orange-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                      <span>{editingPlanId ? '✅ 수정 완료' : '스케줄에 등록! ✨'}</span>
                     </button>
                   </div>
                     <div className="flex space-x-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
@@ -5697,7 +5941,7 @@ const planData = {
                           const isActive = activeMobileCard === plan.id;
                           return (
                             <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border shadow-sm bg-yellow-50/50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 relative group cursor-pointer transition-all duration-300 hover:shadow-md ${isActive ? 'border-indigo-400' : ''}`}
-                                 onClick={(e) => { e.stopPropagation(); if(isActive){setSelectedPlanInfo(plan); setActiveMobileCard(null);}else setActiveMobileCard(plan.id); }}>
+                                 onClick={(e) => { e.stopPropagation(); loadPlanToForm(plan); setActiveMobileCard(plan.id); }}>
                                <div className="flex justify-between items-start mb-1">
                                  <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 연박 숙소</span>
                                   <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-col space-y-1 p-0.5 rounded-lg border shadow-md bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-all duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
@@ -5726,12 +5970,21 @@ const planData = {
                         })}
 
                         {/* 일반 일정 렌더링 로직 */}
-                        {planTimeline.filter(p => !p.isAccommodation && parseInt(p.day || 1) === day).length === 0 && planTimeline.filter(p => p && p.isAccommodation).length === 0 ? (
+                        {(() => {
+                          const _safePT = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+                          const _hasRental = _safePT.some(p => p.id === 'trans_rental_dep' || p.id === 'trans_rental_arr');
+                          const _dayPlans = _safePT.filter(p => {
+                            if (!p || p.isAccommodation) return false;
+                            if (parseInt(p.day || 1) !== day) return false;
+                            if (_hasRental && !String(p.id).startsWith('trans_rental_') && S(p.place).includes('렌터카')) return false;
+                            return true;
+                          });
+                          const _hasAccomm = _safePT.some(p => p && p.isAccommodation);
+                          return _dayPlans.length === 0 && !_hasAccomm ? (
                            <div className={`flex flex-col items-center justify-center h-full min-h-[100px] text-[8px] sm:text-[9px] transition-colors duration-300 ${textMuted}`}>
                              <span>일정 없음</span>
                            </div>
-                        ) : (
-                          planTimeline.filter(p => !p.isAccommodation && parseInt(p.day || 1) === day).map((plan) => {
+                          ) : _dayPlans.map((plan) => {
                             const isActive = activeMobileCard === plan.id;
 
                             // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명 포함 시 무조건 전용 카드 적용)
@@ -5740,11 +5993,7 @@ const planData = {
                             if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
                               return (
                                 <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group cursor-pointer ${isActive ? 'border-indigo-400' : ''}`}
-                                     onClick={(e) => { 
-                                       e.stopPropagation(); 
-                                       if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
-                                       else setActiveMobileCard(plan.id);
-                                     }}>
+                                     onClick={(e) => { e.stopPropagation(); loadPlanToForm(plan); setActiveMobileCard(plan.id); }}>
                                   {plan.time !== '99:99' && <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{S(plan.time)}</div>}
                                   <div className="flex-1 min-w-0 flex flex-col px-0.5">
                                     <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
@@ -5764,7 +6013,7 @@ const planData = {
                             }
 
                             return (
-                            <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
+                            <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); loadPlanToForm(plan); setActiveMobileCard(plan.id); }}>
                               <div className="flex justify-between items-start mb-1">
                                 {plan.time !== '99:99' && <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>}
                                 <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
@@ -5790,8 +6039,7 @@ const planData = {
                                 )}
                               </div>
                             </div>
-                          )})
-                        )}
+                          )}); })()}
                       </div>
                     </div>
                   ))}
