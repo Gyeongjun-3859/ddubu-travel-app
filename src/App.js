@@ -1169,7 +1169,15 @@ async function confirmDeleteTrip() {
     setPendingInvite(null);
   }
 
-  function handleOpenGoogleTranslate() { window.open(`https://translate.google.com/?sl=auto&tl=ko`, '_blank'); }
+  function handleOpenGoogleTranslate() {
+    const langMap = { '일본': 'ja', '중국': 'zh-CN', '프랑스': 'fr', '이탈리아': 'it', '스페인': 'es', '독일': 'de', '영국': 'en', '태국': 'th', '미국': 'en', '베트남': 'vi', '대만': 'zh-TW', '홍콩': 'zh-TW', '싱가포르': 'en', '인도네시아': 'id', '말레이시아': 'ms', '필리핀': 'tl', '터키': 'tr', '포르투갈': 'pt', '러시아': 'ru', '아랍에미리트': 'ar' };
+    const tl = langMap[globalPlanCountry] || langMap[globalManualCountry] || 'en';
+    const webUrl = `https://translate.google.com/?sl=ko&tl=${tl}`;
+    const deepLink = `googletranslate://?sl=ko&tl=${tl}`;
+    const fallback = setTimeout(() => { window.open(webUrl, '_blank'); }, 1500);
+    window.location.href = deepLink;
+    window.addEventListener('blur', () => clearTimeout(fallback), { once: true });
+  }
 
   function handleManualPlaceAdd(isFromMap = true) {
     if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
@@ -5518,11 +5526,7 @@ const planData = {
               </h2>
               {errorRates && <span className="text-rose-500 text-[10px] font-bold ml-2 animate-in fade-in">{errorRates}</span>}
               <div className="flex items-center space-x-1.5 ml-auto">
-                <button onClick={handleForceSave} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-emerald-900/50 text-emerald-400 border border-emerald-700 hover:bg-emerald-900/70' : 'bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100'}`}>
-                  <span className="text-xs">💾</span>
-                  <span>저장</span>
-                </button>
-                <button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
+<button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
                   <span className="text-xs">🌐</span>
                   <span>AI 번역기</span>
                 </button>
