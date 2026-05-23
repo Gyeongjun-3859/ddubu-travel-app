@@ -1463,9 +1463,9 @@ function handleDeletePlan(id) {
     showToast("일정이 삭제되었습니다.");
   }
   
-  function resetPlanForm() { 
-    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewIsAccommodation(false);
-    setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion); 
+  function resetPlanForm() {
+    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewIsAccommodation(false); setNewTheme("기타");
+    setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion);
     setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : ""); setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
   }
 
@@ -4992,15 +4992,44 @@ const planData = {
                     </div>
                     <div className="flex flex-col space-y-1 flex-1 relative">
                       <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>장소 📍</label>
-                      <input 
-                        type="text" 
-                        placeholder="장소 이름 입력" 
-                        value={newPlace} 
+                      <input
+                        type="text"
+                        placeholder="장소 이름 입력"
+                        value={newPlace}
                         onChange={(e) => setNewPlace(e.target.value)}
                         className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6 rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
                       />
                     </div>
                   </div>
+
+                  {/* 내 핀에서 선택 */}
+                  {currentRestaurants.filter(r => r && r.name).length > 0 && (
+                    <div className="flex flex-col space-y-1">
+                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>내 핀에서 선택 📌</label>
+                      <select
+                        defaultValue=""
+                        onChange={(e) => {
+                          const pin = currentRestaurants.find(r => r && r.id === e.target.value);
+                          if (!pin) return;
+                          setNewPlace(S(pin.name));
+                          if (pin.localName) setNewLocalName(S(pin.localName));
+                          if (pin.signature) setNewFeatures(S(pin.signature));
+                          if (pin.img) setNewPhoto(S(pin.img));
+                          if (pin.isAccommodation) setNewIsAccommodation(true);
+                          if (pin.theme) setNewTheme(S(pin.theme));
+                          e.target.value = "";
+                        }}
+                        className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600 text-slate-200' : 'border-slate-200/80 text-slate-700'}`}
+                      >
+                        <option value="">— 핀 목록에서 불러오기 —</option>
+                        {currentRestaurants.filter(r => r && r.name).map(pin => (
+                          <option key={pin.id} value={pin.id}>
+                            {pin.isAccommodation ? '🏠 ' : pin.isLandmark ? '⭐ ' : '📍 '}{S(pin.name)}{pin.localName ? ` (${S(pin.localName)})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div className="flex space-x-2 items-end">
                     <div className="flex flex-col space-y-1 flex-1">
