@@ -3095,8 +3095,9 @@ return (
       )}
 
       {viewPhoto && (() => {
-        const imgs = viewPhoto.imgs || [];
-        const idx = viewPhoto.idx || 0;
+        const _vp = typeof viewPhoto === 'string' ? { imgs: [viewPhoto], idx: 0 } : viewPhoto;
+        const imgs = _vp.imgs || [];
+        const idx = _vp.idx || 0;
         const n = imgs.length;
         const dr = viewPhotoDragRef.current;
         const onPointerDown = (e) => {
@@ -3179,7 +3180,7 @@ return (
                          if (offset < 0) goPhotoPrev(imgs, idx);
                          else if (offset > 0) goPhotoNext(imgs, idx);
                        }}>
-                    <img src={imgs[ci]} className="w-full h-full object-cover" alt="" draggable={false} />
+                    <img src={imgs[ci]} className="w-full h-full object-contain" alt="" draggable={false} />
                   </div>
                 );
               })}
@@ -5168,7 +5169,7 @@ const planData = {
                       {pin.isLandmark && <div className="absolute top-1 right-1 bg-yellow-400 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm z-10">👑 랜드마크</div>}
 
                       {pin.img && !S(pin.img).includes("unsplash") ? (
-                        <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0 cursor-pointer" onClick={() => setViewPhoto(pin.img)}>
+                        <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0 cursor-pointer" onClick={() => { const pinImgs = Array.isArray(pin.imgs) && pin.imgs.length > 0 ? pin.imgs : (pin.img ? [pin.img] : []); if (pinImgs.length > 0) setViewPhoto({ imgs: pinImgs, idx: 0 }); }}>
                           <img src={pin.img} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
                           {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm z-10">숙소</div>}
                           <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors duration-200 flex items-center justify-center">
@@ -5249,7 +5250,7 @@ const planData = {
         <div className="fixed inset-0 bg-black/60 z-[9500] backdrop-blur-sm flex items-center justify-center p-6 transition-opacity duration-300" onClick={() => setPinQuickView(null)}>
           <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             {pinQuickView.img && !S(pinQuickView.img).includes("unsplash") && (
-              <div className="w-full h-44 relative cursor-pointer" onClick={() => { setPinQuickView(null); setViewPhoto(pinQuickView.img); }}>
+              <div className="w-full h-44 relative cursor-pointer" onClick={() => { const qImgs = Array.isArray(pinQuickView.imgs) && pinQuickView.imgs.length > 0 ? pinQuickView.imgs : (pinQuickView.img ? [pinQuickView.img] : []); setPinQuickView(null); if (qImgs.length > 0) setViewPhoto({ imgs: qImgs, idx: 0 }); }}>
                 <img src={pinQuickView.img} className="w-full h-full object-cover" alt="" />
                 <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center">
                   <span className="opacity-0 hover:opacity-100 text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full transition-opacity">🔍 크게 보기</span>
