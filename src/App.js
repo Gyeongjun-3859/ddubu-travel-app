@@ -60,6 +60,18 @@ const REGIONS_BY_COUNTRY = {
   "호주": ["시드니", "멜버른", "브리즈번"]
 };
 
+const COUNTRY_FLAG = {
+  "한국": "🇰🇷", "일본": "🇯🇵", "프랑스": "🇫🇷", "미국": "🇺🇸",
+  "대만": "🇹🇼", "이탈리아": "🇮🇹", "태국": "🇹🇭", "베트남": "🇻🇳",
+  "중국": "🇨🇳", "영국": "🇬🇧", "스페인": "🇪🇸", "독일": "🇩🇪", "호주": "🇦🇺"
+};
+const getFlagForCity = (city) => {
+  for (const [country, regions] of Object.entries(REGIONS_BY_COUNTRY)) {
+    if (regions.includes(city)) return COUNTRY_FLAG[country] || '';
+  }
+  return '';
+};
+
 // 외부 URL 열기 - 네이티브는 Browser 플러그인, 웹은 window.open
 async function openExternalUrl(url) {
   if (Capacitor.isNativePlatform()) {
@@ -3023,7 +3035,11 @@ return (
             // 출발지/목적지 파싱
             const depPlace = dep ? S(dep.place).replace(/[✈🚆🚌🛬]|출발|도착/g, '').trim() : '';
             const arrPlace = arr ? S(arr.place).replace(/[✈🚆🚌🛬]|출발|도착/g, '').trim() : '';
-            const label = depPlace && arrPlace ? `${depPlace} ⇄ ${arrPlace}` : (depPlace || arrPlace || type);
+            const depFlag = getFlagForCity(depPlace) || (dep?.country ? (COUNTRY_FLAG[dep.country] || '') : '');
+            const arrFlag = getFlagForCity(arrPlace) || (arr?.country ? (COUNTRY_FLAG[arr.country] || '') : '');
+            const depLabel = depPlace ? `${depFlag}${depPlace}` : '';
+            const arrLabel = arrPlace ? `${arrFlag}${arrPlace}` : '';
+            const label = depLabel && arrLabel ? `${depLabel} ↔ ${arrLabel}` : (depLabel || arrLabel || type);
             const totalKrw = (Number(dep?.expenseKrw) || 0) + (Number(arr?.expenseKrw) || 0);
             transportItems.push({ id: `transport_grouped_${type}`, name: label, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
           } else {
@@ -3112,12 +3128,17 @@ return (
                         : (isDarkMode ? 'bg-amber-900 text-amber-300' : 'bg-amber-500 text-white');
                       const openModal = () => {
                         if (item.isGroupedTransport) {
-                          // 왕복카드: dep + arr 합산 금액 수정 → dep 기준으로 모달 열기
+                          // 왕복카드: 항공권은 원화 기본
                           const p = item.depPlan || item.arrPlan;
-                          if (p) { setExpenseAmtModalPlan({ ...p, _groupedTransport: item }); setExpenseAmtValue(String(p.expenseLocal || p.expenseKrw || '')); setExpenseAmtIsKrw(false); }
+                          if (p) {
+                            const totalKrw = (Number(item.depPlan?.expenseKrw) || 0) + (Number(item.arrPlan?.expenseKrw) || 0);
+                            setExpenseAmtModalPlan({ ...p, _groupedTransport: item });
+                            setExpenseAmtValue(totalKrw > 0 ? String(totalKrw) : '');
+                            setExpenseAmtIsKrw(true); // 항공권은 원화 기본
+                          }
                         } else if (item.isFromTimeline) {
                           const p = timelinePlans.find(tp => String(tp.id) === String(item.planId));
-                          if (p) { setExpenseAmtModalPlan(p); setExpenseAmtValue(String(p.expenseLocal || p.expenseKrw || '')); setExpenseAmtIsKrw(false); }
+                          if (p) { setExpenseAmtModalPlan(p); setExpenseAmtValue(String(p.expenseLocal || p.expenseKrw || '')); setExpenseAmtIsKrw(!p.expenseLocal && !!p.expenseKrw); }
                         }
                       };
                       const canOpen = item.isFromTimeline;
@@ -3170,14 +3191,22 @@ return (
                     {fullyFiltered.map(plan => {
                       const cur = getCountryCurrency(plan.country, plan.region);
                       const hasAmount = Number(plan.expenseLocal) > 0 || Number(plan.expenseKrw) > 0;
-                      const isKrw = cur.code === 'KRW';
-                      const displayAmt = isKrw
+                      const isKrwCurrency = cur.code === 'KRW';
+                      // 항상 현지 화폐 기본 표시 (expenseLocal 있으면 현지화, 없으면 원화)
+                      const displayAmt = isKrwCurrency
                         ? `₩${(Number(plan.expenseKrw) || 0).toLocaleString()}`
-                        : (Number(plan.expenseLocal) > 0
-                          ? `${cur.sym}${(Number(plan.expenseLocal) || 0).toLocaleString()}`
-                          : `₩${(Number(plan.expenseKrw) || 0).toLocaleString()}`);
+                        : Number(plan.expenseLocal) > 0
+                          ? `${cur.sym}${Number(plan.expenseLocal).toLocaleString()}`
+                          : `${cur.sym}0`;
+                      const openThisPlan = () => {
+                        // 모달 열 때: expenseLocal 있으면 현지화 모드, 없으면 현지화 모드로 시작
+                        const hasLocal = Number(plan.expenseLocal) > 0;
+                        setExpenseAmtModalPlan(plan);
+                        setExpenseAmtValue(hasLocal ? String(plan.expenseLocal) : (plan.expenseKrw ? String(plan.expenseKrw) : ""));
+                        setExpenseAmtIsKrw(!hasLocal && !!plan.expenseKrw && !isKrwCurrency ? true : isKrwCurrency);
+                      };
                       return (
-                        <div key={plan.id} onClick={() => { setExpenseAmtModalPlan(plan); setExpenseAmtValue(String(plan.expenseLocal || plan.expenseKrw || "")); setExpenseAmtIsKrw(isKrw || !plan.expenseLocal); }} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 cursor-pointer active:scale-[0.98] ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
+                        <div key={plan.id} onClick={openThisPlan} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 cursor-pointer active:scale-[0.98] ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
                           <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${isDarkMode ? 'bg-indigo-900 text-indigo-300' : 'bg-indigo-600 text-white'}`}>D{plan.day}</span>
                           <span className={`flex-1 text-[10px] font-bold truncate min-w-0 ${textMain}`}>{S(plan.place)}</span>
                           <span className={`text-[10px] font-black flex-shrink-0 ${hasAmount ? 'text-rose-500' : (isDarkMode ? 'text-slate-500' : 'text-slate-300')}`}>{displayAmt}</span>
