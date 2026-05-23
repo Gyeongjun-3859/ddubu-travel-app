@@ -336,6 +336,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [pinQuickView, setPinQuickView] = useState(null);
   const [isSettleMode, setIsSettleMode] = useState(false);
   const [newTheme, setNewTheme] = useState("기타");
+  const [pinSelectOpen, setPinSelectOpen] = useState(false);
   const [settleLocal, setSettleLocal] = useState("");
   const [settleKrw, setSettleKrw] = useState("");
 
@@ -1464,7 +1465,7 @@ function handleDeletePlan(id) {
   }
   
   function resetPlanForm() {
-    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewIsAccommodation(false); setNewTheme("기타");
+    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewIsAccommodation(false); setNewTheme("기타"); setPinSelectOpen(false);
     setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion);
     setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : ""); setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
   }
@@ -5002,32 +5003,43 @@ const planData = {
                     </div>
                   </div>
 
-                  {/* 내 핀에서 선택 */}
+                  {/* 내 핀에서 선택 - 커스텀 드롭다운 */}
                   {currentRestaurants.filter(r => r && r.name).length > 0 && (
                     <div className="flex flex-col space-y-1">
                       <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>내 핀에서 선택 📌</label>
-                      <select
-                        defaultValue=""
-                        onChange={(e) => {
-                          const pin = currentRestaurants.find(r => r && r.id === e.target.value);
-                          if (!pin) return;
-                          setNewPlace(S(pin.name));
-                          if (pin.localName) setNewLocalName(S(pin.localName));
-                          if (pin.signature) setNewFeatures(S(pin.signature));
-                          if (pin.img) setNewPhoto(S(pin.img));
-                          if (pin.isAccommodation) setNewIsAccommodation(true);
-                          if (pin.theme) setNewTheme(S(pin.theme));
-                          e.target.value = "";
-                        }}
-                        className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600 text-slate-200' : 'border-slate-200/80 text-slate-700'}`}
-                      >
-                        <option value="">— 핀 목록에서 불러오기 —</option>
-                        {currentRestaurants.filter(r => r && r.name).map(pin => (
-                          <option key={pin.id} value={pin.id}>
-                            {pin.isAccommodation ? '🏠 ' : pin.isLandmark ? '⭐ ' : '📍 '}{S(pin.name)}{pin.localName ? ` (${S(pin.localName)})` : ''}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setPinSelectOpen(v => !v)}
+                          className={`w-full border p-1.5 text-[10px] font-bold text-left rounded shadow-sm flex items-center justify-between transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600 text-slate-200' : 'border-slate-200/80 text-slate-700'}`}
+                        >
+                          <span className={textMuted}>— 핀 목록에서 불러오기 —</span>
+                          <span className="ml-1">{pinSelectOpen ? '▲' : '▼'}</span>
+                        </button>
+                        {pinSelectOpen && (
+                          <div className={`absolute left-0 right-0 top-full mt-1 z-50 border rounded-lg shadow-xl overflow-y-auto max-h-44 custom-scrollbar ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+                            {currentRestaurants.filter(r => r && r.name).map(pin => (
+                              <button
+                                key={pin.id}
+                                type="button"
+                                onClick={() => {
+                                  setNewPlace(S(pin.name));
+                                  if (pin.localName) setNewLocalName(S(pin.localName));
+                                  if (pin.signature) setNewFeatures(S(pin.signature));
+                                  if (pin.img) setNewPhoto(S(pin.img));
+                                  if (pin.isAccommodation) setNewIsAccommodation(true);
+                                  if (pin.theme) setNewTheme(S(pin.theme));
+                                  setPinSelectOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-[10px] font-bold flex items-center gap-1 transition-colors ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-indigo-50'}`}
+                              >
+                                <span>{pin.isAccommodation ? '🏠' : pin.isLandmark ? '⭐' : '📍'}</span>
+                                <span className="truncate">{S(pin.name)}{pin.localName ? ` (${S(pin.localName)})` : ''}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -5441,7 +5453,10 @@ return (
           font-family: inherit;
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
+          scrollbar-gutter: stable;
+          overflow: hidden;
         }
+        html { overflow: hidden; }
         
         .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } 
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } 
