@@ -368,8 +368,8 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [isDashboardShoppingOpen, setIsDashboardShoppingOpen] = useState(false);
   const [dashShowAllShopping, setDashShowAllShopping] = useState(false);
   const [dashShoppingFilterTheme, setDashShoppingFilterTheme] = useState("all");
-  const [confirmModal, setConfirmModal] = useState(null); // {msg, onOk, onCancel?}
-  const showConfirm = (msg, onOk, onCancel) => setConfirmModal({ msg, onOk, onCancel: onCancel || null });
+  const [confirmModal, setConfirmModal] = useState(null); // {msg, onOk, onCancel?, okLabel?, cancelLabel?, extraBtn?}
+  const showConfirm = (msg, onOk, onCancel, opts) => setConfirmModal({ msg, onOk, onCancel: onCancel || null, ...(opts || {}) });
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [expenseAmtModalPlan, setExpenseAmtModalPlan] = useState(null); // 금액 수정 모달 대상 plan
   const [expenseAmtValue, setExpenseAmtValue] = useState(""); // 금액 수정 모달 입력값
@@ -1509,12 +1509,40 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
   }
   
 function handleDeletePlan(id) {
-    showConfirm("이 일정을 정말 삭제하시겠습니까?", () => {
-      const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    const targetPlan = safePlanTimeline.find(p => p && S(p.id) === S(id));
+    const safeRests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+    // 같은 장소명의 핀이 있는지 확인
+    const linkedPin = targetPlan ? safeRests.find(r => r && S(r.name).trim() === S(targetPlan.place).trim()) : null;
+
+    const doDeletePlanOnly = () => {
       const updated = safePlanTimeline.filter(p => p && S(p.id) !== S(id));
       setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
       showToast("일정이 삭제되었습니다.");
-    });
+    };
+
+    const doDeleteBoth = () => {
+      const updatedTimeline = safePlanTimeline.filter(p => p && S(p.id) !== S(id));
+      const updatedRests = safeRests.filter(r => r && S(r.name).trim() !== S(targetPlan?.place).trim());
+      setPlanTimeline(updatedTimeline);
+      setCurrentRestaurants(updatedRests);
+      saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests });
+      showToast("일정과 지도 핀이 함께 삭제되었습니다.");
+    };
+
+    if (linkedPin) {
+      showConfirm(
+        `"${S(targetPlan?.place)}" 일정을 삭제합니다.\n지도의 핀도 함께 삭제할까요?`,
+        doDeleteBoth,
+        null,
+        {
+          okLabel: '핀도 함께 삭제',
+          extraBtn: { label: '일정만 삭제 (핀 유지)', onClick: doDeletePlanOnly }
+        }
+      );
+    } else {
+      showConfirm("이 일정을 정말 삭제하시겠습니까?", doDeletePlanOnly);
+    }
   }
   
   function resetPlanForm() {
@@ -2619,10 +2647,18 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[100000] flex items-center justify-center p-6" onClick={() => { if (confirmModal.onCancel) confirmModal.onCancel(); setConfirmModal(null); }}>
           <div className={`${cardBg} rounded-3xl p-6 w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
             <p className={`text-sm font-bold text-center leading-relaxed mb-6 whitespace-pre-line ${textMain}`}>{confirmModal.msg}</p>
-            <div className="flex gap-3">
-              <button onClick={() => { if (confirmModal.onCancel) confirmModal.onCancel(); setConfirmModal(null); }} className={`flex-1 py-3 rounded-2xl text-xs font-bold border transition-all active:scale-95 ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
-              <button onClick={() => { confirmModal.onOk(); setConfirmModal(null); }} className="flex-1 bg-rose-500 text-white py-3 rounded-2xl text-xs font-bold shadow-md hover:bg-rose-600 active:scale-95 transition-all">확인</button>
-            </div>
+            {confirmModal.extraBtn ? (
+              <div className="flex flex-col gap-2">
+                <button onClick={() => { confirmModal.onOk(); setConfirmModal(null); }} className="w-full bg-rose-500 text-white py-3 rounded-2xl text-xs font-bold shadow-md hover:bg-rose-600 active:scale-95 transition-all">{confirmModal.okLabel || '확인'}</button>
+                <button onClick={() => { setConfirmModal(null); confirmModal.extraBtn.onClick(); }} className={`w-full py-3 rounded-2xl text-xs font-bold border transition-all active:scale-95 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>{confirmModal.extraBtn.label}</button>
+                <button onClick={() => { setConfirmModal(null); }} className={`w-full py-2 rounded-2xl text-[10px] font-bold transition-all active:scale-95 ${isDarkMode ? 'text-slate-500 hover:text-slate-400' : 'text-slate-400 hover:text-slate-600'}`}>취소</button>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <button onClick={() => { if (confirmModal.onCancel) confirmModal.onCancel(); setConfirmModal(null); }} className={`flex-1 py-3 rounded-2xl text-xs font-bold border transition-all active:scale-95 ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>{confirmModal.cancelLabel || '취소'}</button>
+                <button onClick={() => { confirmModal.onOk(); setConfirmModal(null); }} className="flex-1 bg-rose-500 text-white py-3 rounded-2xl text-xs font-bold shadow-md hover:bg-rose-600 active:scale-95 transition-all">{confirmModal.okLabel || '확인'}</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -4149,7 +4185,7 @@ return (
             <div className="p-4 space-y-3">
               <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm`}>
                 {tripDays.map(d => (
-                  <button key={d} onClick={() => setEditingPlan({...editingPlan, day: d})} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 border border-transparent ${editingPlan.day === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
+                  <button key={d} onClick={() => setEditingPlan({...editingPlan, day: d})} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 border border-transparent ${parseInt(editingPlan.day) === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
                 ))}
               </div>
 
