@@ -330,7 +330,6 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
 
   const [viewPhoto, setViewPhoto] = useState(null);
   const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
-  const [mapNoPinOverlay, setMapNoPinOverlay] = useState(false); // 핀 없을 때 지역명 오버레이
   
   const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
   const [selectedPinInfo, setSelectedPinInfo] = useState(null);
@@ -1836,14 +1835,14 @@ function deletePackingItem(id) {
       const plans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
 
       if (rests.length === 0) {
-        setMapNoPinOverlay(true);
+        // 핀 없음: 현재 위치로 이동, 토스트 메시지
+        showToast(`📍 ${displayCityName !== '선택된 지역 없음' ? displayCityName : '여행지'} — 등록된 핀이 없습니다`);
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(pos => {
             mapInstanceRef.current && mapInstanceRef.current.setView([pos.coords.latitude, pos.coords.longitude], 13);
           }, () => {});
         }
       } else {
-        setMapNoPinOverlay(false);
         const now = new Date();
         const nowMin = now.getHours() * 60 + now.getMinutes();
         const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
@@ -1866,12 +1865,6 @@ function deletePackingItem(id) {
 
     return () => timers.forEach(clearTimeout);
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 핀이 생기면 오버레이 해제
-  useEffect(() => {
-    const rests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
-    if (rests.length > 0) setMapNoPinOverlay(false);
-  }, [currentRestaurants]);
 
   useEffect(() => {
     if (!travelStartDate) return;
@@ -5324,17 +5317,6 @@ return (
                   </div>
                 )}
                 <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none"></div>
-                {mapNoPinOverlay && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center pointer-events-none">
-                    <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-3xl px-8 py-6 shadow-2xl flex flex-col items-center space-y-2">
-                      <span className="text-5xl">📍</span>
-                      <p className="text-2xl font-black text-slate-800 dark:text-white">
-                        {displayCityName !== "선택된 지역 없음" ? displayCityName : "여행지 미설정"}
-                      </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">등록된 핀이 없습니다</p>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           </div>
