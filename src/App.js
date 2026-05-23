@@ -3073,16 +3073,44 @@ return (
       {viewPhoto && (() => {
         const imgs = viewPhoto.imgs || [];
         const idx = viewPhoto.idx || 0;
+        const prevIdx = (idx - 1 + imgs.length) % imgs.length;
+        const nextIdx = (idx + 1) % imgs.length;
+        let dragStartX = null;
+        const handleDragStart = (e) => { dragStartX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX; };
+        const handleDragEnd = (e) => {
+          if (dragStartX === null) return;
+          const endX = e.type === 'touchend' ? e.changedTouches[0].clientX : e.clientX;
+          const diff = dragStartX - endX;
+          if (Math.abs(diff) > 40) {
+            if (diff > 0) setViewPhoto({ imgs, idx: nextIdx });
+            else setViewPhoto({ imgs, idx: prevIdx });
+          }
+          dragStartX = null;
+        };
         return (
-          <div className="fixed inset-0 bg-black/90 z-[99998] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewPhoto(null)}>
-            <img src={imgs[idx]} className="max-w-full max-h-full object-contain rounded-md shadow-2xl animate-in zoom-in-95 duration-300" alt="" onClick={e => e.stopPropagation()} />
-            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1 rounded-full hover:bg-black/80 transition-colors" onClick={() => setViewPhoto(null)}>✕</button>
+          <div className="fixed inset-0 bg-black/92 z-[99998] flex items-center justify-center backdrop-blur-sm"
+               onClick={() => setViewPhoto(null)}
+               onMouseDown={handleDragStart} onMouseUp={handleDragEnd}
+               onTouchStart={handleDragStart} onTouchEnd={handleDragEnd}>
+            {/* 뒤에 보이는 이전/다음 사진 (어둡게) */}
             {imgs.length > 1 && (
               <>
-                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-lg" onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: (idx - 1 + imgs.length) % imgs.length }); }}>‹</button>
-                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-lg" onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: (idx + 1) % imgs.length }); }}>›</button>
-                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5">
-                  {imgs.map((_, i) => <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === idx ? 'bg-white' : 'bg-white/40'}`} />)}
+                <img src={imgs[prevIdx]} className="absolute left-4 top-1/2 -translate-y-1/2 w-[30%] max-h-[55%] object-contain rounded-md opacity-25 blur-[1px] scale-90 pointer-events-none select-none" alt="" />
+                <img src={imgs[nextIdx]} className="absolute right-4 top-1/2 -translate-y-1/2 w-[30%] max-h-[55%] object-contain rounded-md opacity-25 blur-[1px] scale-90 pointer-events-none select-none" alt="" />
+              </>
+            )}
+            {/* 현재 사진 */}
+            <img src={imgs[idx]} className="relative max-w-[80%] max-h-[85%] object-contain rounded-md shadow-2xl z-10 select-none" alt=""
+                 onClick={e => e.stopPropagation()}
+                 onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()}
+                 onTouchStart={e => { e.stopPropagation(); handleDragStart(e); }} onTouchEnd={e => { e.stopPropagation(); handleDragEnd(e); }} />
+            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors z-20 text-sm font-bold" onClick={() => setViewPhoto(null)}>✕</button>
+            {imgs.length > 1 && (
+              <>
+                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl z-20" onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: prevIdx }); }}>‹</button>
+                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white bg-black/50 w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors text-xl z-20" onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: nextIdx }); }}>›</button>
+                <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5 z-20">
+                  {imgs.map((_, i) => <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === idx ? 'bg-white' : 'bg-white/35'}`} />)}
                 </div>
               </>
             )}
@@ -3177,11 +3205,11 @@ return (
         // 렌터카: dep+arr을 하나의 카드로 그룹핑
         const rentalDep = timelinePlans.find(p => p.id === 'trans_rental_dep');
         const rentalArr = timelinePlans.find(p => p.id === 'trans_rental_arr');
-        // basicExpenses에서 렌터카 항목 추출 (기본지출에 등록된 렌터카 → transport_grouped_rental에 합산)
-        const basicRentalItems = basicExpenses.filter(b => S(b.name).includes('렌터카') && b.category === '항공권/교통');
-        const basicRentalKrw = basicRentalItems.reduce((s, b) => s + (Number(b.amtKrw) || 0), 0);
-        const basicExpensesExcludingRental = basicExpenses.filter(b => !(S(b.name).includes('렌터카') && b.category === '항공권/교통'));
-        if (rentalDep || rentalArr || basicRentalItems.length > 0) {
+        // planTimeline의 basic-exp- 항목 중 렌터카 관련 항목 추출 → transport_grouped_rental에 합산
+        const basicRentalPlans = timelinePlans.filter(p => p.id && String(p.id).startsWith('basic-exp-') && S(p.place).includes('렌터카'));
+        const basicRentalKrw = basicRentalPlans.reduce((s, p) => s + (Number(p.expenseKrw) || 0), 0);
+        const basicRentalIds = new Set(basicRentalPlans.map(p => p.id));
+        if (rentalDep || rentalArr || basicRentalPlans.length > 0) {
           const timelineKrw = (Number(rentalDep?.expenseKrw) || 0) + (Number(rentalArr?.expenseKrw) || 0);
           const totalKrw = timelineKrw + basicRentalKrw;
           const meta = rentalDep?.rentalMeta || rentalArr?.rentalMeta || {};
@@ -3194,9 +3222,9 @@ return (
           .filter(p => p.id && String(p.id).startsWith('manual-exp-'))
           .map(p => ({ id: p.id, name: p.place.replace(/^\[기타\]\s*/, ''), amtKrw: Number(p.expenseKrw) || 0, category: '기타', isFromTimeline: true, planId: p.id }));
         const basicExpItems = timelinePlans
-          .filter(p => p.id && String(p.id).startsWith('basic-exp-'))
+          .filter(p => p.id && String(p.id).startsWith('basic-exp-') && !basicRentalIds.has(p.id))
           .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, amtLocal: p.expenseLocal || '', sym: p.sym || '', category: S(p.theme || '기타'), isFromTimeline: true, planId: p.id, dayLabel: `D${p.day}` }));
-        const basicItems = [...basicExpensesExcludingRental, ...transportItems, ...accomItems, ...manualItems, ...basicExpItems];
+        const basicItems = [...basicExpenses, ...transportItems, ...accomItems, ...manualItems, ...basicExpItems];
         const basicTotalKrw = basicItems.reduce((sum, b) => sum + (Number(b.amtKrw) || 0), 0);
 
         const grandTotal = planTotalKrw + basicTotalKrw;
