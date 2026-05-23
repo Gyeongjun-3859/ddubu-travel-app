@@ -5105,10 +5105,10 @@ const planData = {
                 </div>
               </div>
 
-              <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 w-full overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 pb-2">
+              <div className={`flex-1 min-h-0 p-2 sm:p-4 w-full overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 pb-2 auto-rows-fr">
                   {tripDays.map(day => (
-                    <div key={day} className={`flex-1 flex flex-col rounded-xl border min-h-[150px] overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
+                    <div key={day} className={`flex flex-col rounded-xl border overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
                       <div className={`py-1.5 flex flex-col items-center border-b flex-shrink-0 transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
                         <span className={`text-[10px] sm:text-[11px] font-bold leading-tight transition-colors duration-300 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
                           Day {day}
@@ -5472,18 +5472,23 @@ return (
         html { overflow: hidden; scrollbar-width: none; }
         html::-webkit-scrollbar { display: none; }
 
-        /* 모든 스크롤바: 오버레이 방식으로 레이아웃 공간 미차지 */
-        * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
-        *::-webkit-scrollbar { width: 4px; height: 4px; }
-        *::-webkit-scrollbar-track { background: transparent; }
-        *::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; transition: background 0.3s; }
-        *:hover::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.5); }
-        .dark *:hover::-webkit-scrollbar-thumb { background: rgba(71,85,105,0.6); }
-
+        /* 스크롤바 공간 완전 제거 - 레이아웃에 영향 없이 콘텐츠 위에 오버레이로만 표시 */
+        * {
+          scrollbar-width: none;
+        }
+        *::-webkit-scrollbar {
+          width: 0px;
+          height: 0px;
+          background: transparent;
+        }
+        /* 스크롤 가능 영역은 overflow:overlay로 레이아웃 공간 미차지 */
+        .overflow-y-auto, .overflow-x-auto, .custom-scrollbar {
+          overflow: overlay !important;
+        }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.5); border-radius: 10px; }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71,85,105,0.6); }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.4); border-radius: 10px; }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71,85,105,0.5); }
         input[type="text"], input[type="password"], input[type="date"], select { font-variant-numeric: tabular-nums; }
         .leaflet-container { z-index: 10; font-family: inherit; background: transparent; border-radius: 1rem; transition: filter 0.3s; }
         .dark .leaflet-container { filter: brightness(0.8) contrast(1.2); }
