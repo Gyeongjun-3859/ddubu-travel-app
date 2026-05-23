@@ -3039,7 +3039,7 @@ return (
             const arrFlag = getFlagForCity(arrPlace) || (arr?.country ? (COUNTRY_FLAG[arr.country] || '') : '');
             const depLabel = depPlace ? `${depFlag}${depPlace}` : '';
             const arrLabel = arrPlace ? `${arrFlag}${arrPlace}` : '';
-            const label = depLabel && arrLabel ? `${depLabel} ↔ ${arrLabel}` : (depLabel || arrLabel || type);
+            const label = depLabel && arrLabel ? `${depLabel} - ${arrLabel}` : (depLabel || arrLabel || type);
             const totalKrw = (Number(dep?.expenseKrw) || 0) + (Number(arr?.expenseKrw) || 0);
             transportItems.push({ id: `transport_grouped_${type}`, name: label, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
           } else {
@@ -3138,7 +3138,13 @@ return (
                           }
                         } else if (item.isFromTimeline) {
                           const p = timelinePlans.find(tp => String(tp.id) === String(item.planId));
-                          if (p) { setExpenseAmtModalPlan(p); setExpenseAmtValue(String(p.expenseLocal || p.expenseKrw || '')); setExpenseAmtIsKrw(!p.expenseLocal && !!p.expenseKrw); }
+                          if (p) {
+                            // 숙소/교통 기본지출은 원화 기본
+                            const totalKrw = Number(p.expenseKrw) || 0;
+                            setExpenseAmtModalPlan(p);
+                            setExpenseAmtValue(totalKrw > 0 ? String(totalKrw) : '');
+                            setExpenseAmtIsKrw(true);
+                          }
                         }
                       };
                       const canOpen = item.isFromTimeline;
@@ -3199,11 +3205,11 @@ return (
                           ? `${cur.sym}${Number(plan.expenseLocal).toLocaleString()}`
                           : `${cur.sym}0`;
                       const openThisPlan = () => {
-                        // 모달 열 때: expenseLocal 있으면 현지화 모드, 없으면 현지화 모드로 시작
+                        // 항상 현지화 기본 (한국 여행이면 원화=현지화)
                         const hasLocal = Number(plan.expenseLocal) > 0;
                         setExpenseAmtModalPlan(plan);
-                        setExpenseAmtValue(hasLocal ? String(plan.expenseLocal) : (plan.expenseKrw ? String(plan.expenseKrw) : ""));
-                        setExpenseAmtIsKrw(!hasLocal && !!plan.expenseKrw && !isKrwCurrency ? true : isKrwCurrency);
+                        setExpenseAmtValue(hasLocal ? String(plan.expenseLocal) : "");
+                        setExpenseAmtIsKrw(isKrwCurrency); // 한국만 원화, 나머지는 현지화
                       };
                       return (
                         <div key={plan.id} onClick={openThisPlan} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 cursor-pointer active:scale-[0.98] ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
@@ -3314,10 +3320,8 @@ return (
                   className={`flex-1 border rounded-xl p-3 text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`}
                 />
               </div>
-              {expenseAmtValue && cur.code !== 'KRW' && (
-                <p className={`text-[10px] font-bold text-center mb-4 ${textMuted}`}>
-                  {expenseAmtIsKrw ? `≈ ${cur.sym}${(Number(expenseAmtValue) / (rates && rates['KRW'] && rates[cur.code] ? rates['KRW'] / rates[cur.code] : 1350)).toFixed(0)} (현지화)` : `≈ ₩${krwPreview.toLocaleString()} (자동 환산)`}
-                </p>
+              {expenseAmtValue && cur.code !== 'KRW' && !expenseAmtIsKrw && (
+                <p className={`text-[10px] font-bold text-center mb-4 ${textMuted}`}>≈ ₩{krwPreview.toLocaleString()} (자동 환산)</p>
               )}
               <div className="flex gap-2 mt-4">
                 <button onClick={closeModal} className={`flex-1 py-3 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
