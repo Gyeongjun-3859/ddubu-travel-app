@@ -2519,7 +2519,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
   }
 
   return (
-    <div style={{ zoom: finalElementScale }} className={`flex flex-col h-[100dvh] w-full ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
+    <div style={{ zoom: finalElementScale, width: '100vw', maxWidth: '100vw' }} className={`flex flex-col h-[100dvh] ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
       
       {/* 네이티브 당겨서 새로고침 (Pull-to-Refresh) 숨겨진 배경 애니메이션 */}
       {/* [버그 수정] 컨테이너 높이를 당긴 거리만큼 동기화하고, 안의 내용을 바닥(justify-end)에 붙여 짤림 현상 완벽 제거 */}
@@ -5093,7 +5093,7 @@ const planData = {
                 </div>
               </div>
 
-              <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 w-full overflow-visible sm:overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
+              <div className={`flex-1 flex flex-col min-h-0 p-2 sm:p-4 w-full overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
                 <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 h-auto sm:h-full pb-2 min-h-max sm:min-h-0">
                   {tripDays.map(day => (
                     <div key={day} className={`flex-1 flex flex-col rounded-xl border min-h-[150px] overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
@@ -5103,7 +5103,7 @@ const planData = {
                         </span>
                         <span className={`text-[7px] sm:text-[8px] mt-0.5 transition-colors duration-300 ${textMuted}`}>{getDayDateString(day)}</span>
                       </div>
-                      <div className={`flex-1 overflow-visible sm:overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+                      <div className={`flex-1 overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
                         
                         {/* 숙소(isAccommodation) 아이템 상단 고정 렌더링 로직 추가 */}
                         {planTimeline.filter(p => p && p.isAccommodation).map(plan => {
