@@ -3733,8 +3733,16 @@ const getLocalSym = (c) => {
               {selectedPinInfo.lat && selectedPinInfo.lng && (
                 <button onClick={() => {
                   const dest = `${selectedPinInfo.lat},${selectedPinInfo.lng}`;
-                  const label = encodeURIComponent(S(selectedPinInfo.name));
-                  window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&destination_place_id=${label}&travelmode=walking`, '_blank');
+                  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+                  const isAndroid = /Android/i.test(navigator.userAgent);
+                  if (isIOS) {
+                    window.location.href = `comgooglemaps://?daddr=${dest}&directionsmode=walking`;
+                    setTimeout(() => { window.open(`https://maps.google.com/maps?daddr=${dest}&dirflg=w`, '_blank'); }, 1500);
+                  } else if (isAndroid) {
+                    window.location.href = `intent://maps.google.com/maps?daddr=${dest}&dirflg=w#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=https://maps.google.com/maps?daddr=${encodeURIComponent(dest)}%26dirflg=w;end`;
+                  } else {
+                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`, '_blank');
+                  }
                 }} className="w-full mt-4 bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2">
                   <span>🧭</span><span>구글 네비게이션으로 길 안내</span>
                 </button>
@@ -4295,7 +4303,16 @@ const planData = {
                 <button onClick={() => {
                   setPinQuickView(null);
                   const dest = `${pinQuickView.lat},${pinQuickView.lng}`;
-                  window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`, '_blank');
+                  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+                  const isAndroid = /Android/i.test(navigator.userAgent);
+                  if (isIOS) {
+                    window.location.href = `comgooglemaps://?daddr=${dest}&directionsmode=walking`;
+                    setTimeout(() => { window.open(`https://maps.google.com/maps?daddr=${dest}&dirflg=w`, '_blank'); }, 1500);
+                  } else if (isAndroid) {
+                    window.location.href = `intent://maps.google.com/maps?daddr=${dest}&dirflg=w#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=https://maps.google.com/maps?daddr=${encodeURIComponent(dest)}%26dirflg=w;end`;
+                  } else {
+                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=walking`, '_blank');
+                  }
                 }} className="w-full bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1">
                   <span>🧭</span><span>현재 위치에서 길 안내</span>
                 </button>
@@ -4310,21 +4327,27 @@ const planData = {
         const validPins = currentRestaurants.filter(r => r && r.lat && r.lng);
         // 구글 맵 앱 우선 실행 함수
         const openGoogleNav = (mode) => {
-          const waypointStr = navWaypoints.filter(w => w).map(w => `${w.lat},${w.lng}`).join('|');
-          const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${navOrigin.lat},${navOrigin.lng}&destination=${navDest.lat},${navDest.lng}${waypointStr ? `&waypoints=${waypointStr}` : ''}&travelmode=${mode}`;
-          // Android: comgooglemaps://, iOS: comgooglemaps://
-          const appUrl = `comgooglemaps://?saddr=${navOrigin.lat},${navOrigin.lng}&daddr=${navDest.lat},${navDest.lng}${waypointStr ? `+to:${navWaypoints.filter(w=>w).map(w=>`${w.lat},${w.lng}`).join('+to:')}` : ''}&directionsmode=${mode}`;
+          const wps = navWaypoints.filter(w => w);
+          const origin = `${navOrigin.lat},${navOrigin.lng}`;
+          const dest = `${navDest.lat},${navDest.lng}`;
+          const waypointStr = wps.map(w => `${w.lat},${w.lng}`).join('|');
+          const dirflg = mode === 'driving' ? 'd' : mode === 'transit' ? 'r' : 'w';
           const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
           const isAndroid = /Android/i.test(navigator.userAgent);
+
           if (isIOS) {
-            const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = appUrl;
-            document.body.appendChild(iframe);
-            setTimeout(() => { document.body.removeChild(iframe); window.open(webUrl, '_blank'); }, 1500);
+            // iOS: comgooglemaps:// 앱 스킴 → 미설치 시 웹으로 fallback
+            const appUrl = `comgooglemaps://?saddr=${origin}&daddr=${dest}${wps.length ? '+to:' + wps.map(w=>`${w.lat},${w.lng}`).join('+to:') : ''}&directionsmode=${mode}`;
+            const webUrl = `https://maps.google.com/maps?saddr=${origin}&daddr=${dest}${wps.length ? '+to:'+wps.map(w=>`${w.lat},${w.lng}`).join('+to:') : ''}&dirflg=${dirflg}`;
+            window.location.href = appUrl;
+            setTimeout(() => { window.open(webUrl, '_blank'); }, 1500);
           } else if (isAndroid) {
-            window.location.href = `intent://maps.google.com/maps?saddr=${navOrigin.lat},${navOrigin.lng}&daddr=${navDest.lat},${navDest.lng}${waypointStr ? `+to:${waypointStr.replace(/\|/g,'+')}` : ''}&dirflg=${mode==='driving'?'d':mode==='transit'?'r':'w'}#Intent;scheme=https;package=com.google.android.apps.maps;end`;
+            // Android: intent 스킴으로 구글 맵 앱 직접 호출, 미설치 시 Play스토어/웹 fallback
+            const daddr = dest + (wps.length ? '+to:' + wps.map(w=>`${w.lat},${w.lng}`).join('+to:') : '');
+            window.location.href = `intent://maps.google.com/maps?saddr=${origin}&daddr=${daddr}&dirflg=${dirflg}#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=https://maps.google.com/maps?saddr=${encodeURIComponent(origin)}%26daddr=${encodeURIComponent(daddr)}%26dirflg=${dirflg};end`;
           } else {
+            // PC 웹
+            const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}${waypointStr ? `&waypoints=${waypointStr}` : ''}&travelmode=${mode}`;
             window.open(webUrl, '_blank');
           }
           setIsNavModalOpen(false);
