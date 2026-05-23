@@ -1822,6 +1822,53 @@ function deletePackingItem(id) {
     document.head.appendChild(script);
   }, []);
 
+  // 숙소→현재일정→지역→현위치 순서로 지도 위치를 스마트하게 이동하는 공통 함수
+  // 반환값: 핀/지역 데이터가 있어서 위치 이동을 확정했으면 true, 데이터가 없어서 미확정이면 false
+  const flyToSmartPosition = useCallback((map, rests, plans) => {
+    const safeRests = Array.isArray(rests) ? rests.filter(Boolean) : [];
+    const safePlans = Array.isArray(plans) ? plans.filter(Boolean) : [];
+
+    if (safeRests.length === 0) {
+      const cityForMap = displayCityName !== '선택된 지역 없음' ? displayCityName : null;
+      if (cityForMap) {
+        const queryName = CITY_NAME_TO_EN[cityForMap] || cityForMap;
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryName)}&limit=1&accept-language=en`)
+          .then(r => r.json())
+          .then(data => {
+            if (data && data[0] && mapInstanceRef.current) {
+              mapInstanceRef.current.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 12);
+            }
+          })
+          .catch(() => {});
+        return true; // 도시명 기반 이동 시도 → 완료로 간주
+      } else if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          mapInstanceRef.current && mapInstanceRef.current.setView([pos.coords.latitude, pos.coords.longitude], 13);
+        }, () => {});
+        return true; // 현재 위치 기반 이동 시도 → 완료로 간주
+      }
+      return false; // 데이터도 도시명도 없음 → 아직 미완료
+    } else {
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
+      const todayD = new Date(now); todayD.setHours(0,0,0,0);
+      const diff = Math.round((todayD - startD) / 86400000);
+      const todayDay = diff + 1;
+      let targetPin = null;
+      if (diff >= 0 && safePlans.some(p => parseInt(p.day) === todayDay)) {
+        const todayPlans = safePlans.filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
+        const passed = todayPlans.filter(p => { const [h,m] = p.time.split(':').map(Number); return h*60+m <= nowMin; });
+        const mp = passed.length > 0 ? passed[passed.length-1] : todayPlans[0];
+        if (mp) targetPin = safeRests.find(r => S(r.name) === S(mp.place));
+      }
+      if (!targetPin) targetPin = safeRests.find(r => r.isAccommodation && r.lat && r.lng);
+      if (!targetPin) targetPin = safeRests.find(r => r.lat && r.lng);
+      if (targetPin?.lat) map.setView([targetPin.lat, targetPin.lng], 15);
+      return true; // 핀 데이터 있음 → 완료
+    }
+  }, [displayCityName, travelStartDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // [NEW] 지도 탭 전환 시 잔상 해결 + 최초 1회 자동 위치 이동
   useEffect(() => {
     if (activeTab !== 'map' || !mapInstanceRef.current) return;
@@ -1829,48 +1876,9 @@ function deletePackingItem(id) {
     map.invalidateSize(true);
     const timers = [10, 50, 150, 350, 500].map(t => setTimeout(() => map.invalidateSize(true), t));
 
-    // 지도 탭 최초 진입 시 초기 위치 이동 — 이 시점엔 currentRestaurants가 state에 완전히 로드됨
     if (!mapInitFlyDoneRef.current) {
-      const rests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
-      const plans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-
-      if (rests.length === 0) {
-        // 핀 없음: 일정 지역명 → Nominatim 좌표 조회 → 현재 위치 순으로 폴백
-        const cityForMap = displayCityName !== '선택된 지역 없음' ? displayCityName : null;
-        if (cityForMap) {
-          const queryName = CITY_NAME_TO_EN[cityForMap] || cityForMap;
-          fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryName)}&limit=1&accept-language=en`)
-            .then(r => r.json())
-            .then(data => {
-              if (data && data[0] && mapInstanceRef.current) {
-                mapInstanceRef.current.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 12);
-              }
-            })
-            .catch(() => {});
-        } else if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(pos => {
-            mapInstanceRef.current && mapInstanceRef.current.setView([pos.coords.latitude, pos.coords.longitude], 13);
-          }, () => {});
-        }
-      } else {
-        const now = new Date();
-        const nowMin = now.getHours() * 60 + now.getMinutes();
-        const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
-        const todayD = new Date(now); todayD.setHours(0,0,0,0);
-        const diff = Math.round((todayD - startD) / 86400000);
-        const todayDay = diff + 1;
-        let targetPin = null;
-        if (diff >= 0 && plans.some(p => parseInt(p.day) === todayDay)) {
-          const todayPlans = plans.filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
-          const passed = todayPlans.filter(p => { const [h,m] = p.time.split(':').map(Number); return h*60+m <= nowMin; });
-          const mp = passed.length > 0 ? passed[passed.length-1] : todayPlans[0];
-          if (mp) targetPin = rests.find(r => S(r.name) === S(mp.place));
-        }
-        if (!targetPin) targetPin = rests.find(r => r.isAccommodation && r.lat && r.lng);
-        if (!targetPin) targetPin = rests.find(r => r.lat && r.lng);
-        if (targetPin?.lat) map.setView([targetPin.lat, targetPin.lng], 15);
-      }
-      mapInitFlyDoneRef.current = true;
+      const done = flyToSmartPosition(map, currentRestaurants, planTimeline);
+      if (done) mapInitFlyDoneRef.current = true;
     }
 
     return () => timers.forEach(clearTimeout);
@@ -2175,7 +2183,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
 
         mapInstanceRef.current = map;
 
-        // 초기 위치 이동은 지도 탭 진입 시점 useEffect에서 처리
+        // 초기 위치 이동은 데이터 로드 완료 후 처리
       } catch (err) {
         console.error("Leaflet initialization failed", err);
       }
@@ -2183,6 +2191,12 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
 
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
+
+    // 지도 인스턴스 준비 + 데이터 로드 완료 시점에 최초 1회 위치 이동
+    if (!mapInitFlyDoneRef.current && activeTab === 'map') {
+      const done = flyToSmartPosition(map, currentRestaurants, planTimeline);
+      if (done) mapInitFlyDoneRef.current = true;
+    }
     
     polylinesRef.current.forEach(p => p.remove());
     polylinesRef.current = [];
@@ -4507,7 +4521,14 @@ const planData = {
             if (pullDistance > 70) {
               setIsRefreshing(true);
               setRefreshTrigger(prev => prev + 1);
-              setTimeout(() => { setIsRefreshing(false); setPullDistance(0); showToast("🔄 동기화 완료!"); }, 1500);
+              setTimeout(() => {
+                setIsRefreshing(false);
+                setPullDistance(0);
+                showToast("🔄 동기화 완료!");
+                if (activeTab === 'map' && mapInstanceRef.current) {
+                  flyToSmartPosition(mapInstanceRef.current, currentRestaurants, planTimeline);
+                }
+              }, 1500);
             } else {
               setPullDistance(0);
             }
@@ -5319,7 +5340,12 @@ return (
             </div>
             
             <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`}>
-              <div className="w-full h-full rounded-3xl overflow-hidden relative">
+              <div
+                className="w-full h-full rounded-3xl overflow-hidden relative"
+                onTouchStart={(e) => e.stopPropagation()}
+                onTouchMove={(e) => e.stopPropagation()}
+                onTouchEnd={(e) => e.stopPropagation()}
+              >
                 {!isLeafletLoaded && (
                   <div className={`absolute inset-0 z-0 flex flex-col items-center justify-center transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-400'}`}>
                     <span className="text-xl animate-spin inline-block mb-2">🔄</span>
