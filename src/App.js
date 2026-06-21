@@ -567,6 +567,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
     setViewPhoto({ imgs, idx: idx - 1 });
   };
   const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
+  const pendingMapFlyRef = useRef(null); // 핀 이동 버튼 클릭 시 탭 전환 후 flyTo 대기 좌표
   
   const [selectedPlanInfo, setSelectedPlanInfo] = useState(null); 
   const [selectedPinInfo, setSelectedPinInfo] = useState(null);
@@ -2478,57 +2479,100 @@ function deletePackingItem(id) {
     const safeRests = Array.isArray(rests) ? rests.filter(Boolean) : [];
     const safePlans = Array.isArray(plans) ? plans.filter(Boolean) : [];
 
+    // 도시명 기반 fallback 이동
+    const flyToCity = (cityName) => {
+      if (!cityName || cityName === '선택된 지역 없음') return false;
+      const queryName = CITY_NAME_TO_EN[cityName] || cityName;
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryName)}&limit=1&accept-language=en`)
+        .then(r => r.json())
+        .then(data => {
+          if (data && data[0] && mapInstanceRef.current) {
+            mapInstanceRef.current.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 12);
+          }
+        })
+        .catch(() => {});
+      return true;
+    };
+
     if (safeRests.length === 0) {
       const cityForMap = displayCityName !== '선택된 지역 없음' ? displayCityName : null;
-      if (cityForMap) {
-        const queryName = CITY_NAME_TO_EN[cityForMap] || cityForMap;
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryName)}&limit=1&accept-language=en`)
-          .then(r => r.json())
-          .then(data => {
-            if (data && data[0] && mapInstanceRef.current) {
-              mapInstanceRef.current.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 12);
-            }
-          })
-          .catch(() => {});
-        return true; // 도시명 기반 이동 시도 → 완료로 간주
-      } else if (navigator.geolocation) {
+      if (cityForMap) return flyToCity(cityForMap);
+      if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(pos => {
           mapInstanceRef.current && mapInstanceRef.current.setView([pos.coords.latitude, pos.coords.longitude], 13);
         }, () => {});
-        return true; // 현재 위치 기반 이동 시도 → 완료로 간주
+        return true;
       }
-      return false; // 데이터도 도시명도 없음 → 아직 미완료
-    } else {
-      const now = new Date();
-      const nowMin = now.getHours() * 60 + now.getMinutes();
-      const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
-      const todayD = new Date(now); todayD.setHours(0,0,0,0);
-      const diff = Math.round((todayD - startD) / 86400000);
-      const todayDay = diff + 1;
-      let targetPin = null;
-      if (diff >= 0 && safePlans.some(p => parseInt(p.day) === todayDay)) {
-        const todayPlans = safePlans.filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
-        const passed = todayPlans.filter(p => { const [h,m] = p.time.split(':').map(Number); return h*60+m <= nowMin; });
-        const mp = passed.length > 0 ? passed[passed.length-1] : todayPlans[0];
-        if (mp) targetPin = safeRests.find(r => S(r.name) === S(mp.place));
-      }
-      if (!targetPin) targetPin = safeRests.find(r => r.isAccommodation && r.lat && r.lng);
-      if (!targetPin) targetPin = safeRests.find(r => r.lat && r.lng);
-      if (targetPin?.lat) map.setView([targetPin.lat, targetPin.lng], 15);
-      return true; // 핀 데이터 있음 → 완료
+      return false;
     }
+
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
+    const todayD = new Date(now); todayD.setHours(0,0,0,0);
+    const diff = Math.round((todayD - startD) / 86400000);
+
+    // 여행 전(diff < 0): D1 첫 번째 핀 또는 D1 지역 도시명으로 이동
+    if (diff < 0) {
+      const d1Plans = safePlans.filter(p => parseInt(p.day) === 1 && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
+      const d1Pin = d1Plans.map(p => safeRests.find(r => r.lat && r.lng && S(r.name) === S(p.place))).find(Boolean);
+      if (d1Pin) { map.setView([d1Pin.lat, d1Pin.lng], 15); return true; }
+      // lat/lng 있는 D1 핀 직접 탐색
+      const d1DirectPin = safeRests.find(r => r.lat && r.lng && safePlans.some(p => parseInt(p.day) === 1 && S(p.place) === S(r.name)));
+      if (d1DirectPin) { map.setView([d1DirectPin.lat, d1DirectPin.lng], 15); return true; }
+      // D1 지역명 → 도시명 fallback
+      const d1Region = d1Plans.find(p => p.region && p.region !== '선택된 지역 없음')?.region;
+      if (d1Region) return flyToCity(d1Region);
+      return flyToCity(displayCityName);
+    }
+
+    // 여행 중(diff >= 0): 오늘 날짜 기준 현재 시각에 있어야 할 핀
+    const todayDay = diff + 1;
+    let targetPin = null;
+    if (safePlans.some(p => parseInt(p.day) === todayDay)) {
+      const todayPlans = safePlans.filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
+      const passed = todayPlans.filter(p => { const [h,m] = p.time.split(':').map(Number); return h*60+m <= nowMin; });
+      const mp = passed.length > 0 ? passed[passed.length-1] : todayPlans[0];
+      if (mp) targetPin = safeRests.find(r => r.lat && r.lng && S(r.name) === S(mp.place));
+      // 해당 일정 핀 없으면 오늘 day에 lat/lng 있는 핀 직접 탐색
+      if (!targetPin) targetPin = safeRests.find(r => r.lat && r.lng && safePlans.some(p => parseInt(p.day) === todayDay && S(p.place) === S(r.name)));
+      // 오늘 지역명 fallback
+      if (!targetPin) {
+        const todayRegion = todayPlans.find(p => p.region && p.region !== '선택된 지역 없음')?.region;
+        if (todayRegion) return flyToCity(todayRegion);
+      }
+    }
+    if (!targetPin) targetPin = safeRests.find(r => r.isAccommodation && r.lat && r.lng);
+    if (!targetPin) targetPin = safeRests.find(r => r.lat && r.lng);
+    if (targetPin?.lat) { map.setView([targetPin.lat, targetPin.lng], 15); return true; }
+    return flyToCity(displayCityName);
   }, [displayCityName, travelStartDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // [NEW] 지도 탭 전환 시 잔상 해결 + 최초 1회 자동 위치 이동
+  // [NEW] 지도 탭 전환 시 잔상 해결 + 최초 1회 자동 위치 이동 (Leaflet 전용)
   useEffect(() => {
     if (activeTab !== 'map' || !mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
     map.invalidateSize(true);
     const timers = [10, 50, 150, 350, 500].map(t => setTimeout(() => map.invalidateSize(true), t));
 
-    if (!mapInitFlyDoneRef.current) {
-      const done = flyToSmartPosition(map, currentRestaurants, planTimeline);
-      if (done) mapInitFlyDoneRef.current = true;
+    // 카카오맵 모드이면 pendingMapFlyRef는 카카오맵 useEffect에서 처리 — 여기선 스킵
+    if (!isKakaoMap) {
+      if (pendingMapFlyRef.current) {
+        const { lat, lng, id } = pendingMapFlyRef.current;
+        pendingMapFlyRef.current = null;
+        const flyTimer = setTimeout(() => {
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.flyTo([lat, lng], 17);
+            if (id) window.dispatchEvent(new CustomEvent('onPinClick', { detail: String(id) }));
+          }
+        }, 600);
+        return () => { timers.forEach(clearTimeout); clearTimeout(flyTimer); };
+      }
+
+      if (!mapInitFlyDoneRef.current) {
+        const done = flyToSmartPosition(map, currentRestaurants, planTimeline);
+        if (done) mapInitFlyDoneRef.current = true;
+      }
     }
 
     return () => timers.forEach(clearTimeout);
@@ -2541,18 +2585,18 @@ function deletePackingItem(id) {
     todayDate.setHours(0, 0, 0, 0);
     start.setHours(0, 0, 0, 0);
     const diffTime = todayDate.getTime() - start.getTime();
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    
-const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
+    // Math.round로 통일 (flyToSmartPosition과 동일 기준)
+    const diff = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = diff + 1; // diff=0이면 D1, diff=1이면 D2
+    const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     // [스마트 Day 자동 인식 로직]
-    if (diffDays < 1) {
+    if (diff < 0) {
       setDashboardDay(1); // 여행 전이면 무조건 Day 1
     } else if (diffDays > safeMax) {
       setDashboardDay(safeMax); // 여행 후면 마지막 Day 고정
     } else {
       setDashboardDay(diffDays); // 여행 중이면 해당 일차 표시
     }
-    console.log(`📅 오늘 날짜를 분석하여 Day ${dashboardDay}를 자동으로 활성화했습니다.`);
   }, [travelStartDate, maxDay]);
 
   useEffect(() => {
@@ -3255,28 +3299,61 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       } catch(e) {}
     });
 
-    // 지역 기반 초기 위치: 핀 있으면 첫 핀, 없으면 설정된 지역으로 검색 이동
-    // mapInitFlyDoneRef는 여행 전환 시에만 리셋 — 지역명 변경 시엔 항상 재이동
+    // 지역 기반 초기 위치: 여행 전/중 스마트 이동
     const cityToSearch = (displayCityName && displayCityName !== '선택된 지역 없음')
       ? displayCityName : globalManualRegion;
     const currentCity = cityToSearch || '';
     const prevCity = mapInitFlyDoneRef.current;
-    const first = safeRests.find(r => r.lat && r.lng);
-    if (first && prevCity !== 'pinset') {
-      map.setCenter(new kakao.maps.LatLng(first.lat, first.lng));
-      map.setLevel(4);
-      mapInitFlyDoneRef.current = 'pinset';
-    } else if (!first && currentCity && prevCity !== currentCity) {
-      try {
-        const ps = new kakao.maps.services.Places();
-        ps.keywordSearch(currentCity, (data, status) => {
-          if (status === kakao.maps.services.Status.OK && data[0]) {
-            map.setCenter(new kakao.maps.LatLng(parseFloat(data[0].y), parseFloat(data[0].x)));
-            map.setLevel(6);
-          }
-        });
-      } catch(e) {}
-      mapInitFlyDoneRef.current = currentCity;
+
+    // pendingMapFlyRef: 핀 이동 버튼에서 넘어온 경우 즉시 이동
+    if (pendingMapFlyRef.current) {
+      const { lat, lng } = pendingMapFlyRef.current;
+      pendingMapFlyRef.current = null;
+      try { map.setCenter(new kakao.maps.LatLng(lat, lng)); map.setLevel(3); } catch(e) {}
+    } else if (prevCity !== 'pinset') {
+      // 여행 전/중 스마트 이동 (Leaflet flyToSmartPosition과 동일 로직)
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const startD = new Date(travelStartDate); startD.setHours(0,0,0,0);
+      const todayD = new Date(now); todayD.setHours(0,0,0,0);
+      const diff = Math.round((todayD - startD) / 86400000);
+      const safePlans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+
+      let targetPin = null;
+      if (diff < 0) {
+        // 여행 전: D1 첫 핀
+        const d1Plans = safePlans.filter(p => parseInt(p.day) === 1 && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
+        targetPin = d1Plans.map(p => safeRests.find(r => r.lat && r.lng && S(r.name) === S(p.place))).find(Boolean)
+          || safeRests.find(r => r.lat && r.lng && safePlans.some(p => parseInt(p.day) === 1 && S(p.place) === S(r.name)));
+      } else {
+        // 여행 중: 오늘 날짜+현재 시각 기준 핀
+        const todayDay = diff + 1;
+        if (safePlans.some(p => parseInt(p.day) === todayDay)) {
+          const todayPlans = safePlans.filter(p => parseInt(p.day) === todayDay && p.time && !p.isTransport).sort((a,b) => S(a.time).localeCompare(S(b.time)));
+          const passed = todayPlans.filter(p => { const [h,m] = p.time.split(':').map(Number); return h*60+m <= nowMin; });
+          const mp = passed.length > 0 ? passed[passed.length-1] : todayPlans[0];
+          if (mp) targetPin = safeRests.find(r => r.lat && r.lng && S(r.name) === S(mp.place));
+          if (!targetPin) targetPin = safeRests.find(r => r.lat && r.lng && safePlans.some(p => parseInt(p.day) === todayDay && S(p.place) === S(r.name)));
+        }
+        if (!targetPin) targetPin = safeRests.find(r => r.isAccommodation && r.lat && r.lng);
+        if (!targetPin) targetPin = safeRests.find(r => r.lat && r.lng);
+      }
+
+      if (targetPin) {
+        try { map.setCenter(new kakao.maps.LatLng(targetPin.lat, targetPin.lng)); map.setLevel(4); } catch(e) {}
+        mapInitFlyDoneRef.current = 'pinset';
+      } else if (currentCity && prevCity !== currentCity) {
+        try {
+          const ps = new kakao.maps.services.Places();
+          ps.keywordSearch(currentCity, (data, status) => {
+            if (status === kakao.maps.services.Status.OK && data[0]) {
+              map.setCenter(new kakao.maps.LatLng(parseFloat(data[0].y), parseFloat(data[0].x)));
+              map.setLevel(6);
+            }
+          });
+        } catch(e) {}
+        mapInitFlyDoneRef.current = currentCity;
+      }
     }
   }, [isKakaoMap, isKakaoMapLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, mapActiveDays, getDayColor, dashboardDay, displayCityName, globalManualRegion]);
 
@@ -6275,13 +6352,22 @@ const planData = {
                           {pin.lat && pin.lng && (
                             <button onClick={() => {
                               setIsMyPinsModalOpen(false);
-                              setActiveTab('map');
-                              setTimeout(() => {
-                                if (mapInstanceRef.current) {
-                                  mapInstanceRef.current.flyTo([pin.lat, pin.lng], 17);
+                              if (activeTab === 'map') {
+                                // 이미 지도 탭 — 즉시 이동
+                                setTimeout(() => {
+                                  if (isKakaoMap && kakaoMapInstanceRef.current && window.kakao) {
+                                    kakaoMapInstanceRef.current.setCenter(new window.kakao.maps.LatLng(pin.lat, pin.lng));
+                                    kakaoMapInstanceRef.current.setLevel(3);
+                                  } else if (mapInstanceRef.current) {
+                                    mapInstanceRef.current.flyTo([pin.lat, pin.lng], 17);
+                                  }
                                   window.dispatchEvent(new CustomEvent('onPinClick', { detail: String(pin.id) }));
-                                }
-                              }, 300);
+                                }, 100);
+                              } else {
+                                // 다른 탭 → 탭 전환 후 이동 (pendingMapFlyRef 경로)
+                                pendingMapFlyRef.current = { lat: pin.lat, lng: pin.lng, id: pin.id };
+                                setActiveTab('map');
+                              }
                             }} className="shrink-0 bg-indigo-500 hover:bg-indigo-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded transition-colors" title="지도에서 위치 보기">
                               📍이동
                             </button>
@@ -7666,7 +7752,7 @@ return (
               </div>
             </div>
             
-            <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`} onTouchMove={e => e.stopPropagation()} style={{touchAction:'none'}}>
+            <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`} style={{touchAction:'none'}}>
               <div className="w-full h-full rounded-3xl overflow-hidden relative">
                 {/* 로딩 표시 */}
                 {((isKakaoMap && !isKakaoMapLoaded) || (!isKakaoMap && !isLeafletLoaded)) && (
@@ -7687,9 +7773,9 @@ return (
                   >🌍 구글</button>
                 </div>
                 {/* Leaflet(구글) 지도 — 항상 DOM에 존재, visibility로 전환 */}
-                <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none" style={{visibility: isKakaoMap ? 'hidden' : 'visible', touchAction:'none'}} onTouchMove={e => e.stopPropagation()}></div>
+                <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none" style={{visibility: isKakaoMap ? 'hidden' : 'visible', touchAction:'pan-x pan-y'}}></div>
                 {/* 카카오맵 — 항상 DOM에 존재, visibility로 전환 */}
-                <div ref={kakaoMapContainerRef} className="absolute inset-0 z-10 w-full h-full cursor-crosshair" style={{visibility: isKakaoMap ? 'visible' : 'hidden', touchAction:'none'}} onTouchMove={e => e.stopPropagation()}></div>
+                <div ref={kakaoMapContainerRef} className="absolute inset-0 z-10 w-full h-full cursor-crosshair" style={{visibility: isKakaoMap ? 'visible' : 'hidden', touchAction:'pan-x pan-y'}}></div>
               </div>
             </div>
           </div>
