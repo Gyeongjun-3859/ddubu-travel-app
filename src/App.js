@@ -2213,13 +2213,31 @@ function deletePackingItem(id) {
   // 카카오맵 SDK 로드
   useEffect(() => {
     if (window.kakao && window.kakao.maps) { setIsKakaoMapLoaded(true); return; }
-    const script = document.createElement('script');
-    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=f839f7d670ba8f3c04271e117d3f93b9&autoload=false&libraries=services`;
-    script.async = true;
-    script.onload = () => {
-      window.kakao.maps.load(() => setIsKakaoMapLoaded(true));
+    const loadKakaoSDK = () => {
+      if (document.querySelector('script[src*="dapi.kakao.com"]')) {
+        // 이미 삽입됐지만 아직 로드 중 — 폴링으로 대기
+        const poll = setInterval(() => {
+          if (window.kakao && window.kakao.maps) {
+            clearInterval(poll);
+            try { window.kakao.maps.load(() => setIsKakaoMapLoaded(true)); } catch(e) { setIsKakaoMapLoaded(true); }
+          }
+        }, 300);
+        setTimeout(() => clearInterval(poll), 15000);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=f839f7d670ba8f3c04271e117d3f93b9&autoload=false&libraries=services`;
+      script.async = true;
+      script.onload = () => {
+        try { window.kakao.maps.load(() => setIsKakaoMapLoaded(true)); } catch(e) { setIsKakaoMapLoaded(true); }
+      };
+      script.onerror = () => {
+        // 로드 실패 시 3초 후 재시도
+        setTimeout(loadKakaoSDK, 3000);
+      };
+      document.head.appendChild(script);
     };
-    document.head.appendChild(script);
+    loadKakaoSDK();
   }, []);
 
 
@@ -3435,7 +3453,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
   }
 
   return (
-    <div style={{ zoom: finalElementScale, width: '100vw', maxWidth: '100vw' }} className={`flex flex-col h-[100dvh] ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
+    <div style={{ zoom: finalElementScale, width: '100vw', maxWidth: '100vw', overflowX: 'hidden' }} className={`flex flex-col h-[100dvh] ${appBg} ${textMain} overflow-hidden select-none relative transition-colors duration-300`} onClick={() => setActiveMobileCard(null)}>
       
       {/* 네이티브 당겨서 새로고침 (Pull-to-Refresh) 숨겨진 배경 애니메이션 */}
       {/* [버그 수정] 컨테이너 높이를 당긴 거리만큼 동기화하고, 안의 내용을 바닥(justify-end)에 붙여 짤림 현상 완벽 제거 */}
@@ -6260,7 +6278,7 @@ const planData = {
           }
         }}
       >
-        <header className={`h-12 sm:h-14 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors duration-300`}>
+        <header className={`min-h-[48px] sm:min-h-[56px] ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors duration-300 overflow-hidden`} style={{maxWidth:'100vw'}}>
           <div className="flex items-center flex-1 space-x-2 sm:space-x-4">
             <button className={`p-1.5 rounded-lg ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'} transition-all duration-300 active:scale-95`} onClick={() => setIsMobileMenuOpen(true)}>
               <span className="text-xl leading-none">☰</span>
@@ -6299,12 +6317,17 @@ const planData = {
                 ].filter(Boolean);
               })() : [];
 
-              const cardCls = `cursor-pointer flex flex-col items-center justify-center px-1 py-1 rounded-md border shadow-sm flex-shrink-0 relative transition-all duration-200 active:scale-95`;
+              // 총 카드 수에 따라 카드 너비 동적 계산 (헤더 좌우 여백 ~120px 제외)
+              const totalCards = tripDays.length + expandedSlots.length + (expandedSlots.length > 0 ? 1 : 0);
+              const cardW = Math.max(32, Math.min(44, Math.floor((window.innerWidth - 120) / Math.max(totalCards, 1)) - 4));
+              const cardStyle = { minWidth: `${cardW}px`, width: `${cardW}px` };
+
+              const cardCls = `cursor-pointer flex flex-col items-center justify-center px-0.5 py-1 rounded-md border shadow-sm flex-shrink-0 relative transition-all duration-200 active:scale-95`;
               const baseCard = isDarkMode ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-white border-slate-200 hover:bg-slate-50';
-              const lbl = `absolute top-0.5 left-1 text-[7px] font-black leading-none ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`;
+              const lbl = `absolute top-0.5 left-0.5 text-[6px] font-black leading-none ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`;
 
               return (
-                <div className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0" style={{scrollbarWidth:'none'}}>
+                <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-hidden">
                   {/* Day 요약 카드들 */}
                   {tripDays.map(d => {
                     const dateStr = getDateStringForDay(d);
@@ -6314,10 +6337,11 @@ const planData = {
                     return (
                       <div key={d}
                         onClick={() => { setExpandedWeatherDay(isExpanded ? null : d); if (!hourly) handleWeatherDayClick(d); }}
-                        className={`${cardCls} min-w-[44px] ${baseCard} ${isExpanded ? (isDarkMode ? 'border-indigo-500 bg-indigo-900/40' : 'border-indigo-400 bg-indigo-50') : ''}`}>
+                        style={cardStyle}
+                        className={`${cardCls} ${baseCard} ${isExpanded ? (isDarkMode ? 'border-indigo-500 bg-indigo-900/40' : 'border-indigo-400 bg-indigo-50') : ''}`}>
                         <span className={`${lbl} ${isExpanded ? 'text-indigo-400' : ''}`}>D{d}</span>
-                        <span className="text-xs mt-2">{info ? info[1] : '—'}</span>
-                        {fc && <span className={`text-[8px] font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{fc.max}°</span>}
+                        <span className="text-[10px] mt-2">{info ? info[1] : '—'}</span>
+                        {fc && <span className={`text-[7px] font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{fc.max}°</span>}
                       </div>
                     );
                   })}
@@ -6326,10 +6350,11 @@ const planData = {
                   {/* 펼쳐진 시간대 카드들 */}
                   {expandedSlots.map(slot => (
                     <div key={slot.key} onClick={() => setIsWeatherModalOpen(true)}
-                      className={`${cardCls} min-w-[44px] ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-200'}`}>
+                      style={cardStyle}
+                      className={`${cardCls} ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-200'}`}>
                       <span className={`${lbl} text-indigo-400`}>{slot.label}</span>
-                      <span className="text-xs mt-2">{slot[1]}</span>
-                      <span className={`text-[8px] font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{slot.temp}°</span>
+                      <span className="text-[10px] mt-2">{slot[1]}</span>
+                      <span className={`text-[7px] font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{slot.temp}°</span>
                     </div>
                   ))}
                 </div>
