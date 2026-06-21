@@ -425,6 +425,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
 
   const [newDay, setNewDay] = useState(1);
   const [editingPlanId, setEditingPlanId] = useState(null); // null이면 새 등록, id 있으면 수정 모드
+  const [editingPlanSnapshot, setEditingPlanSnapshot] = useState(null); // 수정 시작 시 원본 스냅샷
   const [newTime, setNewTime] = useState("");
   const [newPlace, setNewPlace] = useState("");
   const [newLocalName, setNewLocalName] = useState("");
@@ -822,11 +823,14 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
 
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     const linkedPlan = safePlanTimeline.find(p => p && S(p.place) === S(pin.name));
-    
+
     if (linkedPlan) {
       setPinLinkDay(S(linkedPlan.day));
       setPinLinkPlanId(S(linkedPlan.id));
       setNewManualTime(S(linkedPlan.time));
+      if (linkedPlan.theme) setNewManualTheme(S(linkedPlan.theme));
+      setNewManualIsAccommodation(Boolean(linkedPlan.isAccommodation));
+      setNewManualAccommodationDays(Array.isArray(linkedPlan.accommodationDays) ? linkedPlan.accommodationDays : []);
     } else {
       setPinLinkDay("");
       setPinLinkPlanId("");
@@ -1934,6 +1938,36 @@ function handleDeletePlan(id) {
     setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion);
     setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : ""); setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
     setEditingPlanId(null);
+    setEditingPlanSnapshot(null);
+  }
+
+  function isPlanFormDirty() {
+    if (!editingPlanId || !editingPlanSnapshot) return false;
+    return (
+      S(newTime) !== S(editingPlanSnapshot.time) ||
+      S(newPlace) !== S(editingPlanSnapshot.place) ||
+      S(newLocalName) !== S(editingPlanSnapshot.localName) ||
+      S(newFeatures) !== S(editingPlanSnapshot.features) ||
+      S(newTheme) !== S(editingPlanSnapshot.theme) ||
+      Boolean(newIsAccommodation) !== Boolean(editingPlanSnapshot.isAccommodation)
+    );
+  }
+
+  function guardPlanForm(onConfirm) {
+    if (editingPlanId) {
+      if (isPlanFormDirty()) {
+        setConfirmModal({
+          msg: "저장하지 않고 나가시겠습니까?\n수정한 내용이 사라집니다.",
+          okLabel: "나가기",
+          cancelLabel: "계속 수정",
+          onOk: () => { resetPlanForm(); onConfirm(); },
+          onCancel: () => {},
+        });
+        return;
+      }
+      resetPlanForm();
+    }
+    onConfirm();
   }
 
   function loadPlanToForm(plan) {
@@ -1963,6 +1997,7 @@ function handleDeletePlan(id) {
       setPlanCountry('수동입력'); setManualCountry(c); setPlanRegion('수동입력'); setManualRegion(r);
     }
     setPinSelectOpen(false);
+    setEditingPlanSnapshot({ time: plan.time === '99:99' ? '' : S(plan.time), place: S(plan.place), localName: S(plan.localName), features: S(plan.features) === "직접 추가한 장소" ? "" : S(plan.features), theme: S(plan.theme) || '기타', isAccommodation: Boolean(plan.isAccommodation) });
     setTimeout(() => planAddFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     setEditingPlanId(plan.id);
     showToast('✏️ 일정 정보를 불러왔습니다!');
@@ -1976,8 +2011,10 @@ function handleDeletePlan(id) {
   }
 
   function changeTab(tabId) {
-    setActiveTab(S(tabId));
-    setIsMobileMenuOpen(false);
+    guardPlanForm(() => {
+      setActiveTab(S(tabId));
+      setIsMobileMenuOpen(false);
+    });
   }
 
   useEffect(() => {
@@ -6026,8 +6063,11 @@ const planData = {
                                    setNewManualPlaceName(matched.place);
                                    if(matched.localName) setNewManualLocalName(matched.localName);
                                    if(matched.features && matched.features !== "직접 추가한 장소") setNewManualFeature(matched.features);
-                                   if(matched.photo) setNewManualPhoto(matched.photo);
-                                   setNewManualIsAccommodation(matched.isAccommodation);
+                                   if(matched.theme) setNewManualTheme(S(matched.theme));
+                                   setNewManualIsAccommodation(Boolean(matched.isAccommodation));
+                                   setNewManualAccommodationDays(Array.isArray(matched.accommodationDays) ? matched.accommodationDays : []);
+                                   const matchedImgs = Array.isArray(matched.photos) && matched.photos.length > 0 ? matched.photos : (matched.photo ? [matched.photo] : []);
+                                   if (matchedImgs.length > 0) { setNewManualPhotos(matchedImgs); setNewManualPhoto(matchedImgs[0]); }
                                    showToast("✨ 선택한 일정의 데이터가 쏙 채워졌어요!");
                                 }
                              } else {
@@ -7297,7 +7337,7 @@ const planData = {
                           const isActive = activeMobileCard === plan.id;
                           return (
                             <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border shadow-sm bg-yellow-50/50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 relative group cursor-pointer transition-all duration-300 hover:shadow-md ${isActive ? 'border-indigo-400' : ''}`}
-                                 onClick={(e) => { e.stopPropagation(); loadPlanToForm(plan); setActiveMobileCard(plan.id); }}>
+                                 onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
                                <div className="flex justify-between items-start mb-1">
                                  <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 숙소{Array.isArray(plan.accommodationDays) && plan.accommodationDays.length > 0 ? ` (D${plan.accommodationDays.join(',D')})` : ''}</span>
                                   <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-col space-y-1 p-0.5 rounded-lg border shadow-md bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-all duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
@@ -7353,7 +7393,7 @@ const planData = {
                             if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
                               return (
                                 <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group cursor-pointer ${isActive ? 'border-indigo-400' : ''}`}
-                                     onClick={(e) => { e.stopPropagation(); loadPlanToForm(plan); setActiveMobileCard(plan.id); }}>
+                                     onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
                                   {plan.time !== '99:99' && <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{S(plan.time)}</div>}
                                   <div className="flex-1 min-w-0 flex flex-col px-0.5">
                                     <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
@@ -7373,7 +7413,7 @@ const planData = {
                             }
 
                             return (
-                            <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); loadPlanToForm(plan); setActiveMobileCard(plan.id); }}>
+                            <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
                               <div className="flex justify-between items-start mb-1">
                                 {plan.time !== '99:99' && <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>}
                                 <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
@@ -7626,7 +7666,7 @@ return (
               </div>
             </div>
             
-            <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`}>
+            <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`} onTouchMove={e => e.stopPropagation()} style={{touchAction:'none'}}>
               <div className="w-full h-full rounded-3xl overflow-hidden relative">
                 {/* 로딩 표시 */}
                 {((isKakaoMap && !isKakaoMapLoaded) || (!isKakaoMap && !isLeafletLoaded)) && (
@@ -7647,9 +7687,9 @@ return (
                   >🌍 구글</button>
                 </div>
                 {/* Leaflet(구글) 지도 — 항상 DOM에 존재, visibility로 전환 */}
-                <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none" style={{visibility: isKakaoMap ? 'hidden' : 'visible'}}></div>
+                <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none" style={{visibility: isKakaoMap ? 'hidden' : 'visible', touchAction:'none'}} onTouchMove={e => e.stopPropagation()}></div>
                 {/* 카카오맵 — 항상 DOM에 존재, visibility로 전환 */}
-                <div ref={kakaoMapContainerRef} className="absolute inset-0 z-10 w-full h-full cursor-crosshair" style={{visibility: isKakaoMap ? 'visible' : 'hidden'}}></div>
+                <div ref={kakaoMapContainerRef} className="absolute inset-0 z-10 w-full h-full cursor-crosshair" style={{visibility: isKakaoMap ? 'visible' : 'hidden', touchAction:'none'}} onTouchMove={e => e.stopPropagation()}></div>
               </div>
             </div>
           </div>
