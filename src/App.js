@@ -2433,24 +2433,28 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     setDiaryReview(selectedPlanInfo?.review || "");
   }, [selectedPlanInfo?.id]);
 
-// [NEW] 날씨 데이터 호출 트리거 (전역 지역명 + 개별 일정 지역명 하이브리드 연동)
+// [NEW] 날씨 데이터 호출 트리거 — 모든 일정 지역의 날씨를 한꺼번에 로드
   useEffect(() => {
+    // 1) 기본 대표 지역 fetch
     let targetCity = displayCityName;
-
-    // displayCityName이 없거나 초기 상태면 globalManualRegion(수동입력 지역) 우선 참조
     if (!targetCity || targetCity === "선택된 지역 없음" || targetCity === "수동입력") {
-      if (globalManualRegion) {
-        targetCity = globalManualRegion;
-      } else if (globalPlanRegion && globalPlanRegion !== "수동입력" && globalPlanRegion !== "선택된 지역 없음") {
-        targetCity = globalPlanRegion;
-      } else {
-        // 마지막 fallback: planTimeline 개별 일정에서 지역명 추출
+      if (globalManualRegion) targetCity = globalManualRegion;
+      else if (globalPlanRegion && globalPlanRegion !== "수동입력" && globalPlanRegion !== "선택된 지역 없음") targetCity = globalPlanRegion;
+      else {
         const validPlan = Array.isArray(planTimeline) ? planTimeline.find(p => p && p.region && p.region !== "수동입력" && p.region !== "선택된 지역 없음") : null;
         if (validPlan) targetCity = validPlan.region;
       }
     }
-
     fetchWeatherData(targetCity);
+
+    // 2) planTimeline 내 다른 지역들도 미리 캐시 (시간대별 날씨용)
+    if (Array.isArray(planTimeline)) {
+      const extraRegions = [...new Set(planTimeline
+        .map(p => p && p.region)
+        .filter(r => r && r !== targetCity && r !== '수동입력' && r !== '선택된 지역 없음')
+      )];
+      extraRegions.forEach(r => fetchWeatherData(r));
+    }
   }, [displayCityName, globalManualRegion, globalPlanRegion, planTimeline, fetchWeatherData]);
 
   // 날씨 로드 후 현재 Day를 자동으로 펼침 (앱 재진입 시에도 초기화)
@@ -3361,6 +3365,25 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
   
   const safeMaxDay = (typeof maxDay === 'number' && maxDay > 0 && maxDay < 100) ? maxDay : 4;
   const tripDays = Array.from({length: safeMaxDay}, (_, i) => i + 1);
+
+  // 현재 dashboardDay + 현재 시각 기준으로 "지금 있어야 할 지역" 계산
+  // 시간순 일정 중 현재 시각 이전 마지막 일정의 지역 (없으면 첫 일정 지역, 없으면 displayCityName)
+  const activeRegionForDay = (() => {
+    const allKnownRegions = Object.values(REGIONS_BY_COUNTRY).flat();
+    const isValidReg = (r) => r && r !== '수동입력' && r !== '선택된 지역 없음' && (allKnownRegions.includes(r) || (globalManualRegion && r === globalManualRegion));
+    const dPlans = (Array.isArray(planTimeline) ? planTimeline : [])
+      .filter(p => p && !p.isAccommodation && !p.isTransport && parseInt(p.day) === safeDashboardDay && isValidReg(p.region) && p.time && p.time !== '99:99')
+      .sort((a, b) => S(a.time).localeCompare(S(b.time)));
+    if (dPlans.length === 0) {
+      return displayCityName && displayCityName !== '선택된 지역 없음' ? displayCityName : (globalManualRegion || '');
+    }
+    const nowTime = `${String(new Date().getHours()).padStart(2,'0')}:${String(new Date().getMinutes()).padStart(2,'0')}`;
+    // 현재 시각 이전 일정 중 가장 마지막 것
+    const past = dPlans.filter(p => p.time <= nowTime);
+    if (past.length > 0) return past[past.length - 1].region;
+    // 아직 모두 미래 일정이면 첫 일정 지역
+    return dPlans[0].region;
+  })();
 
   const isSharedTripActive = trips.find(t => t.id === activeTripId)?.isShared;
   const isTripOwner = activeTripId.startsWith(`trip_${appUserId}_`) || trips.find(t => t.id === activeTripId && !t.isShared);
@@ -6400,10 +6423,12 @@ const planData = {
             
             {/* 날씨 카드 행 — 헤더 */}
             {(() => {
-              const cityKey = (displayCityName && displayCityName !== '선택된 지역 없음') ? displayCityName : globalManualRegion;
-              const hourly = cityKey ? hourlyWeatherCache[cityKey] : null;
+              const fallbackCityKey = (displayCityName && displayCityName !== '선택된 지역 없음') ? displayCityName : globalManualRegion;
 
-              const getSlotWeather = (dateStr, startH, endH) => {
+              // 특정 지역·시간대의 날씨 슬롯 추출 (hourlyWeatherCache에서 지역별 조회)
+              const getSlotWeatherForRegion = (region, dateStr, startH, endH) => {
+                const key = region || fallbackCityKey;
+                const hourly = key ? hourlyWeatherCache[key] : null;
                 if (!hourly || !Array.isArray(hourly.time)) return null;
                 const slots = hourly.time.reduce((acc, t, i) => {
                   if (!t.startsWith(dateStr)) return acc;
@@ -6416,18 +6441,35 @@ const planData = {
                 return { ...getWeatherInfo(mid.code), temp: mid.temp };
               };
 
+              // 특정 Day + 시간대의 지역 계산
+              const getRegionForDayHour = (day, hour) => {
+                const allKnownR = Object.values(REGIONS_BY_COUNTRY).flat();
+                const isValidR = (r) => r && r !== '수동입력' && r !== '선택된 지역 없음' && (allKnownR.includes(r) || r === globalManualRegion);
+                const dPs = (Array.isArray(planTimeline) ? planTimeline : [])
+                  .filter(p => p && !p.isAccommodation && !p.isTransport && parseInt(p.day) === day && isValidR(p.region) && p.time && p.time !== '99:99')
+                  .sort((a, b) => S(a.time).localeCompare(S(b.time)));
+                if (dPs.length === 0) return fallbackCityKey;
+                const hStr = `${String(hour).padStart(2,'0')}:00`;
+                const past = dPs.filter(p => p.time <= hStr);
+                return past.length > 0 ? past[past.length - 1].region : dPs[0].region;
+              };
+
               if (!Array.isArray(forecast) || forecast.length === 0) return null;
 
-              // 펼쳐진 Day의 시간대 카드 3개
+              // 펼쳐진 Day의 시간대 카드 3개 — 각 슬롯의 지역을 개별 계산
               const expandedSlots = expandedWeatherDay ? (() => {
-                const dateStr = getDateStringForDay(expandedWeatherDay);
-                const m = getSlotWeather(dateStr, 6, 12);
-                const a = getSlotWeather(dateStr, 12, 18);
-                const e = getSlotWeather(dateStr, 18, 24);
+                const d = expandedWeatherDay;
+                const dateStr = getDateStringForDay(d);
+                const regM = getRegionForDayHour(d, 9);
+                const regA = getRegionForDayHour(d, 15);
+                const regE = getRegionForDayHour(d, 20);
+                const m = getSlotWeatherForRegion(regM, dateStr, 6, 12);
+                const a = getSlotWeatherForRegion(regA, dateStr, 12, 18);
+                const e = getSlotWeatherForRegion(regE, dateStr, 18, 24);
                 return [
-                  m ? { key: 'morning', label: `D${expandedWeatherDay} 🌅`, ...m } : null,
-                  a ? { key: 'afternoon', label: `D${expandedWeatherDay} ☀️`, ...a } : null,
-                  e ? { key: 'evening', label: `D${expandedWeatherDay} 🌙`, ...e } : null,
+                  m ? { key: 'morning', label: `D${d} 🌅`, region: regM, ...m } : null,
+                  a ? { key: 'afternoon', label: `D${d} ☀️`, region: regA, ...a } : null,
+                  e ? { key: 'evening', label: `D${d} 🌙`, region: regE, ...e } : null,
                 ].filter(Boolean);
               })() : [];
 
@@ -6450,7 +6492,7 @@ const planData = {
                     const isExpanded = expandedWeatherDay === d;
                     return (
                       <div key={d}
-                        onClick={() => { setExpandedWeatherDay(isExpanded ? null : d); if (!hourly) handleWeatherDayClick(d); }}
+                        onClick={() => { setExpandedWeatherDay(isExpanded ? null : d); if (!hourlyWeatherCache[fallbackCityKey]) handleWeatherDayClick(d); }}
                         style={cardStyle}
                         className={`${cardCls} ${baseCard} ${isExpanded ? (isDarkMode ? 'border-indigo-500 bg-indigo-900/40' : 'border-indigo-400 bg-indigo-50') : ''}`}>
                         <span className={`${lbl} ${isExpanded ? 'text-indigo-400' : ''}`}>D{d}</span>
@@ -6549,6 +6591,11 @@ const planData = {
                       <span className="text-[10px] sm:text-xs flex-shrink-0">📅</span>
                       <span className="text-[8px] sm:text-[10px] font-bold tracking-tight truncate">{getDayDateString(dashboardDay)}</span>
                     </div>
+                    {activeRegionForDay && (
+                      <span className={`text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>
+                        📍 {activeRegionForDay}
+                      </span>
+                    )}
                   </div>
                   <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-1.5">
 <div className="flex items-center justify-between w-full">
