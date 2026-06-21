@@ -46,7 +46,7 @@ const CURRENCIES = [
 ];
 
 const REGIONS_BY_COUNTRY = {
-  "한국": ["서울", "부산", "제주", "인천", "경주", "순천"],
+  "한국": ["서울", "부산", "제주", "인천", "경주", "순천", "강릉", "전주", "대구", "광주", "대전", "수원", "춘천", "속초", "여수", "통영", "거제", "안동", "포항", "울산", "목포", "강화도", "남해", "보성", "담양", "충주", "청주", "공주", "천안"],
   "일본": ["도쿄", "오사카", "후쿠오카", "교토", "삿포로", "구마모토", "나고야", "히로시마", "나라", "요코하마", "고베", "센다이", "가나자와", "오키나와"],
   "프랑스": ["파리", "니스", "마르세유", "리옹"],
   "미국": ["뉴욕", "로스앤젤레스", "시카고", "하와이", "샌프란시스코"],
@@ -81,6 +81,16 @@ async function openExternalUrl(url) {
     window.open(url, '_blank');
   }
 }
+
+// 카카오 카테고리별 색상
+const KAKAO_CAT_COLORS = {
+  FD6: '#ef4444', // 식당 — 빨강
+  CE7: '#f59e0b', // 카페 — 노랑
+  AT4: '#10b981', // 관광지 — 초록
+  CS2: '#3b82f6', // 편의점 — 파랑
+  AD5: '#8b5cf6', // 숙박 — 보라
+  MT1: '#f97316', // 마트 — 주황
+};
 
 // 구글 맵 길 안내 실행
 function openGoogleMapsNav(lat, lng, mode = 'driving') {
@@ -311,8 +321,8 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [showMapPhotos, setShowMapPhotos] = useState(false);
   const [showMapRoute, setShowMapRoute] = useState(false);
   const [mapActiveDays, setMapActiveDays] = useState(['all']);
-  const [kakaoCategory, setKakaoCategory] = useState('');
-  const kakaoCategoryRef = useRef('');
+  const [kakaoCategory, setKakaoCategory] = useState([]); // 복수 선택 배열
+  const kakaoCategoryRef = useRef([]);
   const [kakaoCategoryResults, setKakaoCategoryResults] = useState([]); // 카테고리 검색 결과 장소 목록
   const [myPinsFilter, setMyPinsFilter] = useState('all');
   const [myPinsThemeFilter, setMyPinsThemeFilter] = useState('all');
@@ -340,6 +350,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [navDest, setNavDest] = useState(null);
   const [navWaypoints, setNavWaypoints] = useState([]);
   const [navSelectingFor, setNavSelectingFor] = useState(null); // 'origin' | 'dest' | number(waypoint index)
+  const [navDayFilter, setNavDayFilter] = useState('all'); // 'all' | 'unlinked' | 1|2|3...
   const [clickedLocation, setClickedLocation] = useState(null);
   const [newManualPlaceName, setNewManualPlaceName] = useState("");
   const [newManualLocalName, setNewManualLocalName] = useState("");
@@ -347,6 +358,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [newManualPhoto, setNewManualPhoto] = useState("");
   const [newManualTime, setNewManualTime] = useState(""); 
   const [newManualIsAccommodation, setNewManualIsAccommodation] = useState(false);
+  const [newManualAccommodationDays, setNewManualAccommodationDays] = useState([]);
   const [newManualIsLandmark, setNewManualIsLandmark] = useState(false);
   const [pinLinkDay, setPinLinkDay] = useState("");
   const [pinLinkPlanId, setPinLinkPlanId] = useState("");
@@ -1359,7 +1371,9 @@ async function confirmDeleteTrip() {
           ...p, day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
           localName: S(newManualLocalName), features: S(newManualFeature), photo: pinFinalImgs[0] || S(newManualPhoto),
           photos: pinFinalImgs,
-          isAccommodation: Boolean(newManualIsAccommodation), theme: S(newManualTheme) || "기타",
+          isAccommodation: Boolean(newManualIsAccommodation),
+          accommodationDays: newManualIsAccommodation ? newManualAccommodationDays : [],
+          theme: S(newManualTheme) || "기타",
           country: targetCountry, region: targetRegion
         } : p).sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
       } else {
@@ -1369,7 +1383,9 @@ async function confirmDeleteTrip() {
           localName: S(newManualLocalName), features: S(newManualFeature), photo: pinFinalImgs[0] || S(newManualPhoto),
           photos: pinFinalImgs,
           country: targetCountry, region: targetRegion,
-          isAccommodation: Boolean(newManualIsAccommodation), theme: S(newManualTheme) || "기타"
+          isAccommodation: Boolean(newManualIsAccommodation),
+          accommodationDays: newManualIsAccommodation ? newManualAccommodationDays : [],
+          theme: S(newManualTheme) || "기타"
         };
         updatedTimeline = [...updatedTimeline, newPlan].sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
       }
@@ -1392,7 +1408,7 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
        setIsAddPlaceModalOpen(false);
     }
     
-    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualIsLandmark(false); setNewManualTheme("기타");
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualAccommodationDays([]); setNewManualIsLandmark(false); setNewManualTheme("기타");
     setPinLinkDay(""); setPinLinkPlanId(""); 
   }
 
@@ -1740,6 +1756,8 @@ function handleDeletePlan(id) {
       syncCountryRegionFromCityName(displayCityName, updated);
       saveToDb({ plan_timeline: updated });
       showToast("일정이 삭제되었습니다.");
+      // 삭제된 일정이 현재 수정 중인 항목이면 폼 초기화
+      if (S(editingPlanId) === S(id)) resetPlanForm();
     };
 
     const doDeleteBoth = () => {
@@ -1750,6 +1768,7 @@ function handleDeletePlan(id) {
       syncCountryRegionFromCityName(displayCityName, updatedTimeline);
       saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests });
       showToast("일정과 지도 핀이 함께 삭제되었습니다.");
+      if (S(editingPlanId) === S(id)) resetPlanForm();
     };
 
     if (linkedPin) {
@@ -1779,7 +1798,7 @@ function handleDeletePlan(id) {
     setNewTime(plan.time === '99:99' ? '' : S(plan.time));
     setNewPlace(S(plan.place));
     setNewLocalName(S(plan.localName));
-    setNewFeatures(S(plan.features));
+    setNewFeatures(S(plan.features) === "직접 추가한 장소" ? "" : S(plan.features));
     setNewTheme(S(plan.theme) || '기타');
     setNewIsAccommodation(Boolean(plan.isAccommodation));
     const imgs = Array.isArray(plan.photos) && plan.photos.length > 0 ? plan.photos : (plan.photo ? [plan.photo] : []);
@@ -1787,7 +1806,16 @@ function handleDeletePlan(id) {
     // 국가/지역 세팅
     const c = S(plan.country); const r = S(plan.region);
     if (c && Object.keys(REGIONS_BY_COUNTRY).includes(c)) {
-      setPlanCountry(c); setPlanRegion(r); setManualCountry(''); setManualRegion('');
+      setPlanCountry(c);
+      setManualCountry('');
+      // 지역이 해당 국가 목록에 있으면 그대로, 없으면 수동입력
+      if (r && REGIONS_BY_COUNTRY[c]?.includes(r)) {
+        setPlanRegion(r); setManualRegion('');
+      } else if (r) {
+        setPlanRegion('수동입력'); setManualRegion(r);
+      } else {
+        setPlanRegion(''); setManualRegion('');
+      }
     } else if (c) {
       setPlanCountry('수동입력'); setManualCountry(c); setPlanRegion('수동입력'); setManualRegion(r);
     }
@@ -2133,7 +2161,7 @@ function deletePackingItem(id) {
                const fallbackCityName = data.display_city_name ? S(data.display_city_name) : "";
                let fallbackCountry = ""; let fallbackRegion = fallbackCityName;
                if (fallbackCityName) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName)) { fallbackCountry = cn; break; } } }
-               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));              } else { setPlanTimeline([]); }
+               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));              } else { setPlanTimeline([]); }
 
               loaded = true;
             }
@@ -2553,7 +2581,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           const fallbackCityName2 = data.display_city_name ? S(data.display_city_name) : "";
           let fallbackCountry2 = ""; let fallbackRegion2 = fallbackCityName2;
           if (fallbackCityName2) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName2)) { fallbackCountry2 = cn; break; } } }
-          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
+          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
         } else {
            // DB에 row가 없어도 로컬 state가 이미 있으면 유지 (새 여행 insert 타이밍 경쟁 방지)
            setPlanTimeline(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
@@ -2614,7 +2642,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
             const fallbackCityName3 = payload.new.display_city_name ? S(payload.new.display_city_name) : "";
             let fallbackCountry3 = ""; let fallbackRegion3 = fallbackCityName3;
             if (fallbackCityName3) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName3)) { fallbackCountry3 = cn; break; } } }
-            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
+            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
             // updatedAt 기준 병합: 로컬 항목과 DB 항목 중 더 최신 것 우선, 로컬 미저장 항목 보존
             setPlanTimeline(prev => {
               const localMap = new Map((Array.isArray(prev) ? prev : []).map(p => [S(p.id), p]));
@@ -2687,6 +2715,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           setNewManualFeature("");
           setNewManualPhoto("");
           setNewManualIsAccommodation(false);
+          setNewManualAccommodationDays([]);
           setPinLinkDay("");
           setPinLinkPlanId("");
           setNewManualTime("");
@@ -2838,11 +2867,13 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     if (mapTypeOverride === 'kakao') { setIsKakaoMap(true); return; }
     if (mapTypeOverride === 'leaflet') { setIsKakaoMap(false); return; }
 
-    // 자동 판별: 전체 planTimeline 중 한국 일정이 하나라도 있으면 카카오맵
-    const hasKorea = globalPlanCountry === '한국' ||
-      (Array.isArray(planTimeline) && planTimeline.some(p => p && p.country === '한국')) ||
-      (Array.isArray(currentRestaurants) && currentRestaurants.some(r => r && r.country === '한국'));
-    setIsKakaoMap(hasKorea);
+    // 자동 판별: 현재 여행 국가가 한국이면 카카오맵, 아니면 구글맵
+    const isKorea = globalPlanCountry === '한국' ||
+      (Array.isArray(planTimeline) && planTimeline.length > 0 &&
+        planTimeline.filter(p => p && p.country).every(p => p.country === '한국')) ||
+      (Array.isArray(currentRestaurants) && currentRestaurants.length > 0 &&
+        currentRestaurants.filter(r => r && r.country).every(r => r.country === '한국'));
+    setIsKakaoMap(isKorea);
   }, [mapTypeOverride, planTimeline, currentRestaurants, globalPlanCountry]);
 
   // 카카오맵 초기화 + 핀 렌더링
@@ -2877,7 +2908,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
 
           // 카테고리 필터 활성 상태: 빈 공간 클릭 시 인포윈도우 닫고 종료
           // (카테고리 마커 클릭은 마커 자체 onclick에서 처리)
-          if (kakaoCategoryRef.current) {
+          if (Array.isArray(kakaoCategoryRef.current) && kakaoCategoryRef.current.length > 0) {
             try { kakaoInfowindowRef.current?.close(); } catch(e) {}
             return;
           }
@@ -3077,31 +3108,26 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     if (!map || !window.kakao) return;
     const kakao = window.kakao;
 
-    // 카테고리 마커만 초기화 (인포윈도우는 건드리지 않음)
     const clearCategoryMarkers = () => {
       kakaoCategoryMarkersRef.current.forEach(m => { try { m.setMap(null); } catch(e) {} });
       kakaoCategoryMarkersRef.current = [];
     };
 
-    if (!kakaoCategory) {
+    const activeCats = Array.isArray(kakaoCategory) ? kakaoCategory : [];
+    if (activeCats.length === 0) {
       clearCategoryMarkers();
       if (kakaoInfowindowRef.current) { try { kakaoInfowindowRef.current.close(); } catch(e) {} }
       setKakaoCategoryResults([]);
       return;
     }
 
-    // 카테고리별 색상
-    const catColors = { FD6: '#ef4444', CE7: '#f59e0b', AT4: '#10b981', CS2: '#3b82f6', AD5: '#8b5cf6', MT1: '#f97316' };
-    const color = catColors[kakaoCategory] || '#6366f1';
-
-    // 공유 인포윈도우 (없으면 생성)
     if (!kakaoInfowindowRef.current) {
       kakaoInfowindowRef.current = new kakao.maps.InfoWindow({ zIndex: 10, removable: true });
     }
     const infowindow = kakaoInfowindowRef.current;
 
-    // 단일 장소 인포윈도우 열기
     const openPlaceInfowindow = (place, pos) => {
+      const color = KAKAO_CAT_COLORS[place._catCode] || '#6366f1';
       kakaoBlockMapClickRef.current = true;
       setTimeout(() => { kakaoBlockMapClickRef.current = false; }, 300);
       const btnId = `cat-pin-btn-${Date.now()}`;
@@ -3110,7 +3136,7 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
         ${place.category_name ? `<div style="font-size:10px;color:${color};font-weight:700;margin-bottom:2px;">${place.category_name.split(' > ').pop()}</div>` : ''}
         ${place.road_address_name ? `<div style="font-size:10px;color:#555;word-break:keep-all;">${place.road_address_name}</div>` : (place.address_name ? `<div style="font-size:10px;color:#555;">${place.address_name}</div>` : '')}
         ${place.phone ? `<div style="font-size:10px;color:#888;margin-top:2px;word-break:break-all;">📞 ${place.phone}</div>` : ''}
-        <button id="${btnId}" style="width:100%;margin-top:6px;padding:6px 0;background:#4f46e5;color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">이 위치를 핀으로 지정 📌</button>
+        <button id="${btnId}" style="width:100%;margin-top:6px;padding:6px 0;background:${color};color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">이 위치를 핀으로 지정 📌</button>
       </div>`;
       infowindow.setContent(content);
       infowindow.setPosition(pos);
@@ -3132,17 +3158,20 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       }, 100);
     };
 
-    // 클러스터 인포윈도우 열기 (여러 장소 목록 — 행 클릭 시 상세로 전환)
     const openClusterInfowindow = (places, pos) => {
       kakaoBlockMapClickRef.current = true;
       setTimeout(() => { kakaoBlockMapClickRef.current = false; }, 300);
       const listId = `cat-cluster-list-${Date.now()}`;
-      const rows = places.map((p, i) =>
-        `<div data-idx="${i}" style="padding:5px 4px;border-bottom:1px solid #f1f5f9;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background='transparent'">
-          <div style="font-size:10px;font-weight:700;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.place_name}</div>
-          ${p.road_address_name ? `<div style="font-size:9px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.road_address_name}</div>` : ''}
-        </div>`
-      ).join('');
+      const rows = places.map((p, i) => {
+        const c = KAKAO_CAT_COLORS[p._catCode] || '#6366f1';
+        return `<div data-idx="${i}" style="padding:5px 4px;border-bottom:1px solid #f1f5f9;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background='transparent'">
+          <div style="display:flex;align-items:center;gap:4px;">
+            <div style="width:7px;height:7px;border-radius:50%;background:${c};flex-shrink:0;"></div>
+            <div style="font-size:10px;font-weight:700;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.place_name}</div>
+          </div>
+          ${p.road_address_name ? `<div style="font-size:9px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:11px;">${p.road_address_name}</div>` : ''}
+        </div>`;
+      }).join('');
       const content = `<div style="padding:8px 10px;width:220px;max-width:220px;line-height:1.5;box-sizing:border-box;">
         <div style="font-size:10px;font-weight:900;color:#6366f1;margin-bottom:4px;">📍 ${places.length}개 장소 — 클릭하면 상세 정보</div>
         <div id="${listId}">${rows}</div>
@@ -3158,7 +3187,6 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
             e.stopPropagation();
             const p = places[parseInt(row.dataset.idx)];
             if (!p) return;
-            // 상세 인포윈도우로 교체 (위치는 해당 장소 좌표)
             const placePos = new kakao.maps.LatLng(parseFloat(p.y), parseFloat(p.x));
             openPlaceInfowindow(p, placePos);
           };
@@ -3166,12 +3194,8 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       }, 100);
     };
 
-    // 위경도 → 화면 픽셀 변환 (카카오맵 내부 projection 활용)
     const latLngToPixel = (latlng) => {
-      try {
-        const proj = map.getProjection();
-        return proj.pointFromCoords(latlng);
-      } catch(e) { return null; }
+      try { return map.getProjection().pointFromCoords(latlng); } catch(e) { return null; }
     };
 
     // 픽셀 거리 기준 클러스터링 (threshold: 60px)
@@ -3198,12 +3222,16 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     };
 
     const drawMarker = (place, pos, isCluster, allInCluster) => {
+      const color = KAKAO_CAT_COLORS[place._catCode] || '#6366f1';
       const markerEl = document.createElement('div');
       markerEl.style.cssText = `display:flex;flex-direction:column;align-items:center;cursor:pointer;`;
       if (isCluster) {
+        // 클러스터 내 카테고리가 다양하면 각 색 점으로 표시
+        const uniqueColors = [...new Set(allInCluster.map(p => KAKAO_CAT_COLORS[p._catCode] || '#6366f1'))];
+        const dotHtml = uniqueColors.slice(0,3).map(c => `<div style="width:5px;height:5px;border-radius:50%;background:${c};"></div>`).join('');
         markerEl.innerHTML = `
-          <div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;">
-            <span style="font-size:7px;font-weight:900;color:white;">+</span>
+          <div style="min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:white;border:1.5px solid #cbd5e1;box-shadow:0 1px 3px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;gap:2px;">
+            ${dotHtml}
           </div>
           <div style="margin-top:2px;padding:1px 5px;background:${color};border-radius:4px;font-size:9px;font-weight:700;color:white;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,0.2);">${allInCluster[0].place_name.slice(0,8)}${allInCluster[0].place_name.length > 8 ? '…' : ''} +${allInCluster.length - 1}</div>
         `;
@@ -3227,21 +3255,35 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       clearCategoryMarkers();
       const center = map.getCenter();
       const ps = new kakao.maps.services.Places();
-      ps.categorySearch(kakaoCategory, (places, status) => {
-        if (status !== kakao.maps.services.Status.OK || !places) return;
-        setKakaoCategoryResults(places);
-        const clusters = clusterPlaces(places);
-        clusters.forEach(group => {
-          const rep = group[0];
-          const pos = new kakao.maps.LatLng(parseFloat(rep.y), parseFloat(rep.x));
-          drawMarker(rep, pos, group.length > 1, group);
-        });
-      }, { location: center, radius: 2000, sort: kakao.maps.services.SortBy.DISTANCE, size: 15 });
+      const cats = Array.isArray(kakaoCategoryRef.current) ? kakaoCategoryRef.current : [];
+      if (cats.length === 0) return;
+
+      // 선택된 카테고리별로 병렬 검색 후 합쳐서 클러스터링
+      let allPlaces = [];
+      let done = 0;
+      cats.forEach(catCode => {
+        ps.categorySearch(catCode, (places, status) => {
+          if (status === kakao.maps.services.Status.OK && places) {
+            // 카테고리 코드를 각 장소에 태깅
+            places.forEach(p => { p._catCode = catCode; });
+            allPlaces = allPlaces.concat(places);
+          }
+          done++;
+          if (done === cats.length) {
+            setKakaoCategoryResults(allPlaces);
+            const clusters = clusterPlaces(allPlaces);
+            clusters.forEach(group => {
+              const rep = group[0];
+              const pos = new kakao.maps.LatLng(parseFloat(rep.y), parseFloat(rep.x));
+              drawMarker(rep, pos, group.length > 1, group);
+            });
+          }
+        }, { location: center, radius: 2000, sort: kakao.maps.services.SortBy.DISTANCE, size: 15 });
+      });
     };
 
     searchAndDraw();
 
-    // 드래그/줌 끝날 때 재검색
     kakao.maps.event.addListener(map, 'idle', searchAndDraw);
     return () => {
       try { kakao.maps.event.removeListener(map, 'idle', searchAndDraw); } catch(e) {}
@@ -5907,15 +5949,29 @@ const planData = {
                 )}
               </div>
 
-              <div className="flex items-center my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300 flex-wrap gap-y-2">
-                <div className="flex items-center space-x-2 mr-3">
-                  <input type="checkbox" id="manualPlanIsAcc" checked={newManualIsAccommodation} onChange={e => setNewManualIsAccommodation(e.target.checked)} className="accent-indigo-600 w-4 h-4 cursor-pointer" />
-                  <label htmlFor="manualPlanIsAcc" className={`text-xs font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+              <div className="flex flex-col my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300 gap-y-2">
+                <div className="flex flex-wrap gap-y-2 items-center">
+                  <div className="flex items-center space-x-2 mr-3">
+                    <input type="checkbox" id="manualPlanIsAcc" checked={newManualIsAccommodation} onChange={e => { setNewManualIsAccommodation(e.target.checked); if (!e.target.checked) setNewManualAccommodationDays([]); }} className="accent-indigo-600 w-4 h-4 cursor-pointer" />
+                    <label htmlFor="manualPlanIsAcc" className={`text-xs font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" id="manualPlanIsLandmark" checked={newManualIsLandmark} onChange={e => setNewManualIsLandmark(e.target.checked)} className="accent-yellow-500 w-4 h-4 cursor-pointer" />
+                    <label htmlFor="manualPlanIsLandmark" className={`text-xs font-bold ${textMuted} cursor-pointer`}>랜드마크 지정 👑</label>
+                  </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <input type="checkbox" id="manualPlanIsLandmark" checked={newManualIsLandmark} onChange={e => setNewManualIsLandmark(e.target.checked)} className="accent-yellow-500 w-4 h-4 cursor-pointer" />
-                  <label htmlFor="manualPlanIsLandmark" className={`text-xs font-bold ${textMuted} cursor-pointer`}>랜드마크 지정 👑</label>
-                </div>
+                {newManualIsAccommodation && tripDays.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <span className={`text-[10px] font-bold ${textMuted} self-center`}>숙박 Day:</span>
+                    {tripDays.map(d => (
+                      <button key={d} type="button"
+                        onClick={() => setNewManualAccommodationDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])}
+                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${newManualAccommodationDays.includes(d) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}>
+                        D{d}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             
@@ -6187,31 +6243,78 @@ const planData = {
               </div>
 
               {/* 핀 목록 — 선택 중일 때만 표시 */}
-              {navSelectingFor !== null && (
-                <div className={`border rounded-xl overflow-hidden ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                  <p className={`text-[10px] font-black px-3 py-2 ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-50 text-slate-500'}`}>
-                    {selectingLabel} 선택 중 — 핀을 눌러주세요
-                  </p>
-                  <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
-                    {validPins.length === 0 ? (
-                      <p className="text-xs text-slate-400 text-center py-4">좌표가 지정된 핀이 없습니다.</p>
-                    ) : validPins.map(pin => (
-                      <button key={pin.id} onClick={() => {
-                        if (navSelectingFor === 'origin') setNavOrigin(pin);
-                        else if (navSelectingFor === 'dest') setNavDest(pin);
-                        else setNavWaypoints(prev => prev.map((w, i) => i === navSelectingFor ? pin : w));
-                        setNavSelectingFor(null);
-                      }} className={`w-full flex items-center space-x-2 px-3 py-2 text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
-                        <span className="text-xs">📍</span>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-black truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{S(pin.name)}</p>
-                          {pin.localName && <p className="text-[10px] text-slate-400 truncate">{S(pin.localName)}</p>}
-                        </div>
+              {navSelectingFor !== null && (() => {
+                // Day별 핀 분류
+                const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+                const linkedPinNames = new Set(safeTimeline.map(p => S(p.place).trim()));
+                const pinsByDay = {};
+                tripDays.forEach(d => { pinsByDay[d] = []; });
+                safeTimeline.forEach(p => {
+                  const pin = validPins.find(r => S(r.name).trim() === S(p.place).trim());
+                  if (pin && p.day) {
+                    const d = parseInt(p.day);
+                    if (!pinsByDay[d]) pinsByDay[d] = [];
+                    if (!pinsByDay[d].find(x => x.id === pin.id)) pinsByDay[d].push(pin);
+                  }
+                });
+                const unlinkedPins = validPins.filter(r => !linkedPinNames.has(S(r.name).trim()));
+
+                // 현재 필터에 따른 표시 핀
+                let shownPins;
+                if (navDayFilter === 'unlinked') shownPins = unlinkedPins;
+                else if (navDayFilter === 'all') shownPins = validPins;
+                else shownPins = pinsByDay[navDayFilter] || [];
+
+                return (
+                  <div className={`border rounded-xl overflow-hidden ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                    <p className={`text-[10px] font-black px-3 py-2 border-b ${isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                      {selectingLabel} 선택 중 — 핀을 눌러주세요
+                    </p>
+                    {/* Day 탭 */}
+                    <div className={`flex overflow-x-auto gap-1 p-2 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-white'}`}>
+                      <button onClick={() => setNavDayFilter('all')}
+                        className={`px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap flex-shrink-0 transition-all ${navDayFilter === 'all' ? 'bg-indigo-600 text-white' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500')}`}>
+                        전체
                       </button>
-                    ))}
+                      {tripDays.map(d => (
+                        <button key={d} onClick={() => setNavDayFilter(d)}
+                          style={navDayFilter === d ? { background: getDayColor(d), color: 'white' } : { borderColor: getDayColor(d), color: getDayColor(d) }}
+                          className={`px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap flex-shrink-0 border transition-all ${navDayFilter === d ? '' : (isDarkMode ? 'bg-slate-800' : 'bg-white')}`}>
+                          D{d}
+                        </button>
+                      ))}
+                      <button onClick={() => setNavDayFilter('unlinked')}
+                        className={`px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap flex-shrink-0 border transition-all ${navDayFilter === 'unlinked' ? 'bg-slate-600 text-white border-slate-600' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}>
+                        미지정
+                      </button>
+                    </div>
+                    {/* 핀 목록 */}
+                    <div className="max-h-40 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
+                      {shownPins.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-4">해당하는 핀이 없습니다.</p>
+                      ) : shownPins.map(pin => (
+                        <button key={pin.id} onClick={() => {
+                          if (navSelectingFor === 'origin') setNavOrigin(pin);
+                          else if (navSelectingFor === 'dest') setNavDest(pin);
+                          else setNavWaypoints(prev => prev.map((w, i) => i === navSelectingFor ? pin : w));
+                          setNavSelectingFor(null);
+                          setNavDayFilter('all');
+                        }} className={`w-full flex items-center space-x-2 px-3 py-2 text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
+                          <span style={{ color: getDayColor(safeTimeline.find(p => S(p.place).trim() === S(pin.name).trim())?.day) || '#94a3b8' }} className="text-xs">📍</span>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-xs font-black truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{S(pin.name)}</p>
+                            {pin.localName && <p className="text-[10px] text-slate-400 truncate">{S(pin.localName)}</p>}
+                          </div>
+                          {(() => {
+                            const linked = safeTimeline.find(p => S(p.place).trim() === S(pin.name).trim());
+                            return linked ? <span style={{ background: getDayColor(linked.day) }} className="text-[8px] font-black text-white px-1.5 py-0.5 rounded-full flex-shrink-0">D{linked.day}</span> : null;
+                          })()}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* 이동 수단 → 출발 */}
               {navOrigin && navDest && (
@@ -6825,7 +6928,7 @@ const planData = {
                                 onClick={() => {
                                   setNewPlace(S(pin.name));
                                   if (pin.localName) setNewLocalName(S(pin.localName));
-                                  if (pin.signature) setNewFeatures(S(pin.signature));
+                                  if (pin.signature && S(pin.signature) !== "직접 추가한 장소") setNewFeatures(S(pin.signature));
                                   if (pin.imgs && pin.imgs.length > 0) { setNewPlanPhotos(pin.imgs); } else if (pin.img) { setNewPlanPhotos([S(pin.img)]); }
                                   setNewIsAccommodation(Boolean(pin.isAccommodation));
                                   setNewTheme(S(pin.theme) || "기타");
@@ -7195,18 +7298,6 @@ const planData = {
 <div className="flex flex-col space-y-2 pb-1">
                 {/* [지도 타입 전환 + Day 필터] */}
                 <div className="flex items-center space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth px-0.5">
-                  {/* 지도 타입 토글 */}
-                  <div className={`flex flex-shrink-0 rounded-full border overflow-hidden text-[9px] font-black ${isDarkMode ? 'border-slate-600' : 'border-slate-300'}`}>
-                    <button
-                      onClick={() => setMapTypeOverride(prev => prev === 'kakao' ? null : 'kakao')}
-                      className={`px-2.5 py-1.5 whitespace-nowrap transition-all duration-200 ${isKakaoMap ? 'bg-yellow-400 text-yellow-900' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-white text-slate-400')}`}
-                    >🗺 카카오</button>
-                    <button
-                      onClick={() => setMapTypeOverride(prev => prev === 'leaflet' ? null : 'leaflet')}
-                      className={`px-2.5 py-1.5 whitespace-nowrap transition-all duration-200 ${!isKakaoMap ? 'bg-blue-500 text-white' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-white text-slate-400')}`}
-                    >🌍 구글</button>
-                  </div>
-                  <div className="w-px h-4 bg-slate-300 dark:bg-slate-600 flex-shrink-0"></div>
                   <button onClick={() => toggleMapDay('all')} className={`px-4 py-1.5 rounded-full text-[10px] font-black whitespace-nowrap transition-all duration-300 is-tag ${mapActiveDays.includes('all') ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'}`}>전체 Day</button>                   {tripDays.map(d => {
                      const color = getDayColor(d);
                      const isActive = mapActiveDays.includes(d);
@@ -7237,23 +7328,35 @@ return (
                      </button>
                    ))}
                 </div>
-                {/* 카카오맵 장소 카테고리 검색 필터 */}
+                {/* 카카오맵 장소 카테고리 검색 필터 (복수 선택) */}
                 {isKakaoMap && (
                   <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
+                    {/* 전체 해제 버튼 */}
+                    <button
+                      onClick={() => setKakaoCategory([])}
+                      className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${kakaoCategory.length === 0 ? 'bg-slate-500 text-white border-slate-500 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200')}`}
+                    >장소 전체</button>
                     {[
-                      { code: '', label: '장소 전체' },
                       { code: 'FD6', label: '🍽️ 식당' },
                       { code: 'CE7', label: '☕ 카페' },
                       { code: 'AT4', label: '🏛️ 관광지' },
                       { code: 'CS2', label: '🏪 편의점' },
                       { code: 'AD5', label: '🏨 숙박' },
                       { code: 'MT1', label: '🛒 마트' },
-                    ].map(({ code, label }) => (
-                      <button key={code} onClick={() => setKakaoCategory(prev => prev === code ? '' : code)}
-                        className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${kakaoCategory === code && code !== '' ? 'bg-rose-500 text-white border-rose-500 shadow-md' : (code === '' && kakaoCategory === '' ? 'bg-slate-500 text-white border-slate-500 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'))}`}>
-                        {label}
-                      </button>
-                    ))}
+                    ].map(({ code, label }) => {
+                      const isActive = kakaoCategory.includes(code);
+                      const hex = KAKAO_CAT_COLORS[code] || '#6366f1';
+                      return (
+                        <button key={code}
+                          onClick={() => setKakaoCategory(prev => {
+                            const arr = Array.isArray(prev) ? prev : [];
+                            return arr.includes(code) ? arr.filter(c => c !== code) : [...arr, code];
+                          })}
+                          style={isActive ? { background: hex, borderColor: hex, color: 'white' } : {}}
+                          className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${isActive ? 'shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200')}`}
+                        >{label}</button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -7342,6 +7445,17 @@ return (
                     <span className="text-[10px] font-bold">{isKakaoMap ? '카카오맵' : '구글맵'} 로딩 중...</span>
                   </div>
                 )}
+                {/* 우측 상단 지도 타입 토글 */}
+                <div className="absolute top-2 right-2 z-30 flex rounded-xl overflow-hidden shadow-md" style={{backdropFilter:'blur(4px)'}}>
+                  <button
+                    onClick={() => setMapTypeOverride('kakao')}
+                    className={`px-2.5 py-1.5 text-[9px] font-black transition-all duration-200 ${isKakaoMap ? 'bg-yellow-400 text-yellow-900' : (isDarkMode ? 'bg-slate-700/90 text-slate-400' : 'bg-white/90 text-slate-400')}`}
+                  >🗺 카카오</button>
+                  <button
+                    onClick={() => setMapTypeOverride('leaflet')}
+                    className={`px-2.5 py-1.5 text-[9px] font-black transition-all duration-200 ${!isKakaoMap ? 'bg-blue-500 text-white' : (isDarkMode ? 'bg-slate-700/90 text-slate-400' : 'bg-white/90 text-slate-400')}`}
+                  >🌍 구글</button>
+                </div>
                 {/* Leaflet(구글) 지도 — 항상 DOM에 존재, visibility로 전환 */}
                 <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none" style={{visibility: isKakaoMap ? 'hidden' : 'visible'}}></div>
                 {/* 카카오맵 — 항상 DOM에 존재, visibility로 전환 */}
