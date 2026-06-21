@@ -160,49 +160,103 @@ function compressImage(file, callback) {
 }
 
 const SelectOrInput = ({ value, manualValue, onChangeSelect, onChangeManual, onCancelManual, options, placeholder, isDarkMode, appTheme, inputId }) => {
+  const [inputText, setInputText] = React.useState('');
+  const [isOpen, setIsOpen] = React.useState(false);
+  const wrapRef = React.useRef(null);
+
+  // 현재 표시값: 수동입력이면 manualValue, 아니면 value
+  const displayValue = value === '수동입력' ? S(manualValue) : S(value);
+
+  // 외부 클릭 시 드롭다운 닫기
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setIsOpen(false);
+        setInputText('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // value가 외부에서 변경될 때 inputText 초기화
+  React.useEffect(() => {
+    setInputText('');
+  }, [value, manualValue]);
+
+  const filtered = React.useMemo(() => {
+    if (!options || !Array.isArray(options)) return [];
+    const q = inputText.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(o => S(o).toLowerCase().includes(q));
+  }, [options, inputText]);
+
+  const handleFocus = () => {
+    setInputText('');
+    setIsOpen(true);
+  };
+
+  const handleChange = (e) => {
+    const v = e.target.value;
+    setInputText(v);
+    setIsOpen(true);
+    // 입력 중에는 수동입력 모드로 전환
+    onChangeSelect({ target: { value: '수동입력' } });
+    onChangeManual(v);
+  };
+
+  const handlePickOption = (opt) => {
+    onChangeSelect({ target: { value: opt } });
+    setInputText('');
+    setIsOpen(false);
+  };
+
+  const handleClear = () => {
+    onCancelManual();
+    setInputText('');
+    setIsOpen(false);
+  };
+
   let textColorClass = "text-slate-900";
   let placeholderClass = "placeholder-slate-400";
-  
   if (appTheme === 'dark') { textColorClass = "text-white"; placeholderClass = "placeholder-slate-500"; }
   else if (appTheme === 'pastel') { textColorClass = "text-pink-900"; placeholderClass = "placeholder-pink-300"; }
   else if (appTheme === 'clean') { textColorClass = "text-zinc-900"; placeholderClass = "placeholder-zinc-400"; }
 
-  const handleSelect = (e) => {
-    onChangeSelect(e);
-    if (e.target.value === '수동입력') {
-      setTimeout(() => {
-        const el = document.getElementById(inputId);
-        if (el) el.focus();
-      }, 50);
-    }
-  };
+  const dropdownBg = isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200';
+  const dropdownItem = isDarkMode ? 'hover:bg-slate-700 text-slate-200' : 'hover:bg-indigo-50 text-slate-800';
 
-  if (value === '수동입력') {
-    return (
-      <div className="relative w-full h-full flex items-center">
-        <input 
-          id={inputId}
-          type="text" 
-          value={S(manualValue)} 
-          onChange={e => onChangeManual(e.target.value)} 
-          placeholder={placeholder || "직접입력"} 
-          className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} ${placeholderClass} pr-5 transition-all duration-300`}
-        />
-        <button onClick={onCancelManual} className={`absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-center h-full px-2 text-xs ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-600'} transition-colors duration-300`}>✕</button>
-      </div>
-    );
-  }
   return (
-    <select 
-      value={S(value)} 
-      onChange={handleSelect} 
-      disabled={options === null}
-      className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} cursor-pointer appearance-none pr-3 transition-all duration-300`}
-    >
-      <option value="">선택</option>
-      {options && Array.isArray(options) && options.map(o => <option key={S(o)} value={S(o)}>{S(o)}</option>)}
-      <option value="수동입력">수동입력</option>
-    </select>
+    <div ref={wrapRef} className="relative w-full h-full flex items-center">
+      <input
+        id={inputId}
+        type="text"
+        value={isOpen ? inputText : displayValue}
+        onFocus={handleFocus}
+        onChange={handleChange}
+        placeholder={placeholder || (options === null ? "국가 먼저 선택" : "선택 또는 직접입력")}
+        disabled={options === null && value !== '수동입력'}
+        className={`w-full bg-transparent text-[10px] font-bold outline-none ${textColorClass} ${placeholderClass} pr-5 transition-all duration-300 disabled:opacity-40`}
+      />
+      {displayValue ? (
+        <button onClick={handleClear} className={`absolute right-0 top-1/2 -translate-y-1/2 px-1 text-[10px] ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>✕</button>
+      ) : (
+        <span className={`absolute right-0 top-1/2 -translate-y-1/2 px-1 text-[8px] pointer-events-none ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>▼</span>
+      )}
+      {isOpen && filtered.length > 0 && (
+        <div className={`absolute top-full left-0 z-[9999] mt-1 w-48 max-h-48 overflow-y-auto rounded-lg border shadow-xl ${dropdownBg}`}>
+          {filtered.map(opt => (
+            <button
+              key={opt}
+              onMouseDown={(e) => { e.preventDefault(); handlePickOption(opt); }}
+              className={`w-full text-left px-3 py-1.5 text-[11px] font-bold transition-colors duration-150 ${dropdownItem}`}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 };
 
