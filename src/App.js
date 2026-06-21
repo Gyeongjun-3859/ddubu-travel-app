@@ -6644,8 +6644,14 @@ const planData = {
         className={`flex-1 flex flex-col min-w-0 h-full overflow-y-auto overflow-x-hidden relative z-10 transition-transform ${isRefreshing || pullDistance === 0 ? 'duration-300 ease-out' : 'duration-0'} ${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}
         style={{ transform: `translateY(${isRefreshing ? 80 : pullDistance}px)`, overscrollBehaviorY: 'contain' }}
         onTouchStart={(e) => {
-          const mapEl = document.getElementById('leaflet-map');
-          if (mapEl && mapEl.contains(e.target)) {
+          // 지도 탭이면 pull-to-refresh 완전 비활성화
+          if (activeTab === 'map') {
+            e.currentTarget.dataset.isPulling = 'false';
+            return;
+          }
+          const leafletEl = document.getElementById('leaflet-map');
+          const kakaoEl = kakaoMapContainerRef.current;
+          if ((leafletEl && leafletEl.contains(e.target)) || (kakaoEl && kakaoEl.contains(e.target))) {
             e.currentTarget.dataset.isPulling = 'false';
             return;
           }
@@ -6655,16 +6661,18 @@ const planData = {
           }
         }}
         onTouchMove={(e) => {
+          if (activeTab === 'map') return;
           if (e.currentTarget.dataset.isPulling === 'true') {
             const startY = parseFloat(e.currentTarget.dataset.startY);
             const currentY = e.touches[0].clientY;
             const distance = currentY - startY;
             if (distance > 0) {
-              setPullDistance(Math.min(distance * 0.4, 120)); 
+              setPullDistance(Math.min(distance * 0.4, 120));
             }
           }
         }}
         onTouchEnd={(e) => {
+          if (activeTab === 'map') return;
           if (e.currentTarget.dataset.isPulling === 'true') {
             if (pullDistance > 70) {
               setIsRefreshing(true);
@@ -6673,9 +6681,6 @@ const planData = {
                 setIsRefreshing(false);
                 setPullDistance(0);
                 showToast("🔄 동기화 완료!");
-                if (activeTab === 'map' && mapInstanceRef.current) {
-                  flyToSmartPosition(mapInstanceRef.current, currentRestaurants, planTimeline);
-                }
               }, 1500);
             } else {
               setPullDistance(0);
