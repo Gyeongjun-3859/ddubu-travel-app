@@ -2212,32 +2212,43 @@ function deletePackingItem(id) {
 
   // 카카오맵 SDK 로드
   useEffect(() => {
-    if (window.kakao && window.kakao.maps) { setIsKakaoMapLoaded(true); return; }
-    const loadKakaoSDK = () => {
-      if (document.querySelector('script[src*="dapi.kakao.com"]')) {
-        // 이미 삽입됐지만 아직 로드 중 — 폴링으로 대기
-        const poll = setInterval(() => {
-          if (window.kakao && window.kakao.maps) {
-            clearInterval(poll);
-            try { window.kakao.maps.load(() => setIsKakaoMapLoaded(true)); } catch(e) { setIsKakaoMapLoaded(true); }
-          }
-        }, 300);
-        setTimeout(() => clearInterval(poll), 15000);
-        return;
+    // 이미 로드 완료된 경우
+    if (window.kakao && window.kakao.maps && window.kakao.maps.services) {
+      setIsKakaoMapLoaded(true);
+      return;
+    }
+    // 이미 script 태그가 있으면 폴링으로 대기
+    if (document.querySelector('script[src*="dapi.kakao.com"]')) {
+      const poll = setInterval(() => {
+        if (window.kakao && window.kakao.maps && window.kakao.maps.services) {
+          clearInterval(poll);
+          setIsKakaoMapLoaded(true);
+        }
+      }, 200);
+      setTimeout(() => clearInterval(poll), 20000);
+      return;
+    }
+    // autoload=false + kakao.maps.load() 콜백 방식
+    const script = document.createElement('script');
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=f839f7d670ba8f3c04271e117d3f93b9&libraries=services&autoload=false`;
+    script.async = false;
+    script.onload = () => {
+      if (window.kakao && window.kakao.maps) {
+        window.kakao.maps.load(() => {
+          setIsKakaoMapLoaded(true);
+        });
       }
-      const script = document.createElement('script');
-      script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=f839f7d670ba8f3c04271e117d3f93b9&autoload=false&libraries=services`;
-      script.async = true;
-      script.onload = () => {
-        try { window.kakao.maps.load(() => setIsKakaoMapLoaded(true)); } catch(e) { setIsKakaoMapLoaded(true); }
-      };
-      script.onerror = () => {
-        // 로드 실패 시 3초 후 재시도
-        setTimeout(loadKakaoSDK, 3000);
-      };
-      document.head.appendChild(script);
     };
-    loadKakaoSDK();
+    script.onerror = () => {
+      setTimeout(() => {
+        const s2 = document.createElement('script');
+        s2.src = script.src;
+        s2.async = false;
+        s2.onload = script.onload;
+        document.head.appendChild(s2);
+      }, 3000);
+    };
+    document.head.appendChild(script);
   }, []);
 
 

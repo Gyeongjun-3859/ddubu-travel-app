@@ -12,7 +12,6 @@ const config: CapacitorConfig = {
       'dapi.kakao.com',
       '*.kakao.com',
       '*.kakaocdn.net',
-      'map.kakao.com',
       'api.open-meteo.com',
       '*.supabase.co',
     ]
