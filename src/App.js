@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
+import { App as CapacitorApp } from '@capacitor/app';
 
 /*
   =============================================================================
@@ -278,6 +279,7 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [newPhoto, setNewPhoto] = useState("");
   const [newPlanPhotos, setNewPlanPhotos] = useState([]); // 스케줄 다중 사진
   const [newIsAccommodation, setNewIsAccommodation] = useState(false);
+  const [newAccommodationDays, setNewAccommodationDays] = useState([]);
   const [planCountry, setPlanCountry] = useState("");
   const [planRegion, setPlanRegion] = useState("");
   const [manualCountry, setManualCountry] = useState("");
@@ -288,8 +290,13 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const editFileInputRef = useRef(null);
 
   const [isLeafletLoaded, setIsLeafletLoaded] = useState(false);
+  const [isKakaoMapLoaded, setIsKakaoMapLoaded] = useState(false);
+  const [isKakaoMap, setIsKakaoMap] = useState(false);
   const mapContainerRef = useRef(null);
+  const kakaoMapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
+  const kakaoMapInstanceRef = useRef(null);
+  const kakaoMarkersRef = useRef([]);
   const markersRef = useRef([]);
   const polylinesRef = useRef([]);
   const [isPinMode, setIsPinMode] = useState(false);
@@ -301,9 +308,12 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
 
   const [markerSearchQuery, setMarkerSearchQuery] = useState("");
   const [showMapLabels, setShowMapLabels] = useState(false); 
-  const [showMapPhotos, setShowMapPhotos] = useState(false); 
+  const [showMapPhotos, setShowMapPhotos] = useState(false);
   const [showMapRoute, setShowMapRoute] = useState(false);
   const [mapActiveDays, setMapActiveDays] = useState(['all']);
+  const [kakaoCategory, setKakaoCategory] = useState('');
+  const kakaoCategoryRef = useRef('');
+  const [kakaoCategoryResults, setKakaoCategoryResults] = useState([]); // 카테고리 검색 결과 장소 목록
   const [myPinsFilter, setMyPinsFilter] = useState('all');
   const [myPinsThemeFilter, setMyPinsThemeFilter] = useState('all');
   const [newManualTheme, setNewManualTheme] = useState('기타');
@@ -345,12 +355,52 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [viewPhoto, setViewPhoto] = useState(null); // {imgs: string[], idx: number} | null
   const [viewPhotoAnim, setViewPhotoAnim] = useState(null); // 'left' | 'right' | null
   const viewPhotoDragRef = useRef({ startX: null, wheelLock: false });
+  const zoomImgRef = useRef(null); // 현재 보이는 중앙 사진 DOM ref
+  const zoomCardRef = useRef(null); // 중앙 카드 컨테이너 DOM ref
+  const zoomStateRef = useRef({ scale: 1, ox: 0, oy: 0, dist: null, baseScale: 1, lastTap: 0, panStartX: 0, panStartY: 0, baseOx: 0, baseOy: 0, mouseDown: false, didDrag: false });
   const [newManualPhotos, setNewManualPhotos] = useState([]); // 핀 등록 다중 사진
+
+  const applyZoomTransform = (scale, ox, oy, animate = false) => {
+    const el = zoomImgRef.current;
+    const card = zoomCardRef.current;
+    if (!el) return;
+    el.style.transition = animate ? 'transform 0.25s cubic-bezier(.4,0,.2,1)' : 'none';
+    el.style.transform = `scale(${scale}) translate(${ox / scale}px, ${oy / scale}px)`;
+    if (card) {
+      if (scale > 1.05) {
+        card.style.overflow = 'visible';
+        card.style.borderRadius = '0px';
+        card.style.zIndex = '99';
+      } else {
+        card.style.overflow = 'hidden';
+        card.style.borderRadius = '18px';
+        card.style.zIndex = '10';
+      }
+    }
+  };
+
+  const resetZoom = (animate = true) => {
+    const z = zoomStateRef.current;
+    z.scale = 1; z.ox = 0; z.oy = 0;
+    applyZoomTransform(1, 0, 0, animate);
+  };
+
+  // 뷰어 열려있는 동안 Chrome 트랙패드 뒤로가기 제스처 차단
+  useEffect(() => {
+    if (!viewPhoto) return;
+    const blockSwipe = (e) => {
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) e.preventDefault();
+    };
+    window.addEventListener('wheel', blockSwipe, { passive: false });
+    return () => window.removeEventListener('wheel', blockSwipe);
+  }, [viewPhoto]);
+
   const openPhotoViewer = (imgs, idx = 0) => {
     const arr = Array.isArray(imgs) ? imgs.filter(Boolean) : (imgs ? [imgs] : []);
     if (arr.length === 0) return;
     setViewPhoto({ imgs: arr, idx });
     setViewPhotoAnim(null);
+    zoomStateRef.current = { scale: 1, ox: 0, oy: 0, dist: null, baseScale: 1, lastTap: 0, panStartX: 0, panStartY: 0, baseOx: 0, baseOy: 0, mouseDown: false, didDrag: false };
   };
   const goPhotoNext = (imgs, idx) => {
     if (idx + 1 >= imgs.length) return;
@@ -420,9 +470,11 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const [rentalCarData, setRentalCarData] = useState({ ...initialRentalState });
   const rentalFileInputRef = useRef(null);
 
-  const [panelRatio, setPanelRatio] = useState(50); 
+  const [panelRatio, setPanelRatio] = useState(50);
   const dragRef = useRef(false);
   const planAddFormRef = useRef(null);
+  const manualRegionSaveTimer = useRef(null);
+  const dbVersionRef = useRef(1); // 현재 DB version 추적 (Optimistic Locking용)
 
 const [activeMobileCard, setActiveMobileCard] = useState(null);
   // [추가] 여행일기 작성을 위한 상태 변수
@@ -528,16 +580,20 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
         setGlobalPlanRegion("수동입력");
         setGlobalManualRegion(cityName);
         const plan = (timeline || []).find(p => p && p.region === cityName);
-        if (plan && plan.country) {
-            if (Object.keys(REGIONS_BY_COUNTRY).includes(plan.country)) {
-               setGlobalPlanCountry(plan.country);
-               setGlobalManualCountry("");
-            } else {
-               setGlobalPlanCountry("수동입력");
-               setGlobalManualCountry(plan.country);
-            }
+        if (plan && plan.country && Object.keys(REGIONS_BY_COUNTRY).includes(plan.country)) {
+            // timeline에 국가 정보가 있으면 그걸 사용
+            setGlobalPlanCountry(plan.country);
+            setGlobalManualCountry("");
+            try { localStorage.setItem('my_travel_global_country', plan.country); } catch(e){}
         } else {
-            setGlobalPlanCountry("수동입력");
+            // timeline에 없으면 localStorage에 마지막으로 저장된 국가 복원
+            try {
+              const savedCountry = localStorage.getItem('my_travel_global_country');
+              if (savedCountry && Object.keys(REGIONS_BY_COUNTRY).includes(savedCountry)) {
+                setGlobalPlanCountry(savedCountry);
+                setGlobalManualCountry("");
+              }
+            } catch(e){}
         }
     }
   }, []);
@@ -649,40 +705,39 @@ const fetchWeatherData = useCallback(async (cityName) => {
     const safeCityName = typeof cityName === 'string' ? cityName : S(cityName);
 
     if (!safeCityName || safeCityName === "선택된 지역 없음" || safeCityName === "글로벌" || safeCityName === "수동입력") {
-      setWeather(null); setForecast([]); 
-      console.log("🚨 [2] 유효하지 않은 지역명으로 호출 중단됨.");
+      setWeather(null); setForecast([]);
+      console.log("🚨 [2] 유효하지 않은 지역명으로 호출 중단됨.", safeCityName);
       return;
     }
 
     try {
       const queryName = CITY_NAME_TO_EN[safeCityName] || safeCityName;
       console.log(`🌤️ [3] '${safeCityName}' → '${queryName}' 좌표 검색 중...`);
-      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryName)}&limit=1&accept-language=en`);
+      const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(queryName)}&count=1&language=ko&format=json`);
       const geoData = await geoRes.json();
 
-      // [핵심 버그 수정] 좌표를 못 찾았을 때 조용히 죽는 문제 해결
-      if (!geoData || geoData.length === 0) {
-          console.warn(`🚨 [4] 에러: '${safeCityName}'의 위도/경도 좌표를 찾을 수 없습니다! (영어로 적거나 지역명을 변경해보세요)`);
-          setWeather(null); 
-          setForecast([]); 
+      if (!geoData || !geoData.results || geoData.results.length === 0) {
+          console.warn(`🚨 [4] 에러: '${safeCityName}'의 좌표를 찾을 수 없습니다.`);
+          setWeather(null);
+          setForecast([]);
           return;
       }
 
-      const { lat, lon } = geoData[0];
+      const { latitude: lat, longitude: lon } = geoData.results[0];
       console.log(`🌤️ [5] 좌표 획득 성공! 위도:${lat}, 경도:${lon}. 날씨 API 요청 시작.`);
 
-      const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=16`);
+      const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=16`);
       const wData = await wRes.json();
-      
-      console.log("🌤️ [6] 날씨 API 응답 성공 데이터:", wData); 
-      
+
       if (wData.current) setWeather({ temp: Math.round(wData.current.temperature_2m), code: wData.current.weather_code });
-      
+
       if (wData.daily && Array.isArray(wData.daily.time)) {
         setForecast(wData.daily.time.map((t, i) => ({
           date: S(t), code: wData.daily.weather_code[i], max: Math.round(wData.daily.temperature_2m_max[i]), min: Math.round(wData.daily.temperature_2m_min[i])
         })));
-        console.log("🌤️ [7] 화면에 날씨 데이터 세팅 완료!");
+      }
+      if (wData.hourly) {
+        setHourlyWeatherCache(prev => ({ ...prev, [safeCityName]: wData.hourly }));
       }
     } catch (e) { 
       console.error("🚨 [8] 치명적 에러 발생:", e); 
@@ -695,10 +750,10 @@ const fetchWeatherData = useCallback(async (cityName) => {
       if (hourlyWeatherCache[regionName]) return hourlyWeatherCache[regionName]; 
       try {
           const queryRegion = CITY_NAME_TO_EN[S(regionName)] || S(regionName);
-          const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryRegion)}&limit=1&accept-language=en`);
+          const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(queryRegion)}&count=1&language=ko&format=json`);
           const geoData = await geoRes.json();
-          if (!geoData.length) return null;
-          const { lat, lon } = geoData[0];
+          if (!geoData || !geoData.results || !geoData.results.length) return null;
+          const { latitude: lat, longitude: lon } = geoData.results[0];
           const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=16`);
           const wData = await wRes.json();
           setHourlyWeatherCache(prev => ({ ...prev, [regionName]: wData.hourly }));
@@ -731,30 +786,102 @@ const fetchWeatherData = useCallback(async (cityName) => {
       setIsLoadingHourly(false);
   };
 
-const saveToDb = useCallback(async (updates) => {
+const saveToDb = useCallback(async (updates, explicitTripId) => {
     console.log("💾 [DB 저장] Supabase로 전송되는 최종 Payload 데이터:", updates);
-    const targetId = activeTripId;
+    const targetId = explicitTripId || activeTripId;
+
+    // plan_timeline 항목에 updatedAt 타임스탬프 추가 (항목별 최신성 판별용)
+    const now = Date.now();
+    const stamped = { ...updates };
+    if (Array.isArray(stamped.plan_timeline)) {
+      stamped.plan_timeline = stamped.plan_timeline.map(p =>
+        p && !p.updatedAt ? { ...p, updatedAt: now } : p
+      );
+    }
+
+    // localStorage 즉시 저장
     try {
       const allStr = localStorage.getItem('my_travel_states') || '{}';
       const all = JSON.parse(allStr);
-      all[targetId] = { ...(all[targetId] || {}), ...updates };
+      all[targetId] = { ...(all[targetId] || {}), ...stamped };
       localStorage.setItem('my_travel_states', JSON.stringify(all));
     } catch (e) {
       console.error("Local save error", e);
     }
 
     if (supabaseClient && appUserId && appUserId !== "Guest") {
+      const currentVersion = dbVersionRef.current;
+      const nextVersion = currentVersion + 1;
       try {
-        const { error } = await supabaseClient.from('travel_state').update(updates).eq('id', targetId);
-        if (error && error.code === '42703') {
-           const safeUpdates = {};
-           if ('display_city_name' in updates) safeUpdates.display_city_name = updates.display_city_name;
-           if ('travel_start_date' in updates) safeUpdates.travel_start_date = updates.travel_start_date;
-           if ('current_restaurants' in updates) safeUpdates.current_restaurants = updates.current_restaurants;
-           if ('plan_timeline' in updates) safeUpdates.plan_timeline = updates.plan_timeline;
-           if (Object.keys(safeUpdates).length > 0) {
-              await supabaseClient.from('travel_state').update(safeUpdates).eq('id', targetId);
-           }
+        // Optimistic Locking: 현재 version과 일치할 때만 업데이트
+        const { data: updated, error } = await supabaseClient
+          .from('travel_state')
+          .update({ ...stamped, version: nextVersion })
+          .eq('id', targetId)
+          .eq('version', currentVersion)
+          .select('version')
+          .single();
+
+        if (updated) {
+          // 성공: version ref 갱신
+          dbVersionRef.current = nextVersion;
+        } else if (error && error.code !== 'PGRST116') {
+          // PGRST116 = no rows matched (version 충돌) 이외의 진짜 오류
+          console.error("DB save error", error);
+        } else {
+          // version 충돌: DB 최신 상태를 가져와 병합 후 재저장
+          console.warn("⚠️ [충돌 감지] version 불일치 — DB 최신 데이터와 병합 후 재저장");
+          const { data: latest } = await supabaseClient
+            .from('travel_state')
+            .select('*')
+            .eq('id', targetId)
+            .single();
+          if (latest) {
+            dbVersionRef.current = latest.version || 1;
+            const mergedVersion = dbVersionRef.current + 1;
+
+            // plan_timeline 병합: updatedAt 기준으로 최신 항목 우선
+            let mergedTimeline = Array.isArray(latest.plan_timeline) ? [...latest.plan_timeline] : [];
+            if (Array.isArray(stamped.plan_timeline)) {
+              const dbMap = new Map(mergedTimeline.map(p => [S(p.id), p]));
+              stamped.plan_timeline.forEach(localP => {
+                if (!localP) return;
+                const dbP = dbMap.get(S(localP.id));
+                if (!dbP) {
+                  // 로컬에만 있는 새 항목 → 추가
+                  mergedTimeline.push(localP);
+                } else {
+                  // 양쪽 모두 있으면 updatedAt 더 최신 것 사용
+                  const localTime = localP.updatedAt || 0;
+                  const dbTime = dbP.updatedAt || 0;
+                  if (localTime >= dbTime) dbMap.set(S(localP.id), localP);
+                }
+              });
+              mergedTimeline = Array.from(dbMap.values());
+              // 로컬에만 있던 신규 항목 포함
+              const dbIds = new Set(mergedTimeline.map(p => S(p.id)));
+              stamped.plan_timeline.forEach(p => { if (p && !dbIds.has(S(p.id))) mergedTimeline.push(p); });
+            }
+
+            const mergedUpdates = { ...latest, ...stamped, plan_timeline: mergedTimeline, version: mergedVersion };
+            const { error: mergeErr } = await supabaseClient
+              .from('travel_state')
+              .update(mergedUpdates)
+              .eq('id', targetId);
+            if (!mergeErr) {
+              dbVersionRef.current = mergedVersion;
+              // 병합된 timeline을 로컬 state에도 반영
+              if (Array.isArray(mergedTimeline)) {
+                setPlanTimeline(mergedTimeline);
+                try {
+                  const allStr2 = localStorage.getItem('my_travel_states') || '{}';
+                  const all2 = JSON.parse(allStr2);
+                  all2[targetId] = { ...(all2[targetId] || {}), plan_timeline: mergedTimeline };
+                  localStorage.setItem('my_travel_states', JSON.stringify(all2));
+                } catch(e) {}
+              }
+            }
+          }
         }
       } catch (err) { console.error(err); }
     }
@@ -902,7 +1029,11 @@ const saveToDb = useCallback(async (updates) => {
 
     if (activeTripId === tripId) return;
 
-    mapInitFlyDoneRef.current = false; // 여행 전환 시 지도 초기 이동 재실행
+    // 전환 전 현재 여행 데이터를 현재 tripId로 명시 저장 (stale closure 방지)
+    const prevTripId = activeTripId;
+    await saveToDb({ plan_timeline: planTimelineRef.current || planTimeline }, prevTripId);
+
+    mapInitFlyDoneRef.current = false;
     setActiveTripId(S(tripId));
     showToast("여행 일정을 불러왔습니다.");
     await supabaseClient.from('profiles').update({ activeTripId: tripId }).eq('app_user_id', appUserId);
@@ -1389,7 +1520,7 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
       // 수정 모드: 기존 일정 업데이트
       updatedTimeline = updatedTimeline.map(p =>
         String(p.id) === String(editingPlanId)
-          ? { ...p, day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: finalPlanImgs[0] || p.photo || "", photos: finalPlanImgs.length > 0 ? finalPlanImgs : (p.photos || []), country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), theme: S(newTheme) }
+          ? { ...p, day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: finalPlanImgs[0] || p.photo || "", photos: finalPlanImgs.length > 0 ? finalPlanImgs : (p.photos || []), country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), accommodationDays: newIsAccommodation ? newAccommodationDays : [], theme: S(newTheme) }
           : p
       );
       showToast("✅ 일정이 수정되었습니다!");
@@ -1397,10 +1528,10 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
       // 새 등록 모드
       const planData = {
         id: Date.now().toString(), day: newDay, time: S(newTime), place: S(newPlace), localName: S(newLocalName), features: S(newFeatures), photo: finalPlanImgs[0] || "", photos: finalPlanImgs,
-        country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), theme: S(newTheme)
+        country: S(finalCountry), region: S(finalRegion), isAccommodation: Boolean(newIsAccommodation), accommodationDays: newIsAccommodation ? newAccommodationDays : [], theme: S(newTheme)
       };
       updatedTimeline.push(planData);
-      showToast(newIsAccommodation ? "🏠 전 일정 숙소로 등록되었습니다!" : "스케줄에 등록 성공! ✨");
+      showToast(newIsAccommodation ? "🏠 숙소로 등록되었습니다!" : "스케줄에 등록 성공! ✨");
     }
 
     updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
@@ -1424,11 +1555,7 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
         updates.current_restaurants = updatedRests;
     }
 
-    if (finalRegion && finalRegion !== displayCityName) {
-      setDisplayCityName(S(finalRegion));
-      updates.display_city_name = S(finalRegion);
-    }
-    saveToDb(updates); 
+    saveToDb(updates);
     resetPlanForm();
   }
   
@@ -1609,7 +1736,9 @@ function handleDeletePlan(id) {
 
     const doDeletePlanOnly = () => {
       const updated = safePlanTimeline.filter(p => p && S(p.id) !== S(id));
-      setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+      setPlanTimeline(updated);
+      syncCountryRegionFromCityName(displayCityName, updated);
+      saveToDb({ plan_timeline: updated });
       showToast("일정이 삭제되었습니다.");
     };
 
@@ -1618,6 +1747,7 @@ function handleDeletePlan(id) {
       const updatedRests = safeRests.filter(r => r && S(r.name).trim() !== S(targetPlan?.place).trim());
       setPlanTimeline(updatedTimeline);
       setCurrentRestaurants(updatedRests);
+      syncCountryRegionFromCityName(displayCityName, updatedTimeline);
       saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests });
       showToast("일정과 지도 핀이 함께 삭제되었습니다.");
     };
@@ -1638,7 +1768,7 @@ function handleDeletePlan(id) {
   }
   
   function resetPlanForm() {
-    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewPlanPhotos([]); setNewIsAccommodation(false); setNewTheme("기타"); setPinSelectOpen(false);
+    setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewPlanPhotos([]); setNewIsAccommodation(false); setNewAccommodationDays([]); setNewTheme("기타"); setPinSelectOpen(false);
     setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion);
     setManualCountry(globalPlanCountry === "수동입력" ? globalManualCountry : ""); setManualRegion(globalPlanRegion === "수동입력" ? globalManualRegion : "");
     setEditingPlanId(null);
@@ -1678,6 +1808,18 @@ function handleDeletePlan(id) {
     setActiveTab(S(tabId));
     setIsMobileMenuOpen(false);
   }
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const handler = CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (showIdSetup) return; // 로그인 화면에서는 아무것도 안 함
+      if (activeTab !== 'dashboard') {
+        changeTab('dashboard'); // 다른 탭이면 대시보드(초기화면)로
+      }
+      // 대시보드면 아무것도 안 함 (앱 종료 방지)
+    });
+    return () => { handler.then(h => h.remove()); };
+  }, [activeTab, showIdSetup]);
 
   function handleInputChange(code, rawValue) {
     const numericValue = S(rawValue).replace(/,/g, '').replace(/[^\d.]/g, '');
@@ -1723,8 +1865,8 @@ function handleDeletePlan(id) {
     return Math.round(krwPerUnit).toLocaleString();
   }
 
-  function addDay() { setMaxDay(d => d + 1); }
-  function removeDay() { if (maxDay > 1) setMaxDay(d => d - 1); }
+  function addDay() { const next = maxDay + 1; setMaxDay(next); saveToDb({ max_day: next }); }
+  function removeDay() { if (maxDay > 1) { const next = maxDay - 1; setMaxDay(next); saveToDb({ max_day: next }); } }
 
   function handleSaveTransport() {
     let hasAnyData = false;
@@ -1974,9 +2116,11 @@ function deletePackingItem(id) {
           if (allStates && typeof allStates === 'object' && allStates[targetId]) {
             const data = allStates[targetId];
             if (data && typeof data === 'object') {
-              setDisplayCityName(data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음");
-              syncCountryRegionFromCityName(data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음", data.plan_timeline);
+              const cNameLS = data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음";
+              setDisplayCityName(cNameLS);
+              syncCountryRegionFromCityName(cNameLS, data.plan_timeline);
               setTravelStartDate(data.travel_start_date ? S(data.travel_start_date) : new Date().toISOString().split('T')[0]);
+              if (typeof data.max_day === 'number' && data.max_day >= 1) setMaxDay(data.max_day);
               setFlights(data.flights || { outbound: null, inbound: null });
               setPackingList(Array.isArray(data.packing_list) ? data.packing_list : []);
               setShoppingList(Array.isArray(data.shopping_list) ? data.shopping_list : []);
@@ -1997,20 +2141,21 @@ function deletePackingItem(id) {
         }
 
         if (!loaded) {
-          setDisplayCityName("선택된 지역 없음");
-          setCurrentRestaurants([]);
-          setPlanTimeline([]);
-          setFlights({ outbound: null, inbound: null });
-          setPackingList([]);
-          setTravelStartDate(new Date().toISOString().split('T')[0]);
+          // localStorage에 해당 여행 key가 없어도 현재 state 보존 (새 여행 전환 타이밍 경쟁 방지)
+          setPlanTimeline(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+          setCurrentRestaurants(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+          setDisplayCityName(prev => (prev && prev !== "선택된 지역 없음") ? prev : "선택된 지역 없음");
+          setFlights(prev => prev || { outbound: null, inbound: null });
+          setPackingList(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+          setTravelStartDate(prev => prev || new Date().toISOString().split('T')[0]);
         }
       } catch (e) {
         console.error("Local data load error", e);
-        setDisplayCityName("선택된 지역 없음");
-        setCurrentRestaurants([]);
-        setPlanTimeline([]);
-        setFlights({ outbound: null, inbound: null });
-        setPackingList([]);
+        setPlanTimeline(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+        setCurrentRestaurants(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+        setDisplayCityName(prev => (prev && prev !== "선택된 지역 없음") ? prev : "선택된 지역 없음");
+        setFlights(prev => prev || { outbound: null, inbound: null });
+        setPackingList(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
       }
     }
   }, [appUserId, activeTripId, syncCountryRegionFromCityName]);
@@ -2018,6 +2163,8 @@ function deletePackingItem(id) {
   useEffect(() => {
     movingPinIdRef.current = movingPinId;
   }, [movingPinId]);
+
+  useEffect(() => { kakaoCategoryRef.current = kakaoCategory; }, [kakaoCategory]);
 
   useEffect(() => {
     if (pendingMove) {
@@ -2058,10 +2205,23 @@ function deletePackingItem(id) {
     const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
     document.head.appendChild(link);
     const script = document.createElement('script'); script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.async = true; 
+    script.async = true;
     script.onload = () => setIsLeafletLoaded(true);
     document.head.appendChild(script);
   }, []);
+
+  // 카카오맵 SDK 로드
+  useEffect(() => {
+    if (window.kakao && window.kakao.maps) { setIsKakaoMapLoaded(true); return; }
+    const script = document.createElement('script');
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=f839f7d670ba8f3c04271e117d3f93b9&autoload=false&libraries=services`;
+    script.async = true;
+    script.onload = () => {
+      window.kakao.maps.load(() => setIsKakaoMapLoaded(true));
+    };
+    document.head.appendChild(script);
+  }, []);
+
 
   // 핀 드롭다운 외부 클릭 시 닫기
   useEffect(() => {
@@ -2182,20 +2342,32 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     if (prevId && prevId !== newId) {
       const rating = Number(diaryRatingRef.current) || 0;
       const review = diaryReviewRef.current ? String(diaryReviewRef.current).trim() : "";
-      const updatedTimeline = (planTimelineRef.current || []).map(p =>
-        String(p.id) === String(prevId)
-          ? { ...p, rating, review }
-          : p
-      );
-      const prevPlan = (planTimelineRef.current || []).find(p => String(p.id) === String(prevId));
-      const updatedRests = (currentRestaurantsRef2.current || []).map(r =>
-        prevPlan && S(r.name).trim() === S(prevPlan.place).trim()
-          ? { ...r, rating, review }
-          : r
-      );
-      setPlanTimeline(updatedTimeline);
-      setCurrentRestaurants(updatedRests);
-      saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests });
+      // functional update로 최신 state 기반 업데이트 (ref 지연 문제 방지)
+      let savedTimeline = null;
+      let savedRests = null;
+      setPlanTimeline(prev => {
+        const updated = (prev || []).map(p =>
+          String(p.id) === String(prevId) ? { ...p, rating, review } : p
+        );
+        savedTimeline = updated;
+        return updated;
+      });
+      setCurrentRestaurants(prev => {
+        const prevPlan = (planTimelineRef.current || []).find(p => String(p.id) === String(prevId));
+        const updated = (prev || []).map(r =>
+          prevPlan && S(r.name).trim() === S(prevPlan.place).trim()
+            ? { ...r, rating, review }
+            : r
+        );
+        savedRests = updated;
+        return updated;
+      });
+      // functional update 완료 후 저장 (setTimeout 0으로 state flush 대기)
+      setTimeout(() => {
+        const tl = savedTimeline || planTimelineRef.current || [];
+        const rs = savedRests || currentRestaurantsRef2.current || [];
+        saveToDb({ plan_timeline: tl, current_restaurants: rs });
+      }, 0);
     }
 
     prevDiaryPlanIdRef.current = newId;
@@ -2206,20 +2378,35 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
 
 // [NEW] 날씨 데이터 호출 트리거 (전역 지역명 + 개별 일정 지역명 하이브리드 연동)
   useEffect(() => {
-    console.log("💡 날씨 연동 로직 시작. 현재 전역 지역명:", displayCityName);
     let targetCity = displayCityName;
-    
-    // 전역 지역명이 없거나 초기 상태일 경우, 회원님의 가설대로 '개별 일정(planTimeline)'에서 지역명 추출
+
+    // displayCityName이 없거나 초기 상태면 globalManualRegion(수동입력 지역) 우선 참조
     if (!targetCity || targetCity === "선택된 지역 없음" || targetCity === "수동입력") {
-      const validPlan = Array.isArray(planTimeline) ? planTimeline.find(p => p && p.region && p.region !== "수동입력" && p.region !== "선택된 지역 없음") : null;
-      if (validPlan) {
-        targetCity = validPlan.region;
-        console.log("💡 [자동 복구 완료] 개별 일정 카드에서 지역명을 찾아 대체합니다:", targetCity);
+      if (globalManualRegion) {
+        targetCity = globalManualRegion;
+      } else if (globalPlanRegion && globalPlanRegion !== "수동입력" && globalPlanRegion !== "선택된 지역 없음") {
+        targetCity = globalPlanRegion;
+      } else {
+        // 마지막 fallback: planTimeline 개별 일정에서 지역명 추출
+        const validPlan = Array.isArray(planTimeline) ? planTimeline.find(p => p && p.region && p.region !== "수동입력" && p.region !== "선택된 지역 없음") : null;
+        if (validPlan) targetCity = validPlan.region;
       }
     }
-    
-    fetchWeatherData(targetCity); 
-  }, [displayCityName, planTimeline, fetchWeatherData]);
+
+    fetchWeatherData(targetCity);
+  }, [displayCityName, globalManualRegion, globalPlanRegion, planTimeline, fetchWeatherData]);
+
+  // 날씨 로드 후 현재 Day를 자동으로 펼침 (앱 재진입 시에도 초기화)
+  useEffect(() => {
+    if (!Array.isArray(forecast) || forecast.length === 0 || !travelStartDate) return;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const start = new Date(travelStartDate); start.setHours(0, 0, 0, 0);
+    const diff = Math.floor((today - start) / (1000 * 60 * 60 * 24)) + 1;
+    const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
+    const autoDay = diff >= 1 && diff <= safeMax ? diff : 1;
+    setExpandedWeatherDay(autoDay);
+  }, [forecast, travelStartDate, maxDay]);
+
   useEffect(() => {
     fetchRealTimeRates();
     const interval = setInterval(() => fetchRealTimeRates(false), 300000); 
@@ -2287,6 +2474,11 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
       const savedTextColor = localStorage.getItem('my_travel_text_color');
       if (savedTextColor) setAppTextColor(savedTextColor);
 
+      const savedGlobalCountry = localStorage.getItem('my_travel_global_country');
+      if (savedGlobalCountry && Object.keys(REGIONS_BY_COUNTRY).includes(savedGlobalCountry)) {
+        setGlobalPlanCountry(savedGlobalCountry);
+      }
+
       // [NEW] 내 위치 아이콘 로컬스토리지 복구
       const savedLocIcon = localStorage.getItem('my_travel_loc_icon');
       if (savedLocIcon) setMyLocationIcon(savedLocIcon);
@@ -2311,6 +2503,10 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
         const { data } = await supabaseClient.from('travel_state').select('*').eq('id', targetId).single();
         if (ignore) return;
         if (data) {
+          // DB에서 읽은 version을 ref에 기록 (Optimistic Locking 기준값)
+          if (typeof data.version === 'number') dbVersionRef.current = data.version;
+          // max_day 복원
+          if (typeof data.max_day === 'number' && data.max_day >= 1) setMaxDay(data.max_day);
           const cName = data.display_city_name ? S(data.display_city_name) : "선택된 지역 없음";
           setDisplayCityName(cName);
           syncCountryRegionFromCityName(cName, data.plan_timeline);
@@ -2330,12 +2526,13 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
           if (fallbackCityName2) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName2)) { fallbackCountry2 = cn; break; } } }
           setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
         } else {
-           setDisplayCityName("선택된 지역 없음");
-           setCurrentRestaurants([]);
-           setPlanTimeline([]);
-           setFlights({ outbound: null, inbound: null });
-           setPackingList([]);
-           setTravelStartDate(new Date().toISOString().split('T')[0]);
+           // DB에 row가 없어도 로컬 state가 이미 있으면 유지 (새 여행 insert 타이밍 경쟁 방지)
+           setPlanTimeline(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+           setCurrentRestaurants(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+           setDisplayCityName(prev => (prev && prev !== "선택된 지역 없음") ? prev : "선택된 지역 없음");
+           setFlights(prev => prev || { outbound: null, inbound: null });
+           setPackingList(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+           setTravelStartDate(prev => prev || new Date().toISOString().split('T')[0]);
         }
       } catch(e) { console.error(e); }
     };
@@ -2344,14 +2541,23 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     const tripChannel = supabaseClient.channel(`trip_${targetId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_state', filter: `id=eq.${targetId}` }, (payload) => {
         if (payload.new) {
+          // Realtime 이벤트의 version이 현재보다 높을 때만 처리 (자기 자신의 리바운드 이벤트 필터링)
+          const incomingVersion = typeof payload.new.version === 'number' ? payload.new.version : null;
+          if (incomingVersion !== null && incomingVersion <= dbVersionRef.current) {
+            console.log(`🔁 [Realtime 무시] 수신 version(${incomingVersion}) ≤ 현재(${dbVersionRef.current}) — 자기 자신의 이벤트`);
+            return;
+          }
+          if (incomingVersion !== null) dbVersionRef.current = incomingVersion;
+
           if (payload.new.display_city_name) {
-             setDisplayCityName(S(payload.new.display_city_name));
-             syncCountryRegionFromCityName(S(payload.new.display_city_name), payload.new.plan_timeline);
+             const validRTCity = S(payload.new.display_city_name);
+             setDisplayCityName(validRTCity);
+             syncCountryRegionFromCityName(validRTCity, payload.new.plan_timeline);
           }
           if (payload.new.travel_start_date) setTravelStartDate(S(payload.new.travel_start_date));
           if (payload.new.flights) setFlights(payload.new.flights);
           if (payload.new.packing_list && Array.isArray(payload.new.packing_list)) setPackingList(payload.new.packing_list);
-          
+
           if (payload.new.shared_users && Array.isArray(payload.new.shared_users)) {
              setSharedUsers(payload.new.shared_users);
              const isOwner = activeTripId.startsWith(`trip_${appUserId}_`);
@@ -2365,17 +2571,35 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
                 });
              }
           }
-          
+
           if (Array.isArray(payload.new.current_restaurants)) {
             const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || '기타', rating: r.rating || 0, review: r.review || "" }));
-            setCurrentRestaurants(cleanRests);
+            // updatedAt 기준 병합: 로컬에만 있는 미저장 항목 보존
+            setCurrentRestaurants(prev => {
+              const dbIds = new Set(cleanRests.map(r => S(r.id)));
+              const localOnly = (Array.isArray(prev) ? prev : []).filter(r => r && !dbIds.has(S(r.id)));
+              return [...cleanRests, ...localOnly];
+            });
           }
           if (Array.isArray(payload.new.plan_timeline)) {
             const fallbackCityName3 = payload.new.display_city_name ? S(payload.new.display_city_name) : "";
             let fallbackCountry3 = ""; let fallbackRegion3 = fallbackCityName3;
             if (fallbackCityName3) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName3)) { fallbackCountry3 = cn; break; } } }
             const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
-            setPlanTimeline(cleanPlans);
+            // updatedAt 기준 병합: 로컬 항목과 DB 항목 중 더 최신 것 우선, 로컬 미저장 항목 보존
+            setPlanTimeline(prev => {
+              const localMap = new Map((Array.isArray(prev) ? prev : []).map(p => [S(p.id), p]));
+              const merged = cleanPlans.map(dbP => {
+                const localP = localMap.get(S(dbP.id));
+                if (!localP) return dbP;
+                // updatedAt 비교: 로컬이 더 최신이면 로컬 우선
+                return (localP.updatedAt || 0) > (dbP.updatedAt || 0) ? localP : dbP;
+              });
+              // 로컬에만 있는 미저장 신규 항목 추가
+              const dbIds = new Set(cleanPlans.map(p => S(p.id)));
+              (Array.isArray(prev) ? prev : []).forEach(p => { if (p && !dbIds.has(S(p.id))) merged.push(p); });
+              return merged;
+            });
           }
         }
       }).subscribe();
@@ -2577,6 +2801,426 @@ const safeMax = (typeof maxDay === 'number' && maxDay > 0) ? maxDay : 4;
     });
   }, [isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, showMapRoute, isPinMode, movingPinId, mapActiveDays, getDayColor]);
 
+  // 수동 override: 'kakao' | 'leaflet' | null(자동)
+  const [mapTypeOverride, setMapTypeOverride] = useState(null);
+
+  useEffect(() => {
+    // 수동 선택 중이면 자동 전환 안 함
+    if (mapTypeOverride === 'kakao') { setIsKakaoMap(true); return; }
+    if (mapTypeOverride === 'leaflet') { setIsKakaoMap(false); return; }
+
+    // 자동 판별: 전체 planTimeline 중 한국 일정이 하나라도 있으면 카카오맵
+    const hasKorea = globalPlanCountry === '한국' ||
+      (Array.isArray(planTimeline) && planTimeline.some(p => p && p.country === '한국')) ||
+      (Array.isArray(currentRestaurants) && currentRestaurants.some(r => r && r.country === '한국'));
+    setIsKakaoMap(hasKorea);
+  }, [mapTypeOverride, planTimeline, currentRestaurants, globalPlanCountry]);
+
+  // 카카오맵 초기화 + 핀 렌더링
+  useEffect(() => {
+    if (!isKakaoMap || !isKakaoMapLoaded || activeTab !== 'map') return;
+    if (!window.kakao || !window.kakao.maps) return;
+    if (!kakaoMapContainerRef.current) return;
+
+    const kakao = window.kakao;
+
+    // 컨테이너가 보이는 상태인지 확인 후 초기화
+    const container = kakaoMapContainerRef.current;
+
+    if (!kakaoMapInstanceRef.current) {
+      try {
+        const center = new kakao.maps.LatLng(37.5665, 126.9780);
+        kakaoMapInstanceRef.current = new kakao.maps.Map(container, { center, level: 5 });
+        const map = kakaoMapInstanceRef.current;
+
+        // 장소 클릭 인포윈도우 (카테고리 마커와 공유)
+        if (!kakaoInfowindowRef.current) {
+          kakaoInfowindowRef.current = new kakao.maps.InfoWindow({ zIndex: 10, removable: true });
+        }
+        const infowindow = kakaoInfowindowRef.current;
+
+        kakao.maps.event.addListener(map, 'click', (mouseEvent) => {
+          // 카테고리 마커 클릭 직후면 무시 (인포윈도우 중복 방지)
+          if (kakaoBlockMapClickRef.current) return;
+          const latlng = mouseEvent.latLng;
+          const ps = new kakao.maps.services.Places();
+          const geocoder = new kakao.maps.services.Geocoder();
+
+          // 카테고리 필터 활성 상태: 빈 공간 클릭 시 인포윈도우 닫고 종료
+          // (카테고리 마커 클릭은 마커 자체 onclick에서 처리)
+          if (kakaoCategoryRef.current) {
+            try { kakaoInfowindowRef.current?.close(); } catch(e) {}
+            return;
+          }
+
+          // 위치 재지정 모드 (movingPinId 있을 때)
+          if (isPinModeRef.current && movingPinIdRef.current) {
+            geocoder.coord2Address(latlng.getLng(), latlng.getLat(), (result, gStatus) => {
+              const addr = (gStatus === kakao.maps.services.Status.OK && result[0])
+                ? (result[0].road_address?.address_name || result[0].address?.address_name || '') : '';
+              ps.keywordSearch(addr || '장소', (places, pStatus) => {
+                const nearby = (pStatus === kakao.maps.services.Status.OK && places)
+                  ? places.find(p => {
+                      const dy = (parseFloat(p.y) - latlng.getLat()) * 111000;
+                      const dx = (parseFloat(p.x) - latlng.getLng()) * 111000 * Math.cos(latlng.getLat() * Math.PI / 180);
+                      return Math.sqrt(dx*dx + dy*dy) <= 30;
+                    }) : null;
+                const pinId = movingPinIdRef.current;
+                const lat = latlng.getLat();
+                const lng = latlng.getLng();
+                const placeName = nearby ? nearby.place_name : (addr || '선택한 위치');
+                const btnId = `kakao-locate-btn-${Date.now()}`;
+                const content = `<div style="padding:8px 10px;width:200px;max-width:200px;overflow:hidden;line-height:1.6;box-sizing:border-box;">
+                  <div style="font-size:12px;font-weight:900;color:#1e293b;margin-bottom:4px;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📍 ${placeName}</div>
+                  ${nearby && nearby.road_address_name ? `<div style="font-size:10px;color:#555;margin-bottom:6px;">${nearby.road_address_name}</div>` : ''}
+                  <button id="${btnId}" style="width:100%;padding:6px 0;background:#4f46e5;color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">이 위치로 지정 ✅</button>
+                </div>`;
+                infowindow.setContent(content);
+                infowindow.setPosition(latlng);
+                infowindow.open(map);
+                setTimeout(() => {
+                  const btn = document.getElementById(btnId);
+                  if (btn) btn.onclick = () => {
+                    setPendingMove({ id: pinId, lat, lng });
+                    infowindow.close();
+                  };
+                }, 100);
+              }, { location: latlng, radius: 30, sort: kakao.maps.services.SortBy.DISTANCE, size: 5 });
+            });
+            return;
+          }
+
+          // 새 핀 등록 모드 (movingPinId 없이 isPinMode만 켜진 경우)
+          if (isPinModeRef.current) {
+            geocoder.coord2Address(latlng.getLng(), latlng.getLat(), (result, gStatus) => {
+              const addr = (gStatus === kakao.maps.services.Status.OK && result[0])
+                ? (result[0].road_address?.address_name || result[0].address?.address_name || '') : '';
+              ps.keywordSearch(addr || '장소', (places, pStatus) => {
+                const nearby = (pStatus === kakao.maps.services.Status.OK && places)
+                  ? places.find(p => {
+                      const dy = (parseFloat(p.y) - latlng.getLat()) * 111000;
+                      const dx = (parseFloat(p.x) - latlng.getLng()) * 111000 * Math.cos(latlng.getLat() * Math.PI / 180);
+                      return Math.sqrt(dx*dx + dy*dy) <= 30;
+                    }) : null;
+                const placeName = nearby ? nearby.place_name : '';
+                const clickLat = latlng.getLat();
+                const clickLng = latlng.getLng();
+                const btnId = `kakao-newpin-btn-${Date.now()}`;
+                const content = `<div style="padding:8px 10px;width:200px;max-width:200px;overflow:hidden;line-height:1.6;box-sizing:border-box;">
+                  <div style="font-size:12px;font-weight:900;color:#1e293b;margin-bottom:4px;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📍 ${placeName || '선택한 위치'}</div>
+                  ${nearby && nearby.road_address_name ? `<div style="font-size:10px;color:#555;margin-bottom:6px;">${nearby.road_address_name}</div>` : (addr ? `<div style="font-size:10px;color:#555;margin-bottom:6px;">${addr}</div>` : '')}
+                  <button id="${btnId}" style="width:100%;padding:6px 0;background:#4f46e5;color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">이 위치를 핀으로 지정 📌</button>
+                </div>`;
+                infowindow.setContent(content);
+                infowindow.setPosition(latlng);
+                infowindow.open(map);
+                setTimeout(() => {
+                  const btn = document.getElementById(btnId);
+                  if (btn) btn.onclick = () => {
+                    infowindow.close();
+                    setClickedLocation({ lat: clickLat, lng: clickLng });
+                    setNewManualPlaceName(placeName); setNewManualLocalName(""); setNewManualFeature("");
+                    setNewManualPhoto(""); setNewManualIsAccommodation(false);
+                    setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
+                    setIsAddPlaceModalOpen(true);
+                  };
+                }, 100);
+              }, { location: latlng, radius: 30, sort: kakao.maps.services.SortBy.DISTANCE, size: 5 });
+            });
+            return;
+          }
+
+          // 일반 모드: 반경 30m 이내 등록된 장소가 있을 때만 인포윈도우 표시
+          geocoder.coord2Address(latlng.getLng(), latlng.getLat(), (result, gStatus) => {
+            const addr = (gStatus === kakao.maps.services.Status.OK && result[0])
+              ? (result[0].road_address?.address_name || result[0].address?.address_name || '') : '';
+            ps.keywordSearch(addr || '장소', (places, pStatus) => {
+              if (pStatus !== kakao.maps.services.Status.OK || !places || places.length === 0) { infowindow.close(); return; }
+              const nearby = places.find(p => {
+                const dy = (parseFloat(p.y) - latlng.getLat()) * 111000;
+                const dx = (parseFloat(p.x) - latlng.getLng()) * 111000 * Math.cos(latlng.getLat() * Math.PI / 180);
+                return Math.sqrt(dx*dx + dy*dy) <= 30;
+              });
+              if (!nearby) { infowindow.close(); return; }
+              const content = `<div style="padding:8px 10px;width:200px;max-width:200px;overflow:hidden;line-height:1.6;box-sizing:border-box;">
+                <div style="font-size:13px;font-weight:900;color:#1e293b;margin-bottom:2px;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nearby.place_name}</div>
+                ${nearby.category_name ? `<div style="font-size:10px;color:#6366f1;font-weight:700;margin-bottom:2px;">${nearby.category_name.split(' > ').pop()}</div>` : ''}
+                ${nearby.road_address_name ? `<div style="font-size:11px;color:#555;word-break:keep-all;">${nearby.road_address_name}</div>` : (nearby.address_name ? `<div style="font-size:11px;color:#555;word-break:keep-all;">${nearby.address_name}</div>` : '')}
+                ${nearby.phone ? `<div style="font-size:11px;color:#888;margin-top:2px;word-break:break-all;">📞 ${nearby.phone}</div>` : ''}
+              </div>`;
+              infowindow.setContent(content);
+              infowindow.setPosition(latlng);
+              infowindow.open(map);
+            }, { location: latlng, radius: 30, sort: kakao.maps.services.SortBy.DISTANCE, size: 5 });
+          });
+        });
+
+        // 지도 드래그 시 인포윈도우 닫기
+        kakao.maps.event.addListener(map, 'dragstart', () => { try { kakaoInfowindowRef.current?.close(); } catch(e) {} });
+      } catch(e) { console.error("카카오맵 초기화 실패", e); return; }
+    } else {
+      // 이미 생성된 인스턴스를 현재 컨테이너에 relayout
+      try { kakaoMapInstanceRef.current.relayout(); } catch(e) {}
+    }
+
+    const map = kakaoMapInstanceRef.current;
+
+    // 기존 오버레이 제거
+    kakaoMarkersRef.current.forEach(m => { try { m.setMap(null); } catch(e) {} });
+    kakaoMarkersRef.current = [];
+
+    // 현재 dashboardDay 기준 핀만 표시 (전체 Day 핀도 표시, Day 색으로 구분)
+    const safeRests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+    const activeDayNums = mapActiveDays.includes('all')
+      ? null // null이면 전체
+      : mapActiveDays.filter(d => d !== 'unlinked');
+
+    safeRests.forEach(rest => {
+      if (!rest.lat || !rest.lng) return;
+      try {
+        const primaryPlan = Array.isArray(planTimeline)
+          ? planTimeline.filter(Boolean).find(p => S(p.place) === S(rest.name))
+          : null;
+        const planDay = primaryPlan ? parseInt(primaryPlan.day) : null;
+
+        // Day 필터 적용
+        if (activeDayNums && planDay && !activeDayNums.includes(planDay)) return;
+
+        const dayColor = planDay ? getDayColor(planDay) : '#6366f1';
+        const label = rest.isAccommodation ? '🏠' : (planDay ? `D${planDay}` : '📍');
+
+        const content = document.createElement('div');
+        content.style.cssText = `background:${dayColor};color:white;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35);cursor:pointer;`;
+        content.innerText = label;
+        content.onclick = () => setSelectedPinInfo(rest);
+
+        const position = new kakao.maps.LatLng(rest.lat, rest.lng);
+        const overlay = new kakao.maps.CustomOverlay({ position, content, yAnchor: 1.1, zIndex: 3 });
+        overlay.setMap(map);
+        kakaoMarkersRef.current.push(overlay);
+
+        if (showMapLabels) {
+          const labelEl = document.createElement('div');
+          labelEl.style.cssText = `background:white;border:1px solid #e2e8f0;border-radius:6px;padding:2px 6px;font-size:10px;font-weight:bold;color:#1e293b;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.12);margin-top:2px;cursor:pointer;`;
+          labelEl.innerText = S(rest.name);
+          labelEl.onclick = () => setSelectedPinInfo(rest);
+          const labelOverlay = new kakao.maps.CustomOverlay({ position, content: labelEl, yAnchor: -0.2, zIndex: 2 });
+          labelOverlay.setMap(map);
+          kakaoMarkersRef.current.push(labelOverlay);
+        }
+      } catch(e) {}
+    });
+
+    // 지역 기반 초기 위치: 핀 있으면 첫 핀, 없으면 설정된 지역으로 검색 이동
+    // mapInitFlyDoneRef는 여행 전환 시에만 리셋 — 지역명 변경 시엔 항상 재이동
+    const cityToSearch = (displayCityName && displayCityName !== '선택된 지역 없음')
+      ? displayCityName : globalManualRegion;
+    const currentCity = cityToSearch || '';
+    const prevCity = mapInitFlyDoneRef.current;
+    const first = safeRests.find(r => r.lat && r.lng);
+    if (first && prevCity !== 'pinset') {
+      map.setCenter(new kakao.maps.LatLng(first.lat, first.lng));
+      map.setLevel(4);
+      mapInitFlyDoneRef.current = 'pinset';
+    } else if (!first && currentCity && prevCity !== currentCity) {
+      try {
+        const ps = new kakao.maps.services.Places();
+        ps.keywordSearch(currentCity, (data, status) => {
+          if (status === kakao.maps.services.Status.OK && data[0]) {
+            map.setCenter(new kakao.maps.LatLng(parseFloat(data[0].y), parseFloat(data[0].x)));
+            map.setLevel(6);
+          }
+        });
+      } catch(e) {}
+      mapInitFlyDoneRef.current = currentCity;
+    }
+  }, [isKakaoMap, isKakaoMapLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, mapActiveDays, getDayColor, dashboardDay, displayCityName, globalManualRegion]);
+
+  // 카테고리 마커 ref
+  const kakaoCategoryMarkersRef = useRef([]);
+  const kakaoInfowindowRef = useRef(null); // 지도 전체 공유 인포윈도우
+  const kakaoBlockMapClickRef = useRef(false);
+
+  // 카카오맵 카테고리 검색 useEffect
+  useEffect(() => {
+    if (!isKakaoMap || !isKakaoMapLoaded || activeTab !== 'map') return;
+    const map = kakaoMapInstanceRef.current;
+    if (!map || !window.kakao) return;
+    const kakao = window.kakao;
+
+    // 카테고리 마커만 초기화 (인포윈도우는 건드리지 않음)
+    const clearCategoryMarkers = () => {
+      kakaoCategoryMarkersRef.current.forEach(m => { try { m.setMap(null); } catch(e) {} });
+      kakaoCategoryMarkersRef.current = [];
+    };
+
+    if (!kakaoCategory) {
+      clearCategoryMarkers();
+      if (kakaoInfowindowRef.current) { try { kakaoInfowindowRef.current.close(); } catch(e) {} }
+      setKakaoCategoryResults([]);
+      return;
+    }
+
+    // 카테고리별 색상
+    const catColors = { FD6: '#ef4444', CE7: '#f59e0b', AT4: '#10b981', CS2: '#3b82f6', AD5: '#8b5cf6', MT1: '#f97316' };
+    const color = catColors[kakaoCategory] || '#6366f1';
+
+    // 공유 인포윈도우 (없으면 생성)
+    if (!kakaoInfowindowRef.current) {
+      kakaoInfowindowRef.current = new kakao.maps.InfoWindow({ zIndex: 10, removable: true });
+    }
+    const infowindow = kakaoInfowindowRef.current;
+
+    // 단일 장소 인포윈도우 열기
+    const openPlaceInfowindow = (place, pos) => {
+      kakaoBlockMapClickRef.current = true;
+      setTimeout(() => { kakaoBlockMapClickRef.current = false; }, 300);
+      const btnId = `cat-pin-btn-${Date.now()}`;
+      const content = `<div style="padding:8px 10px;width:210px;max-width:210px;overflow:hidden;line-height:1.6;box-sizing:border-box;">
+        <div style="font-size:12px;font-weight:900;color:#1e293b;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${place.place_name}</div>
+        ${place.category_name ? `<div style="font-size:10px;color:${color};font-weight:700;margin-bottom:2px;">${place.category_name.split(' > ').pop()}</div>` : ''}
+        ${place.road_address_name ? `<div style="font-size:10px;color:#555;word-break:keep-all;">${place.road_address_name}</div>` : (place.address_name ? `<div style="font-size:10px;color:#555;">${place.address_name}</div>` : '')}
+        ${place.phone ? `<div style="font-size:10px;color:#888;margin-top:2px;word-break:break-all;">📞 ${place.phone}</div>` : ''}
+        <button id="${btnId}" style="width:100%;margin-top:6px;padding:6px 0;background:#4f46e5;color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">이 위치를 핀으로 지정 📌</button>
+      </div>`;
+      infowindow.setContent(content);
+      infowindow.setPosition(pos);
+      infowindow.open(map);
+      setTimeout(() => {
+        const btn = document.getElementById(btnId);
+        if (btn) btn.onclick = () => {
+          infowindow.close();
+          if (movingPinIdRef.current) {
+            setPendingMove({ id: movingPinIdRef.current, lat: parseFloat(place.y), lng: parseFloat(place.x) });
+          } else {
+            setClickedLocation({ lat: parseFloat(place.y), lng: parseFloat(place.x) });
+            setNewManualPlaceName(place.place_name); setNewManualLocalName(""); setNewManualFeature("");
+            setNewManualPhoto(""); setNewManualIsAccommodation(false);
+            setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
+            setIsAddPlaceModalOpen(true);
+          }
+        };
+      }, 100);
+    };
+
+    // 클러스터 인포윈도우 열기 (여러 장소 목록 — 행 클릭 시 상세로 전환)
+    const openClusterInfowindow = (places, pos) => {
+      kakaoBlockMapClickRef.current = true;
+      setTimeout(() => { kakaoBlockMapClickRef.current = false; }, 300);
+      const listId = `cat-cluster-list-${Date.now()}`;
+      const rows = places.map((p, i) =>
+        `<div data-idx="${i}" style="padding:5px 4px;border-bottom:1px solid #f1f5f9;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background='transparent'">
+          <div style="font-size:10px;font-weight:700;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.place_name}</div>
+          ${p.road_address_name ? `<div style="font-size:9px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.road_address_name}</div>` : ''}
+        </div>`
+      ).join('');
+      const content = `<div style="padding:8px 10px;width:220px;max-width:220px;line-height:1.5;box-sizing:border-box;">
+        <div style="font-size:10px;font-weight:900;color:#6366f1;margin-bottom:4px;">📍 ${places.length}개 장소 — 클릭하면 상세 정보</div>
+        <div id="${listId}">${rows}</div>
+      </div>`;
+      infowindow.setContent(content);
+      infowindow.setPosition(pos);
+      infowindow.open(map);
+      setTimeout(() => {
+        const listEl = document.getElementById(listId);
+        if (!listEl) return;
+        listEl.querySelectorAll('[data-idx]').forEach(row => {
+          row.onclick = (e) => {
+            e.stopPropagation();
+            const p = places[parseInt(row.dataset.idx)];
+            if (!p) return;
+            // 상세 인포윈도우로 교체 (위치는 해당 장소 좌표)
+            const placePos = new kakao.maps.LatLng(parseFloat(p.y), parseFloat(p.x));
+            openPlaceInfowindow(p, placePos);
+          };
+        });
+      }, 100);
+    };
+
+    // 위경도 → 화면 픽셀 변환 (카카오맵 내부 projection 활용)
+    const latLngToPixel = (latlng) => {
+      try {
+        const proj = map.getProjection();
+        return proj.pointFromCoords(latlng);
+      } catch(e) { return null; }
+    };
+
+    // 픽셀 거리 기준 클러스터링 (threshold: 60px)
+    const clusterPlaces = (places) => {
+      const THRESHOLD = 60;
+      const assigned = new Array(places.length).fill(-1);
+      const clusters = [];
+      for (let i = 0; i < places.length; i++) {
+        if (assigned[i] !== -1) continue;
+        const pi = latLngToPixel(new kakao.maps.LatLng(parseFloat(places[i].y), parseFloat(places[i].x)));
+        const cluster = [i];
+        assigned[i] = clusters.length;
+        for (let j = i + 1; j < places.length; j++) {
+          if (assigned[j] !== -1) continue;
+          const pj = latLngToPixel(new kakao.maps.LatLng(parseFloat(places[j].y), parseFloat(places[j].x)));
+          if (pi && pj) {
+            const dx = pi.x - pj.x, dy = pi.y - pj.y;
+            if (Math.sqrt(dx*dx + dy*dy) < THRESHOLD) { cluster.push(j); assigned[j] = clusters.length; }
+          }
+        }
+        clusters.push(cluster);
+      }
+      return clusters.map(idxArr => idxArr.map(i => places[i]));
+    };
+
+    const drawMarker = (place, pos, isCluster, allInCluster) => {
+      const markerEl = document.createElement('div');
+      markerEl.style.cssText = `display:flex;flex-direction:column;align-items:center;cursor:pointer;`;
+      if (isCluster) {
+        markerEl.innerHTML = `
+          <div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;">
+            <span style="font-size:7px;font-weight:900;color:white;">+</span>
+          </div>
+          <div style="margin-top:2px;padding:1px 5px;background:${color};border-radius:4px;font-size:9px;font-weight:700;color:white;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,0.2);">${allInCluster[0].place_name.slice(0,8)}${allInCluster[0].place_name.length > 8 ? '…' : ''} +${allInCluster.length - 1}</div>
+        `;
+      } else {
+        markerEl.innerHTML = `
+          <div style="width:10px;height:10px;border-radius:50%;background:${color};border:1.5px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.4);"></div>
+          <div style="margin-top:2px;padding:1px 4px;background:rgba(255,255,255,0.93);border:1px solid ${color};border-radius:4px;font-size:9px;font-weight:700;color:#1e293b;white-space:nowrap;max-width:72px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 2px rgba(0,0,0,0.12);">${place.place_name}</div>
+        `;
+      }
+      const overlay = new kakao.maps.CustomOverlay({ position: pos, content: markerEl, zIndex: 5, yAnchor: 0 });
+      overlay.setMap(map);
+      kakaoCategoryMarkersRef.current.push(overlay);
+      markerEl.onclick = (e) => {
+        e.stopPropagation();
+        if (isCluster) openClusterInfowindow(allInCluster, pos);
+        else openPlaceInfowindow(place, pos);
+      };
+    };
+
+    const searchAndDraw = () => {
+      clearCategoryMarkers();
+      const center = map.getCenter();
+      const ps = new kakao.maps.services.Places();
+      ps.categorySearch(kakaoCategory, (places, status) => {
+        if (status !== kakao.maps.services.Status.OK || !places) return;
+        setKakaoCategoryResults(places);
+        const clusters = clusterPlaces(places);
+        clusters.forEach(group => {
+          const rep = group[0];
+          const pos = new kakao.maps.LatLng(parseFloat(rep.y), parseFloat(rep.x));
+          drawMarker(rep, pos, group.length > 1, group);
+        });
+      }, { location: center, radius: 2000, sort: kakao.maps.services.SortBy.DISTANCE, size: 15 });
+    };
+
+    searchAndDraw();
+
+    // 드래그/줌 끝날 때 재검색
+    kakao.maps.event.addListener(map, 'idle', searchAndDraw);
+    return () => {
+      try { kakao.maps.event.removeListener(map, 'idle', searchAndDraw); } catch(e) {}
+      clearCategoryMarkers();
+    };
+  }, [isKakaoMap, isKakaoMapLoaded, activeTab, kakaoCategory]);
+
+
   /* ===================== UI 및 변수 계산 ===================== */
 
   const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
@@ -2626,7 +3270,13 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
   const safeDashboardDay = (typeof dashboardDay === 'number' && dashboardDay > 0) ? dashboardDay : 1;
   
   // [NEW] 데일리 일정 필터링 방식 혁신: 숙소 연박 무조건 포함 + 일반일정 시간순 정렬
-  const dayAccoms = safePlanTimeline.filter(p => p && p.isAccommodation);
+  const dayAccoms = safePlanTimeline.filter(p => {
+    if (!p || !p.isAccommodation) return false;
+    // accommodationDays가 비어있으면 모든 Day에 표시 (하위호환)
+    const days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
+    if (days.length === 0) return true;
+    return days.includes(safeDashboardDay);
+  });
   // trans_rental_ 아이템이 있으면 place에 '렌터카'가 포함된 비-trans_rental_ 항목(여행정산 중복) 숨기기
   const hasRentalTransItems = safePlanTimeline.some(p => p && (p.id === 'trans_rental_dep' || p.id === 'trans_rental_arr'));
   const dayPlans = safePlanTimeline.filter(p => {
@@ -3100,41 +3750,139 @@ return (
         const idx = _vp.idx || 0;
         const n = imgs.length;
         const dr = viewPhotoDragRef.current;
-        const onPointerDown = (e) => {
-          if (e.button !== 0) return;
-          dr.startX = e.clientX;
+        const z = zoomStateRef.current;
+
+        // DOM 직접 조작으로 렉 없는 줌 처리
+        const getTouchDist = (t) => {
+          const dx = t[0].clientX - t[1].clientX;
+          const dy = t[0].clientY - t[1].clientY;
+          return Math.sqrt(dx * dx + dy * dy);
         };
-        const onPointerUp = (e) => {
-          if (dr.startX === null) return;
-          const diff = dr.startX - e.clientX;
-          dr.startX = null;
-          if (Math.abs(diff) < 30) return;
-          e.stopPropagation();
-          if (diff > 0) goPhotoNext(imgs, idx);
-          else goPhotoPrev(imgs, idx);
+
+        const onTouchStart = (e) => {
+          if (e.touches.length === 2) {
+            z.dist = getTouchDist(e.touches);
+            z.baseScale = z.scale;
+            z.baseOx = z.ox; z.baseOy = z.oy;
+            dr.startX = null;
+          } else if (e.touches.length === 1) {
+            const now = Date.now();
+            // 더블탭
+            if (now - z.lastTap < 280) {
+              z.lastTap = 0;
+              if (z.scale > 1.05) {
+                resetZoom(true);
+              } else {
+                z.scale = 2.5; z.ox = 0; z.oy = 0;
+                applyZoomTransform(2.5, 0, 0, true);
+              }
+              return;
+            }
+            z.lastTap = now;
+            z.panStartX = e.touches[0].clientX;
+            z.panStartY = e.touches[0].clientY;
+            z.baseOx = z.ox; z.baseOy = z.oy;
+            if (z.scale <= 1.05) dr.startX = e.touches[0].clientX;
+            else dr.startX = null;
+          }
         };
-        const onTouchStart = (e) => { dr.startX = e.touches[0].clientX; };
+
+        const onTouchMove = (e) => {
+          if (e.touches.length === 2 && z.dist !== null) {
+            e.preventDefault();
+            const newDist = getTouchDist(e.touches);
+            const newScale = Math.min(Math.max(z.baseScale * (newDist / z.dist), 1), 5);
+            z.scale = newScale;
+            if (newScale <= 1.05) { z.ox = 0; z.oy = 0; }
+            applyZoomTransform(newScale, z.ox, z.oy, false);
+          } else if (e.touches.length === 1 && z.scale > 1.05) {
+            e.preventDefault();
+            const movedX = Math.abs(e.touches[0].clientX - z.panStartX);
+            const movedY = Math.abs(e.touches[0].clientY - z.panStartY);
+            if (movedX > 4 || movedY > 4) z.didDrag = true;
+            z.ox = z.baseOx + (e.touches[0].clientX - z.panStartX);
+            z.oy = z.baseOy + (e.touches[0].clientY - z.panStartY);
+            applyZoomTransform(z.scale, z.ox, z.oy, false);
+          }
+        };
+
         const onTouchEnd = (e) => {
+          if (z.dist !== null) {
+            z.dist = null;
+            if (z.scale <= 1.05) resetZoom(true);
+            return;
+          }
+          if (z.scale > 1.05) { dr.startX = null; return; }
           if (dr.startX === null) return;
           const diff = dr.startX - e.changedTouches[0].clientX;
           dr.startX = null;
           if (Math.abs(diff) < 30) return;
           e.stopPropagation();
+          resetZoom(false);
           if (diff > 0) goPhotoNext(imgs, idx);
           else goPhotoPrev(imgs, idx);
         };
+
         const onWheel = (e) => {
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            const newScale = Math.min(Math.max(z.scale * (e.deltaY < 0 ? 1.12 : 0.89), 1), 5);
+            z.scale = newScale;
+            if (newScale <= 1.05) { z.ox = 0; z.oy = 0; }
+            applyZoomTransform(newScale, z.ox, z.oy, false);
+            return;
+          }
+          if (z.scale > 1.05) return;
           if (n < 2 || dr.wheelLock) return;
           const delta = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
           if (Math.abs(delta) < 10) return;
           dr.wheelLock = true;
           setTimeout(() => { dr.wheelLock = false; }, 450);
+          resetZoom(false);
           if (delta > 0) goPhotoNext(imgs, idx);
           else goPhotoPrev(imgs, idx);
         };
-        const CARD_W = 300;
-        const CARD_H = 400;
-        const X_GAP = 160;
+
+        const onPointerDown = (e) => {
+          if (e.button !== 0) return;
+          z.didDrag = false;
+          if (z.scale > 1.05) {
+            z.panStartX = e.clientX;
+            z.panStartY = e.clientY;
+            z.baseOx = z.ox;
+            z.baseOy = z.oy;
+            z.mouseDown = true;
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } else {
+            dr.startX = e.clientX;
+          }
+        };
+        const onPointerMove = (e) => {
+          if (!z.mouseDown || z.scale <= 1.05) return;
+          const movedX = Math.abs(e.clientX - z.panStartX);
+          const movedY = Math.abs(e.clientY - z.panStartY);
+          if (movedX > 4 || movedY > 4) z.didDrag = true;
+          e.preventDefault();
+          z.ox = z.baseOx + (e.clientX - z.panStartX);
+          z.oy = z.baseOy + (e.clientY - z.panStartY);
+          applyZoomTransform(z.scale, z.ox, z.oy, false);
+        };
+        const onPointerUp = (e) => {
+          if (z.mouseDown) {
+            z.mouseDown = false;
+            return;
+          }
+          if (dr.startX === null || z.scale > 1.05) return;
+          const diff = dr.startX - e.clientX;
+          dr.startX = null;
+          if (Math.abs(diff) < 30) return;
+          e.stopPropagation();
+          resetZoom(false);
+          if (diff > 0) goPhotoNext(imgs, idx);
+          else goPhotoPrev(imgs, idx);
+        };
+
+        const CARD_W = 300; const CARD_H = 400; const X_GAP = 160;
         const getCardStyle = (offset) => {
           const absOff = Math.abs(offset);
           const scale = absOff === 0 ? 1 : absOff === 1 ? 0.78 : 0.62;
@@ -3144,43 +3892,51 @@ return (
           const tx = offset * X_GAP;
           const ty = absOff === 0 ? 0 : absOff === 1 ? 28 : 50;
           return {
-            position: 'absolute',
-            width: CARD_W, height: CARD_H,
-            left: '50%', top: '50%',
-            marginLeft: -CARD_W / 2, marginTop: -CARD_H / 2 - 30,
+            position: 'absolute', width: CARD_W, height: CARD_H,
+            left: '50%', top: '50%', marginLeft: -CARD_W / 2, marginTop: -CARD_H / 2 - 30,
             borderRadius: 18, overflow: 'hidden',
+            background: '#ffffff',
             transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-            filter: `brightness(${brightness})`,
-            opacity, zIndex,
+            filter: `brightness(${brightness})`, opacity, zIndex,
             transition: 'transform 0.32s cubic-bezier(.4,0,.2,1), opacity 0.32s, filter 0.32s',
             boxShadow: absOff === 0 ? '0 24px 64px rgba(0,0,0,0.95)' : '0 8px 24px rgba(0,0,0,0.6)',
-            cursor: absOff === 0 ? 'default' : 'pointer',
-            pointerEvents: 'none',
+            cursor: absOff === 0 ? 'default' : 'pointer', pointerEvents: 'none',
           };
         };
-        // 실제 존재하는 카드만 표시 (순환 없음): offset 범위에서 실제 인덱스가 유효한 것만
-        const offsets = [-2, -1, 0, 1, 2].filter(o => {
-          const ci = idx + o;
-          return ci >= 0 && ci < n;
-        });
+        const offsets = [-2, -1, 0, 1, 2].filter(o => { const ci = idx + o; return ci >= 0 && ci < n; });
+
         return (
           <div className="fixed inset-0 bg-black/95 z-[99998] flex flex-col items-center justify-center backdrop-blur-sm"
-               onPointerDown={onPointerDown} onPointerUp={onPointerUp}
-               onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
+               onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+               onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
                onWheel={onWheel}
-               onClick={() => setViewPhoto(null)}>
+               onClick={() => { if (z.didDrag) { z.didDrag = false; return; } setViewPhoto(null); }}>
             {/* 카드 영역 */}
-            <div className="relative flex-1 w-full" style={{ pointerEvents: 'none' }}>
+            <div className="relative flex-1 w-full" style={{ pointerEvents: 'none', overflow: 'hidden' }}>
               {offsets.map(offset => {
                 const ci = idx + offset;
                 return (
-                  <div key={ci} style={{ ...getCardStyle(offset), pointerEvents: 'auto' }}
+                  <div key={ci}
+                       ref={offset === 0 ? zoomCardRef : null}
+                       style={{ ...getCardStyle(offset), pointerEvents: 'auto' }}
                        onClick={e => {
                          e.stopPropagation();
+                         if (z.scale > 1.05) return;
                          if (offset < 0) goPhotoPrev(imgs, idx);
                          else if (offset > 0) goPhotoNext(imgs, idx);
                        }}>
-                    <img src={imgs[ci]} className="w-full h-full object-contain" alt="" draggable={false} />
+                    <img
+                      ref={offset === 0 ? zoomImgRef : null}
+                      src={imgs[ci]}
+                      alt="" draggable={false}
+                      style={{
+                        width: '100%', height: '100%',
+                        objectFit: 'contain',
+                        transformOrigin: 'center center',
+                        willChange: 'transform',
+                        display: 'block',
+                      }}
+                    />
                   </div>
                 );
               })}
@@ -3190,7 +3946,12 @@ return (
               <div className="flex gap-2 pb-6 pt-2 px-4 flex-shrink-0" style={{ zIndex: 30 }}
                    onClick={e => e.stopPropagation()}>
                 {imgs.map((img, i) => (
-                  <div key={i} onClick={e => { e.stopPropagation(); setViewPhoto({ imgs, idx: i }); setViewPhotoAnim(null); }}
+                  <div key={i} onClick={e => {
+                         e.stopPropagation();
+                         resetZoom(false);
+                         setViewPhoto({ imgs, idx: i });
+                         setViewPhotoAnim(null);
+                       }}
                        className="relative flex-shrink-0 cursor-pointer transition-all duration-200"
                        style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden',
                          border: i === idx ? '2.5px solid white' : '2px solid rgba(255,255,255,0.25)',
@@ -3640,7 +4401,7 @@ return (
                 {/* Day 선택 버튼 */}
                 <div>
                   <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>Day 선택</label>
-                  <div className={`grid grid-cols-4 gap-1 p-1 rounded-lg border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className={`grid gap-1 p-1 rounded-lg border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
                     {tripDays.map(d => (
                       <button key={d} onClick={() => setBasicExpAddDay(d)} className={`py-1.5 text-[10px] font-bold rounded transition-all duration-200 ${basicExpAddDay === d ? 'bg-indigo-600 text-white shadow-md' : (isDarkMode ? 'text-slate-400 hover:bg-slate-600' : 'text-slate-400 hover:bg-slate-100')}`}>D{d}</button>
                     ))}
@@ -3702,7 +4463,10 @@ return (
                        </button>
                     </div>
                  ) : (
-                    tripDays.map((d) => {
+                    (() => {
+                      const allKnownRegions2 = Object.values(REGIONS_BY_COUNTRY).flat();
+                      const effectiveDisplayCity = displayCityName && displayCityName !== '선택된 지역 없음' ? displayCityName : (globalManualRegion || (globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : ''));
+                      return tripDays.map((d) => {
                        const targetDateStr = getDateStringForDay(d);
                        const f = forecast.find(fc => fc && fc.date === targetDateStr);
                        const todayStr = new Date().toISOString().split('T')[0];
@@ -3722,7 +4486,7 @@ return (
                            return (
                               <div key={d} className={`flex justify-between items-center p-3 rounded-xl border shadow-sm transition-all duration-300 ${isToday ? (isDarkMode ? 'bg-indigo-900/30 border-indigo-500' : 'bg-indigo-50 border-indigo-300') : (isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100')}`}>
                                  <div className="flex flex-col space-y-0.5">
-                                    <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} - {displayCityName} ({targetDateStr.slice(5)})</span>
+                                    <span className={`text-[10px] font-bold ${isToday ? 'text-indigo-500' : textMuted}`}>Day {d} - {effectiveDisplayCity} ({targetDateStr.slice(5)})</span>
                                     <span className={`text-xs font-black ${textMuted}`}>예보 없음 <span className="font-normal text-[10px]">({reason})</span></span>
                                     {daysUntil > 15 && availableFromStr && (
                                       <span className="text-[10px] text-indigo-400 font-bold">📅 {availableFromStr}부터 날씨 확인 가능</span>
@@ -3738,11 +4502,12 @@ return (
                          const info = getWeatherInfo(f.code);
                          
                          // --- [NEW] 일정 기반 지역 및 시간 처리 로직 ---
+                         const isValidRegion = (r) => r && r !== '수동입력' && r !== '선택된 지역 없음' && (allKnownRegions2.includes(r) || r === globalManualRegion);
                          const dPlans = (Array.isArray(planTimeline) ? planTimeline : [])
-                            .filter(p => parseInt(p.day) === d && p.region && p.region !== '수동입력')
+                            .filter(p => parseInt(p.day) === d && isValidRegion(p.region))
                             .sort((a, b) => S(a.time).localeCompare(S(b.time)));
-                         
-                         let mainRegion = displayCityName;
+
+                         let mainRegion = effectiveDisplayCity;
                          if (dPlans.length > 0) mainRegion = dPlans[0].region;
 
                          const getRegionForHour = (hour) => {
@@ -3828,7 +4593,8 @@ return (
                               )}
                             </div>
                          );
-                    })
+                    });
+                    })()
                  )}
               </div>
               <button onClick={() => setIsWeatherModalOpen(false)} className="w-full mt-4 bg-indigo-600 text-white rounded-xl py-2.5 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">확인</button>
@@ -4643,7 +5409,7 @@ return (
               <div className="space-y-3 animate-in fade-in duration-300">
                 <div>
                   <label className={`text-[9px] font-bold ${textMuted} px-1 mb-1 block`}>렌터카 사용 기간 (Day 선택, 복수 선택 가능)</label>
-                  <div className={`grid grid-cols-4 gap-1 p-1 rounded-lg border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className={`grid gap-1 p-1 rounded-lg border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
                     {tripDays.map(d => (
                       <button key={d} type="button" onClick={() => setRentalCarData(prev => ({ ...prev, days: prev.days.includes(d) ? prev.days.filter(x => x !== d) : [...prev.days, d].sort((a,b)=>a-b) }))} className={`py-1.5 text-[10px] font-bold rounded transition-all duration-200 ${rentalCarData.days.includes(d) ? 'bg-indigo-600 text-white shadow-md' : (isDarkMode ? 'text-slate-400 hover:bg-slate-600' : 'text-slate-400 hover:bg-slate-100')}`}>D{d}</button>
                     ))}
@@ -4720,7 +5486,7 @@ return (
             </div>
             
             <div className="p-4 space-y-3">
-              <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm`}>
+              <div className={`grid gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
                 {tripDays.map(d => (
                   <button key={d} onClick={() => setEditingPlan({...editingPlan, day: d})} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 border border-transparent ${parseInt(editingPlan.day) === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
                 ))}
@@ -4859,9 +5625,29 @@ return (
                 )}
               </div>
 
-              <div className="flex items-center space-x-2 my-1.5 px-1">
-                <input type="checkbox" id="editPlanIsAcc" checked={Boolean(editingPlan.isAccommodation)} onChange={e => setEditingPlan({...editingPlan, isAccommodation: e.target.checked})} className="accent-indigo-600 w-3.5 h-3.5 rounded cursor-pointer" />
-                <label htmlFor="editPlanIsAcc" className={`text-[10px] font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+              <div className="my-1.5 px-1">
+                <div className="flex items-center space-x-2">
+                  <input type="checkbox" id="editPlanIsAcc" checked={Boolean(editingPlan.isAccommodation)} onChange={e => setEditingPlan({...editingPlan, isAccommodation: e.target.checked, accommodationDays: e.target.checked ? (editingPlan.accommodationDays || []) : []})} className="accent-indigo-600 w-3.5 h-3.5 rounded cursor-pointer" />
+                  <label htmlFor="editPlanIsAcc" className={`text-[10px] font-bold ${textMuted} cursor-pointer`}>이 장소를 숙소로 설정 🏠</label>
+                </div>
+                {editingPlan.isAccommodation && (
+                  <div className="mt-2 ml-5">
+                    <p className={`text-[9px] font-bold mb-1.5 ${textMuted}`}>숙박 Day 선택 (복수 선택 가능)</p>
+                    <div className="flex flex-wrap gap-1">
+                      {tripDays.map(d => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setEditingPlan(prev => {
+                            const days = Array.isArray(prev.accommodationDays) ? prev.accommodationDays : [];
+                            return { ...prev, accommodationDays: days.includes(d) ? days.filter(x => x !== d) : [...days, d] };
+                          })}
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${(Array.isArray(editingPlan.accommodationDays) && editingPlan.accommodationDays.includes(d)) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}
+                        >D{d}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="pt-2 flex space-x-2">
@@ -4870,13 +5656,14 @@ return (
                   const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
 // [저장 로직 수정] 테마(theme) 데이터가 핀 목록에도 저장되도록 강제 연동합니다.
 // [데이터 보정] 테마가 비어있거나 선택되지 않은 경우 '기타'로 강제 할당하여 저장
-const planData = { 
-                    ...editingPlan, 
-                    country: finalCountry, 
-                    region: finalRegion, 
+const planData = {
+                    ...editingPlan,
+                    country: finalCountry,
+                    region: finalRegion,
                     theme: (editingPlan.theme && editingPlan.theme.trim() !== "") ? editingPlan.theme : "기타",
                     rating: editingPlan.rating || 0,
-                    review: editingPlan.review || ""
+                    review: editingPlan.review || "",
+                    accommodationDays: editingPlan.isAccommodation ? (Array.isArray(editingPlan.accommodationDays) ? editingPlan.accommodationDays : []) : []
                   };           
                   const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
                   let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
@@ -4903,7 +5690,10 @@ const planData = {
                   
                   setPlanTimeline(updatedTimeline); 
                   
-                  if (finalRegion && finalRegion !== displayCityName) {
+                  // displayCityName: 드롭다운 지역 선택 or 수동입력 텍스트만 허용 (장소명 오염 방지)
+                  const regionIsFromDropdown = editingPlan.regionSelect && editingPlan.regionSelect !== "수동입력";
+                  const regionIsManual = editingPlan.regionSelect === "수동입력" && editingPlan.manualRegion;
+                  if (finalRegion && (regionIsFromDropdown || regionIsManual)) {
                     setDisplayCityName(S(finalRegion));
                     dbUpdates.display_city_name = S(finalRegion);
                   }
@@ -4998,7 +5788,7 @@ const planData = {
                                    setNewManualTime(matched.time);
                                    setNewManualPlaceName(matched.place);
                                    if(matched.localName) setNewManualLocalName(matched.localName);
-                                   if(matched.features) setNewManualFeature(matched.features);
+                                   if(matched.features && matched.features !== "직접 추가한 장소") setNewManualFeature(matched.features);
                                    if(matched.photo) setNewManualPhoto(matched.photo);
                                    setNewManualIsAccommodation(matched.isAccommodation);
                                    showToast("✨ 선택한 일정의 데이터가 쏙 채워졌어요!");
@@ -5289,6 +6079,18 @@ const planData = {
           openExternalUrl(webUrl);
           setIsNavModalOpen(false);
         };
+        // 카카오맵 네비게이션 실행 (앱 딥링크 → 웹 폴백)
+        const openKakaoNav = (by) => {
+          const sp = `${navOrigin.lat},${navOrigin.lng}`;
+          const ep = `${navDest.lat},${navDest.lng}`;
+          const appUrl = `kakaomap://route?sp=${sp}&ep=${ep}&by=${by}`;
+          const webUrl = `https://map.kakao.com/link/to/${encodeURIComponent(S(navDest.name))},${navDest.lat},${navDest.lng}/from/${encodeURIComponent(S(navOrigin.name))},${navOrigin.lat},${navOrigin.lng}`;
+          // 앱 딥링크 시도 후 1.5초 내 반응 없으면 웹으로 폴백
+          const fallback = setTimeout(() => openExternalUrl(webUrl), 1500);
+          window.location.href = appUrl;
+          window.addEventListener('blur', () => clearTimeout(fallback), { once: true });
+          setIsNavModalOpen(false);
+        };
         const selectingLabel = navSelectingFor === 'origin' ? '출발지' : navSelectingFor === 'dest' ? '도착지' : navSelectingFor !== null ? `경유지 ${navSelectingFor + 1}` : null;
         return (
         <div className="fixed inset-0 bg-black/60 z-[9500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsNavModalOpen(false)}>
@@ -5384,13 +6186,27 @@ const planData = {
 
               {/* 이동 수단 → 출발 */}
               {navOrigin && navDest && (
-                <div className="grid grid-cols-3 gap-2 pt-1">
-                  {[['walking','🚶 도보'],['driving','🚗 자동차'],['transit','🚌 대중교통']].map(([mode, label]) => (
-                    <button key={mode} onClick={() => openGoogleNav(mode)}
-                      className="bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-[11px] font-black transition-all shadow-md">
-                      {label}
-                    </button>
-                  ))}
+                <div className="space-y-2 pt-1">
+                  {/* 구글 네비 */}
+                  <p className={`text-[9px] font-bold px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>🌍 구글맵</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[['walking','🚶 도보'],['driving','🚗 자동차'],['transit','🚌 대중교통']].map(([mode, label]) => (
+                      <button key={mode} onClick={() => openGoogleNav(mode)}
+                        className="bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-[11px] font-black transition-all shadow-md">
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* 카카오 네비 */}
+                  <p className={`text-[9px] font-bold px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>🟡 카카오맵</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[['CAR','🚗 자동차'],['PUBLICTRANSIT','🚌 대중교통'],['WALK','🚶 도보']].map(([by, label]) => (
+                      <button key={by} onClick={() => openKakaoNav(by)}
+                        className="bg-yellow-400 hover:bg-yellow-500 active:scale-95 text-yellow-900 py-2.5 rounded-xl text-[11px] font-black transition-all shadow-md">
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -5450,49 +6266,75 @@ const planData = {
               <span className="text-xl leading-none">☰</span>
             </button>
             
-            <div className="flex-1 flex max-w-[250px] sm:max-w-md items-center space-x-2">
-              <div className="flex-1 relative">
-                <span className={`absolute left-3 top-1/2 -translate-y-1/2 ${textMuted} text-sm transition-colors duration-300`}>🔍</span>
-                <input 
-                  type="text" 
-                  placeholder="검색" 
-                  value={S(globalSearchQuery)}
-                  onChange={(e) => setGlobalSearchQuery(e.target.value)}
-                  onKeyDown={handleGlobalSearchEnter}
-                  onFocus={() => {if (suggestions.length > 0) setShowCountrySuggestions(true)}}
-                  onBlur={() => setTimeout(() => setShowCountrySuggestions(false), 200)}
-                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-700' : 'border-slate-200'} rounded-lg py-1.5 pl-9 pr-8 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none transition-all duration-300 shadow-sm`} 
-                />
-                {globalSearchQuery && (
-                  <button onClick={() => { setGlobalSearchQuery(""); setSuggestions([]); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">✕</button>
-                )}
-                
-                {showCountrySuggestions && suggestions.length > 0 && (
-                  <div className={`absolute top-full left-0 right-0 mt-1 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'} border rounded-md shadow-xl overflow-hidden z-50 animate-in fade-in duration-200`}>
-                    <div className="max-h-48 overflow-y-auto custom-scrollbar">
-                      {suggestions.map((suggestion, idx) => (
-                        <button
-                          key={idx}
-                          onMouseDown={() => fetchCityRestaurants(suggestion)}
-                          className={`w-full text-left px-4 py-2.5 text-[11px] font-bold flex items-center transition-colors duration-300 ${isDarkMode ? 'text-slate-200 hover:bg-slate-600 hover:text-indigo-300' : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-600'}`}
-                        >
-                          <span className="mr-2 opacity-50 text-sm">📍</span><span>{S(suggestion)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+            {/* 날씨 카드 행 — 헤더 */}
+            {(() => {
+              const cityKey = (displayCityName && displayCityName !== '선택된 지역 없음') ? displayCityName : globalManualRegion;
+              const hourly = cityKey ? hourlyWeatherCache[cityKey] : null;
 
-              {/* 날씨 버튼 (여행 날짜 동기화 연동) */}
-              <button 
-                onClick={() => setIsWeatherModalOpen(true)} 
-                className={`relative z-50 pointer-events-auto cursor-pointer flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border shadow-sm flex-shrink-0 transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
-              >
-                <span className="text-sm leading-none">{headerWeatherInfo ? headerWeatherInfo[1] : '☁️'}</span>
-                <span className="text-[10px] sm:text-xs font-bold">{headerTemp}</span>
-              </button>
-            </div>
+              const getSlotWeather = (dateStr, startH, endH) => {
+                if (!hourly || !Array.isArray(hourly.time)) return null;
+                const slots = hourly.time.reduce((acc, t, i) => {
+                  if (!t.startsWith(dateStr)) return acc;
+                  const h = parseInt(t.slice(11, 13));
+                  if (h >= startH && h < endH) acc.push({ temp: Math.round(hourly.temperature_2m[i]), code: hourly.weather_code[i] });
+                  return acc;
+                }, []);
+                if (!slots.length) return null;
+                const mid = slots[Math.floor(slots.length / 2)];
+                return { ...getWeatherInfo(mid.code), temp: mid.temp };
+              };
+
+              if (!Array.isArray(forecast) || forecast.length === 0) return null;
+
+              // 펼쳐진 Day의 시간대 카드 3개
+              const expandedSlots = expandedWeatherDay ? (() => {
+                const dateStr = getDateStringForDay(expandedWeatherDay);
+                const m = getSlotWeather(dateStr, 6, 12);
+                const a = getSlotWeather(dateStr, 12, 18);
+                const e = getSlotWeather(dateStr, 18, 24);
+                return [
+                  m ? { key: 'morning', label: `D${expandedWeatherDay} 🌅`, ...m } : null,
+                  a ? { key: 'afternoon', label: `D${expandedWeatherDay} ☀️`, ...a } : null,
+                  e ? { key: 'evening', label: `D${expandedWeatherDay} 🌙`, ...e } : null,
+                ].filter(Boolean);
+              })() : [];
+
+              const cardCls = `cursor-pointer flex flex-col items-center justify-center px-1 py-1 rounded-md border shadow-sm flex-shrink-0 relative transition-all duration-200 active:scale-95`;
+              const baseCard = isDarkMode ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-white border-slate-200 hover:bg-slate-50';
+              const lbl = `absolute top-0.5 left-1 text-[7px] font-black leading-none ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`;
+
+              return (
+                <div className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0" style={{scrollbarWidth:'none'}}>
+                  {/* Day 요약 카드들 */}
+                  {tripDays.map(d => {
+                    const dateStr = getDateStringForDay(d);
+                    const fc = forecast.find(f => f && f.date === dateStr);
+                    const info = fc ? getWeatherInfo(fc.code) : null;
+                    const isExpanded = expandedWeatherDay === d;
+                    return (
+                      <div key={d}
+                        onClick={() => { setExpandedWeatherDay(isExpanded ? null : d); if (!hourly) handleWeatherDayClick(d); }}
+                        className={`${cardCls} min-w-[44px] ${baseCard} ${isExpanded ? (isDarkMode ? 'border-indigo-500 bg-indigo-900/40' : 'border-indigo-400 bg-indigo-50') : ''}`}>
+                        <span className={`${lbl} ${isExpanded ? 'text-indigo-400' : ''}`}>D{d}</span>
+                        <span className="text-xs mt-2">{info ? info[1] : '—'}</span>
+                        {fc && <span className={`text-[8px] font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{fc.max}°</span>}
+                      </div>
+                    );
+                  })}
+                  {/* 구분선 */}
+                  {expandedSlots.length > 0 && <div className={`w-px h-6 flex-shrink-0 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`} />}
+                  {/* 펼쳐진 시간대 카드들 */}
+                  {expandedSlots.map(slot => (
+                    <div key={slot.key} onClick={() => setIsWeatherModalOpen(true)}
+                      className={`${cardCls} min-w-[44px] ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-200'}`}>
+                      <span className={`${lbl} text-indigo-400`}>{slot.label}</span>
+                      <span className="text-xs mt-2">{slot[1]}</span>
+                      <span className={`text-[8px] font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{slot.temp}°</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
           
           <div className="flex items-center space-x-1 sm:space-x-2">
@@ -5577,7 +6419,7 @@ const planData = {
                         <button onClick={() => setIsDashboardShoppingOpen(true)} className={`px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-pink-900/30 border-pink-700/50 text-pink-300' : 'bg-pink-50 border-pink-200 text-pink-600 hover:bg-pink-100'}`}>🛍️ 쇼핑</button>
                       </div>
                     </div>
-                    <div className={`grid grid-cols-4 gap-0.5 p-0.5 rounded-md w-full xl:w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
+                    <div className={`grid gap-0.5 p-0.5 rounded-md w-full xl:w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
 
                       {tripDays.map(d => {
                          const wInfo = getWeatherForDay(d);
@@ -5691,7 +6533,7 @@ const planData = {
                     <span className="truncate max-w-[100px] sm:max-w-none">✈️ 여행 리스트({S(displayCityName)})</span>
                   </h3>
                   <div className="flex items-center space-x-1 sm:space-x-2">
-                    <div className={`grid grid-cols-4 gap-0.5 p-0.5 rounded-md min-w-[70px] sm:min-w-[100px] w-full max-w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
+                    <div className={`grid gap-0.5 p-0.5 rounded-md min-w-[70px] sm:min-w-[100px] w-full max-w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
                       {tripDays.map(d => (
                          <button key={d} onClick={() => { setDashboardDay(d); }} className={`px-1 py-0.5 text-[7px] sm:text-[8px] font-bold rounded flex-shrink-0 transition-all duration-300 border ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border-slate-200/50' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
                            D{d}
@@ -5787,6 +6629,7 @@ const planData = {
                       onChangeSelect={e => {
                          const val = e.target.value;
                          setGlobalPlanCountry(val); setGlobalPlanRegion(""); setGlobalManualCountry(""); setGlobalManualRegion("");
+                         try { localStorage.setItem('my_travel_global_country', val); } catch(e){}
                       }}
                       onChangeManual={val => setGlobalManualCountry(val)}
                       onCancelManual={() => { setGlobalPlanCountry(""); setGlobalManualCountry(""); }}
@@ -5810,9 +6653,12 @@ const planData = {
                       }}
                       onChangeManual={val => {
                          setGlobalManualRegion(val);
+                         if (manualRegionSaveTimer.current) clearTimeout(manualRegionSaveTimer.current);
                          if (val) {
-                            setDisplayCityName(val);
-                            saveToDb({ display_city_name: val });
+                            manualRegionSaveTimer.current = setTimeout(() => {
+                              setDisplayCityName(val);
+                              saveToDb({ display_city_name: val });
+                            }, 600);
                          }
                       }}
                       onCancelManual={() => { setGlobalPlanRegion(""); setGlobalManualRegion(""); }}
@@ -5841,12 +6687,12 @@ const planData = {
                     <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>일차 선택</label>
                     <div className="flex space-x-1">
                       <button onClick={addDay} className="bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-indigo-100 transition-colors duration-300">+ Day 추가</button>
-                      {maxDay > 4 && <button onClick={removeDay} className="bg-rose-50 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-rose-100 transition-colors duration-300">- 삭제</button>}
+                      {maxDay > 1 && <button onClick={removeDay} className="bg-rose-50 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-rose-100 transition-colors duration-300">- Day 삭제</button>}
                     </div>
                   </div>
                   
                   {/* [NEW] 4칸씩 줄바꿈(접힘) 처리되는 그리드 */}
-                  <div className={`grid grid-cols-4 gap-1 border rounded-lg p-1 shadow-sm mb-2 max-h-24 overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200/80'}`}>
+                  <div className={`grid gap-1 border rounded-lg p-1 shadow-sm mb-2 max-h-24 overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200/80'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
                     {tripDays.map(d => (
                       <button key={d} onClick={() => setNewDay(d)} className={`flex-1 text-[10px] font-black py-1.5 rounded transition-all duration-300 is-tag ${newDay === d ? 'bg-indigo-600 text-white shadow-md scale-110 z-10' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 hover:bg-indigo-100'}`}>D{d}</button>
                     ))}
@@ -5918,21 +6764,24 @@ const planData = {
                     </div>
                   </div>
 
-                  {/* 내 핀에서 선택 - 커스텀 드롭다운 */}
-                  {currentRestaurants.filter(r => r && r.name).length > 0 && (
+                  {/* 내 핀 + 카테고리 검색 결과에서 선택 - 커스텀 드롭다운 */}
+                  {(currentRestaurants.filter(r => r && r.name).length > 0 || kakaoCategoryResults.length > 0) && (
                     <div className="flex flex-col space-y-1">
-                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>내 핀에서 선택 📌</label>
+                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>
+                        {kakaoCategoryResults.length > 0 ? '내 핀 / 지도 검색 결과에서 선택 📌' : '내 핀에서 선택 📌'}
+                      </label>
                       <div className="relative" onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}>
                         <button
                           type="button"
                           onClick={() => setPinSelectOpen(v => !v)}
                           className={`w-full border p-1.5 text-[10px] font-bold text-left rounded shadow-sm flex items-center justify-between transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600 text-slate-200' : 'border-slate-200/80 text-slate-700'}`}
                         >
-                          <span className={textMuted}>— 핀 목록에서 불러오기 —</span>
+                          <span className={textMuted}>— 목록에서 불러오기 —</span>
                           <span className="ml-1">{pinSelectOpen ? '▲' : '▼'}</span>
                         </button>
                         {pinSelectOpen && (
                           <div className={`absolute left-0 right-0 top-full mt-1 z-50 border rounded-lg shadow-xl overflow-y-auto max-h-44 custom-scrollbar ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+                            {/* 내 핀 목록 */}
                             {currentRestaurants.filter(r => r && r.name).map(pin => (
                               <button
                                 key={pin.id}
@@ -5944,7 +6793,6 @@ const planData = {
                                   if (pin.imgs && pin.imgs.length > 0) { setNewPlanPhotos(pin.imgs); } else if (pin.img) { setNewPlanPhotos([S(pin.img)]); }
                                   setNewIsAccommodation(Boolean(pin.isAccommodation));
                                   setNewTheme(S(pin.theme) || "기타");
-                                  // 전역 여행 국가/지역을 기본값으로 사용 (핀 데이터 대신)
                                   {
                                     const globalC = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : globalManualCountry;
                                     const globalR = globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : globalManualRegion;
@@ -5967,6 +6815,29 @@ const planData = {
                                 <span className="truncate">{S(pin.name)}{pin.localName ? ` (${S(pin.localName)})` : ''}</span>
                               </button>
                             ))}
+                            {/* 카테고리 검색 결과 */}
+                            {kakaoCategoryResults.length > 0 && (
+                              <>
+                                {currentRestaurants.filter(r => r && r.name).length > 0 && (
+                                  <div className={`px-3 py-1 text-[9px] font-bold border-t ${isDarkMode ? 'text-slate-400 border-slate-600' : 'text-slate-400 border-slate-100'}`}>지도 검색 결과</div>
+                                )}
+                                {kakaoCategoryResults.map((place, idx) => (
+                                  <button
+                                    key={`cat-${idx}`}
+                                    type="button"
+                                    onClick={() => {
+                                      setNewPlace(place.place_name);
+                                      setPinSelectOpen(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 text-[10px] font-bold flex items-center gap-1 transition-colors ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-rose-50'}`}
+                                  >
+                                    <span>🔍</span>
+                                    <span className="truncate">{place.place_name}</span>
+                                    {place.road_address_name && <span className={`text-[9px] ml-auto flex-shrink-0 ${textMuted}`}>{place.road_address_name.split(' ').slice(-2).join(' ')}</span>}
+                                  </button>
+                                ))}
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
@@ -6034,9 +6905,26 @@ const planData = {
                     )}
                   </div>
 
-                  <div className="flex items-center space-x-2 my-1.5 px-1 pb-1">
-                    <input type="checkbox" id="planIsAcc" checked={newIsAccommodation} onChange={e => setNewIsAccommodation(e.target.checked)} className="accent-indigo-600 w-3.5 h-3.5 cursor-pointer" />
-                    <label htmlFor="planIsAcc" className={`text-[10px] font-bold cursor-pointer transition-colors duration-300 ${textMuted}`}>이 장소를 숙소로 설정 🏠</label>
+                  <div className="my-1.5 px-1 pb-1">
+                    <div className="flex items-center space-x-2">
+                      <input type="checkbox" id="planIsAcc" checked={newIsAccommodation} onChange={e => { setNewIsAccommodation(e.target.checked); if (e.target.checked) { setNewTheme("숙소"); } else { setNewAccommodationDays([]); } }} className="accent-indigo-600 w-3.5 h-3.5 cursor-pointer" />
+                      <label htmlFor="planIsAcc" className={`text-[10px] font-bold cursor-pointer transition-colors duration-300 ${textMuted}`}>이 장소를 숙소로 설정 🏠</label>
+                    </div>
+                    {newIsAccommodation && (
+                      <div className="mt-2 ml-5">
+                        <p className={`text-[9px] font-bold mb-1.5 ${textMuted}`}>숙박 Day 선택 (복수 선택 가능)</p>
+                        <div className="flex flex-wrap gap-1">
+                          {tripDays.map(d => (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => setNewAccommodationDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${newAccommodationDays.includes(d) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}
+                            >D{d}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-1 flex space-x-2">
@@ -6060,7 +6948,7 @@ const planData = {
               </div>
 
               <div className={`flex-1 min-h-0 p-2 sm:p-4 w-full overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 pb-2 auto-rows-fr">
+                <div className="grid gap-2 sm:gap-3 pb-2 auto-rows-fr" style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
                   {tripDays.map(day => (
                     <div key={day} className={`flex flex-col rounded-xl border overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
                       <div className={`py-1.5 flex flex-col items-center border-b flex-shrink-0 transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
@@ -6071,14 +6959,18 @@ const planData = {
                       </div>
                       <div className={`flex-1 overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
                         
-                        {/* 숙소(isAccommodation) 아이템 상단 고정 렌더링 로직 추가 */}
-                        {planTimeline.filter(p => p && p.isAccommodation).map(plan => {
+                        {/* 숙소(isAccommodation) 아이템 상단 고정 렌더링 — Day별 필터 */}
+                        {planTimeline.filter(p => {
+                          if (!p || !p.isAccommodation) return false;
+                          const _days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
+                          return _days.length === 0 || _days.includes(day);
+                        }).map(plan => {
                           const isActive = activeMobileCard === plan.id;
                           return (
                             <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border shadow-sm bg-yellow-50/50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 relative group cursor-pointer transition-all duration-300 hover:shadow-md ${isActive ? 'border-indigo-400' : ''}`}
                                  onClick={(e) => { e.stopPropagation(); loadPlanToForm(plan); setActiveMobileCard(plan.id); }}>
                                <div className="flex justify-between items-start mb-1">
-                                 <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 연박 숙소</span>
+                                 <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 숙소{Array.isArray(plan.accommodationDays) && plan.accommodationDays.length > 0 ? ` (D${plan.accommodationDays.join(',D')})` : ''}</span>
                                   <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-col space-y-1 p-0.5 rounded-lg border shadow-md bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-all duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
                                    <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]">🗑️</span></button>
                                  </div>
@@ -6114,7 +7006,11 @@ const planData = {
                             if (_hasRental && !String(p.id).startsWith('trans_rental_') && S(p.place).includes('렌터카')) return false;
                             return true;
                           });
-                          const _hasAccomm = _safePT.some(p => p && p.isAccommodation);
+                          const _hasAccomm = _safePT.some(p => {
+                            if (!p || !p.isAccommodation) return false;
+                            const _days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
+                            return _days.length === 0 || _days.includes(day);
+                          });
                           return _dayPlans.length === 0 && !_hasAccomm ? (
                            <div className={`flex flex-col items-center justify-center h-full min-h-[100px] text-[8px] sm:text-[9px] transition-colors duration-300 ${textMuted}`}>
                              <span>일정 없음</span>
@@ -6261,8 +7157,20 @@ const planData = {
               
               {/* 필터 및 색상 동기화 패널 */}
 <div className="flex flex-col space-y-2 pb-1">
-                {/* [Day 필터] */}
-                <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
+                {/* [지도 타입 전환 + Day 필터] */}
+                <div className="flex items-center space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth px-0.5">
+                  {/* 지도 타입 토글 */}
+                  <div className={`flex flex-shrink-0 rounded-full border overflow-hidden text-[9px] font-black ${isDarkMode ? 'border-slate-600' : 'border-slate-300'}`}>
+                    <button
+                      onClick={() => setMapTypeOverride(prev => prev === 'kakao' ? null : 'kakao')}
+                      className={`px-2.5 py-1.5 whitespace-nowrap transition-all duration-200 ${isKakaoMap ? 'bg-yellow-400 text-yellow-900' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-white text-slate-400')}`}
+                    >🗺 카카오</button>
+                    <button
+                      onClick={() => setMapTypeOverride(prev => prev === 'leaflet' ? null : 'leaflet')}
+                      className={`px-2.5 py-1.5 whitespace-nowrap transition-all duration-200 ${!isKakaoMap ? 'bg-blue-500 text-white' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-white text-slate-400')}`}
+                    >🌍 구글</button>
+                  </div>
+                  <div className="w-px h-4 bg-slate-300 dark:bg-slate-600 flex-shrink-0"></div>
                   <button onClick={() => toggleMapDay('all')} className={`px-4 py-1.5 rounded-full text-[10px] font-black whitespace-nowrap transition-all duration-300 is-tag ${mapActiveDays.includes('all') ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'}`}>전체 Day</button>                   {tripDays.map(d => {
                      const color = getDayColor(d);
                      const isActive = mapActiveDays.includes(d);
@@ -6293,17 +7201,49 @@ return (
                      </button>
                    ))}
                 </div>
+                {/* 카카오맵 장소 카테고리 검색 필터 */}
+                {isKakaoMap && (
+                  <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
+                    {[
+                      { code: '', label: '장소 전체' },
+                      { code: 'FD6', label: '🍽️ 식당' },
+                      { code: 'CE7', label: '☕ 카페' },
+                      { code: 'AT4', label: '🏛️ 관광지' },
+                      { code: 'CS2', label: '🏪 편의점' },
+                      { code: 'AD5', label: '🏨 숙박' },
+                      { code: 'MT1', label: '🛒 마트' },
+                    ].map(({ code, label }) => (
+                      <button key={code} onClick={() => setKakaoCategory(prev => prev === code ? '' : code)}
+                        className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${kakaoCategory === code && code !== '' ? 'bg-rose-500 text-white border-rose-500 shadow-md' : (code === '' && kakaoCategory === '' ? 'bg-slate-500 text-white border-slate-500 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'))}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                 <div className="relative w-full sm:w-64">
                    <div className={`flex items-center shadow-sm rounded-lg overflow-hidden border transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-300 bg-white'}`}>
                       <span className={`ml-3 text-sm transition-colors duration-300 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>🔍</span>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         value={S(markerSearchQuery)}
                         onChange={e => setMarkerSearchQuery(e.target.value)}
-                        placeholder="내 지도 핀 검색..."
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && isKakaoMap && kakaoMapInstanceRef.current && window.kakao) {
+                            try {
+                              const ps = new window.kakao.maps.services.Places();
+                              ps.keywordSearch(markerSearchQuery, (data, status) => {
+                                if (status === window.kakao.maps.services.Status.OK && data[0]) {
+                                  kakaoMapInstanceRef.current.setCenter(new window.kakao.maps.LatLng(parseFloat(data[0].y), parseFloat(data[0].x)));
+                                  kakaoMapInstanceRef.current.setLevel(4);
+                                } else { showToast("검색 결과가 없습니다."); }
+                              });
+                            } catch(e) {}
+                          }
+                        }}
+                        placeholder={isKakaoMap ? "장소 검색 (한국어·영어·주소)..." : "내 지도 핀 검색..."}
                         className={`w-full pl-2 pr-8 py-2 bg-transparent text-[11px] font-bold focus:outline-none transition-colors duration-300 ${isDarkMode ? 'text-white placeholder-slate-400' : 'text-slate-800'}`}
                       />
                       {markerSearchQuery && (
@@ -6313,14 +7253,14 @@ return (
                    {markerSearchQuery && filteredMarkers.length > 0 && (
                      <div className={`absolute top-full left-0 right-0 mt-1 border rounded-lg shadow-xl overflow-hidden max-h-40 overflow-y-auto custom-scrollbar animate-in fade-in duration-200 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
                         {filteredMarkers.map(marker => (
-                          <button 
+                          <button
                             key={marker.id}
                             onClick={() => handleMarkerSearchSelect(marker)}
                             className={`w-full text-left px-3 py-2.5 text-[11px] font-bold border-b last:border-0 flex items-center transition-colors duration-300 ${isDarkMode ? 'text-slate-200 border-slate-700 hover:bg-slate-700' : 'text-slate-700 border-slate-100 hover:bg-indigo-50'}`}
                           >
-                            <div className={`w-2 h-2 rounded-full mr-2.5 transition-transform duration-300 ${planTimeline.some(p=>S(p.place)===S(marker.name))?'bg-orange-500':'bg-blue-500'} group-hover:scale-125`}></div>
+                            <div className={`w-2 h-2 rounded-full mr-2.5 ${planTimeline.some(p=>S(p.place)===S(marker.name))?'bg-orange-500':'bg-blue-500'}`}></div>
                             <span className="truncate flex-1">{S(marker.name)}</span>
-                            <span className={`text-[9px] ml-2 transition-colors duration-300 ${textMuted}`}>{S(marker.city)}</span>
+                            <span className={`text-[9px] ml-2 ${textMuted}`}>{S(marker.city)}</span>
                           </button>
                         ))}
                      </div>
@@ -6359,13 +7299,17 @@ return (
             
             <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`}>
               <div className="w-full h-full rounded-3xl overflow-hidden relative">
-                {!isLeafletLoaded && (
-                  <div className={`absolute inset-0 z-0 flex flex-col items-center justify-center transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-400'}`}>
+                {/* 로딩 표시 */}
+                {((isKakaoMap && !isKakaoMapLoaded) || (!isKakaoMap && !isLeafletLoaded)) && (
+                  <div className={`absolute inset-0 z-20 flex flex-col items-center justify-center transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-400'}`}>
                     <span className="text-xl animate-spin inline-block mb-2">🔄</span>
-                    <span className="text-[10px] font-bold">지도 로딩 중...</span>
+                    <span className="text-[10px] font-bold">{isKakaoMap ? '카카오맵' : '구글맵'} 로딩 중...</span>
                   </div>
                 )}
-                <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none"></div>
+                {/* Leaflet(구글) 지도 — 항상 DOM에 존재, visibility로 전환 */}
+                <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none" style={{visibility: isKakaoMap ? 'hidden' : 'visible'}}></div>
+                {/* 카카오맵 — 항상 DOM에 존재, visibility로 전환 */}
+                <div ref={kakaoMapContainerRef} className="absolute inset-0 z-10 w-full h-full cursor-crosshair" style={{visibility: isKakaoMap ? 'visible' : 'hidden'}}></div>
               </div>
             </div>
           </div>
