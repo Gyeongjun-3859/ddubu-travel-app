@@ -451,6 +451,8 @@ const [appFont, setAppFont] = useState("'Pretendard', -apple-system, sans-serif"
   const mapInstanceRef = useRef(null);
   const kakaoMapInstanceRef = useRef(null);
   const kakaoMarkersRef = useRef([]);
+  const kakaoSearchMarkersRef = useRef([]); // 장소 검색 결과 임시 마커
+  const kakaoMyLocOverlayRef = useRef(null); // 카카오맵 현재위치 오버레이
   const markersRef = useRef([]);
   const polylinesRef = useRef([]);
   const [isPinMode, setIsPinMode] = useState(false);
@@ -1578,6 +1580,82 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
       window.removeEventListener('deviceorientation', window.myLocOrientationHandler);
       window.myLocOrientationHandler = null;
     }
+
+    // ── 카카오맵 모드 ──────────────────────────────────────────────
+    if (isKakaoMap && kakaoMapInstanceRef.current && window.kakao) {
+      const kakao = window.kakao;
+      let kakaoMapFlown = false;
+
+      const renderKakaoLocMarker = (lat, lng, heading) => {
+        // 기존 오버레이 제거
+        if (kakaoMyLocOverlayRef.current) {
+          try { kakaoMyLocOverlayRef.current.setMap(null); } catch(e) {}
+          kakaoMyLocOverlayRef.current = null;
+        }
+        const arrowHtml = (heading !== null && heading !== undefined && !isNaN(heading))
+          ? `<div style="position:absolute;top:-14px;left:50%;transform:translateX(-50%) rotate(${heading}deg);transform-origin:50% 36px;transition:transform 0.3s ease-out;z-index:1;">
+               <div style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:16px solid rgba(79,70,229,0.9);filter:drop-shadow(0 2px 2px rgba(0,0,0,0.3));"></div>
+             </div>`
+          : '';
+        const el = document.createElement('div');
+        el.style.cssText = 'position:relative;width:48px;height:48px;display:flex;align-items:center;justify-content:center;';
+        el.innerHTML = `
+          ${arrowHtml}
+          <div style="position:relative;z-index:2;font-size:32px;line-height:1;filter:drop-shadow(0 4px 4px rgba(0,0,0,0.4));animation:baemin-bounce 0.6s infinite alternate cubic-bezier(0.5,0.05,1,0.5);">
+            ${myLocationIcon}
+          </div>
+          <div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:20px;height:6px;background:rgba(0,0,0,0.25);border-radius:50%;filter:blur(2px);animation:baemin-shadow 0.6s infinite alternate cubic-bezier(0.5,0.05,1,0.5);z-index:1;"></div>
+        `;
+        const overlay = new kakao.maps.CustomOverlay({
+          position: new kakao.maps.LatLng(lat, lng),
+          content: el,
+          yAnchor: 1.1,
+          zIndex: 20,
+        });
+        overlay.setMap(kakaoMapInstanceRef.current);
+        kakaoMyLocOverlayRef.current = overlay;
+      };
+
+      const locRef = { lat: null, lng: null, heading: null };
+      window.myLocWatchId = navigator.geolocation.watchPosition((pos) => {
+        const { latitude, longitude, heading } = pos.coords;
+        locRef.lat = latitude; locRef.lng = longitude;
+        if (heading !== null && !isNaN(heading)) locRef.heading = heading;
+        if (!kakaoMapFlown && kakaoMapInstanceRef.current) {
+          kakaoMapInstanceRef.current.setCenter(new kakao.maps.LatLng(latitude, longitude));
+          kakaoMapInstanceRef.current.setLevel(3);
+          kakaoMapFlown = true;
+        }
+        renderKakaoLocMarker(locRef.lat, locRef.lng, locRef.heading);
+      }, (error) => {
+        if (error.code === 1) showToast("위치 권한이 거부되었습니다. 스마트폰/브라우저의 위치 권한을 허용해주세요.");
+        else if (error.code === 2) showToast("위치 정보를 사용할 수 없습니다. GPS를 켜주세요.");
+        else if (error.code === 3) showToast("위치 요청 시간이 초과되었습니다.");
+        else showToast("위치 접근 중 알 수 없는 오류가 발생했습니다.");
+      }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+
+      if (window.DeviceOrientationEvent) {
+        const handleOrientation = (e) => {
+          if (locRef.lat === null) return;
+          let h;
+          if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
+          else if (e.alpha != null) h = (360 - e.alpha) % 360;
+          else return;
+          locRef.heading = h;
+          renderKakaoLocMarker(locRef.lat, locRef.lng, h);
+        };
+        window.myLocOrientationHandler = handleOrientation;
+        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+          DeviceOrientationEvent.requestPermission().then(res => {
+            if (res === 'granted') window.addEventListener('deviceorientation', handleOrientation);
+          }).catch(() => {});
+        } else {
+          window.addEventListener('deviceorientation', handleOrientation);
+        }
+      }
+      return; // 카카오맵 처리 완료 — Leaflet 로직 실행 안 함
+    }
+    // ── Leaflet 모드 ────────────────────────────────────────────────
 
     // 최신 좌표를 ref로 관리해 클로저 고정 문제 해결
     const locRef = { lat: null, lng: null, heading: null };
@@ -7693,12 +7771,37 @@ return (
                         onKeyDown={e => {
                           if (e.key === 'Enter' && isKakaoMap && kakaoMapInstanceRef.current && window.kakao) {
                             try {
-                              const ps = new window.kakao.maps.services.Places();
+                              // 이전 검색 마커 제거
+                              kakaoSearchMarkersRef.current.forEach(m => { try { m.setMap(null); } catch(_) {} });
+                              kakaoSearchMarkersRef.current = [];
+                              const kakao = window.kakao;
+                              const ps = new kakao.maps.services.Places();
                               ps.keywordSearch(markerSearchQuery, (data, status) => {
-                                if (status === window.kakao.maps.services.Status.OK && data[0]) {
-                                  kakaoMapInstanceRef.current.setCenter(new window.kakao.maps.LatLng(parseFloat(data[0].y), parseFloat(data[0].x)));
+                                if (status === kakao.maps.services.Status.OK && data.length > 0) {
+                                  // 첫 번째 결과로 지도 이동
+                                  kakaoMapInstanceRef.current.setCenter(new kakao.maps.LatLng(parseFloat(data[0].y), parseFloat(data[0].x)));
                                   kakaoMapInstanceRef.current.setLevel(4);
-                                } else { showToast("검색 결과가 없습니다."); }
+                                  // 검색 결과 마커 표시 (최대 5개)
+                                  data.slice(0, 5).forEach((place, idx) => {
+                                    const el = document.createElement('div');
+                                    el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
+                                    el.innerHTML = `
+                                      <div style="background:#4f46e5;color:white;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35);">${idx + 1}</div>
+                                      <div style="background:white;border:1px solid #e2e8f0;border-radius:6px;padding:2px 6px;font-size:10px;font-weight:700;color:#1e293b;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.12);margin-top:2px;max-width:100px;overflow:hidden;text-overflow:ellipsis;">${place.place_name}</div>
+                                    `;
+                                    const overlay = new kakao.maps.CustomOverlay({
+                                      position: new kakao.maps.LatLng(parseFloat(place.y), parseFloat(place.x)),
+                                      content: el,
+                                      yAnchor: 1.1,
+                                      zIndex: 15,
+                                    });
+                                    overlay.setMap(kakaoMapInstanceRef.current);
+                                    kakaoSearchMarkersRef.current.push(overlay);
+                                  });
+                                  showToast(`🔍 "${markerSearchQuery}" 검색 결과 ${Math.min(data.length, 5)}개`);
+                                } else {
+                                  showToast("검색 결과가 없습니다.");
+                                }
                               });
                             } catch(e) {}
                           }
@@ -7707,7 +7810,11 @@ return (
                         className={`w-full pl-2 pr-8 py-2 bg-transparent text-[11px] font-bold focus:outline-none transition-colors duration-300 ${isDarkMode ? 'text-white placeholder-slate-400' : 'text-slate-800'}`}
                       />
                       {markerSearchQuery && (
-                        <button onClick={() => setMarkerSearchQuery("")} className="absolute right-3 text-slate-400 hover:text-slate-600 transition-colors">✕</button>
+                        <button onClick={() => {
+                          setMarkerSearchQuery("");
+                          kakaoSearchMarkersRef.current.forEach(m => { try { m.setMap(null); } catch(_) {} });
+                          kakaoSearchMarkersRef.current = [];
+                        }} className="absolute right-3 text-slate-400 hover:text-slate-600 transition-colors">✕</button>
                       )}
                    </div>
                    {markerSearchQuery && filteredMarkers.length > 0 && (
