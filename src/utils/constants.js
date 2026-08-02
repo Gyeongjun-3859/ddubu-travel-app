@@ -1,6 +1,7 @@
 export const SUPABASE_URL = "https://xpvzziofihamhavulwbz.supabase.co";
 export const SUPABASE_ANON_KEY = "sb_publishable_nWReXsVlfI4QM0bOuw1A2g_uikm8CVl";
 export const AUTH_EMAIL_DOMAIN = '@ddubu.internal';
+export const ODSAY_API_KEY = "b96v8zHMOCaRuxXLCLbBgw";
 
 export const CURRENCIES = [
   { code: 'KRW', label: 'KRW', sym: '₩', unit: 1 },

@@ -106,3 +106,36 @@ export function compressAndStoreImage(supabaseClient, appUserId, folderId, file,
     };
   };
 }
+
+// plan.transitRoutes = [{ fromPlace, fromIsAccommodation, notes: string[] }, ...]
+// 한 일정에 여러 출발지에서 오는 이동정보를 각각 따로 저장한다(도착지가 같아도 출발지가 다르면 별개 항목).
+// 구버전 데이터(transitNote/transitFromPlace 단일 필드)는 항목 1개짜리 배열로 취급해서 계속 읽을 수 있게 호환 처리.
+export function getTransitRoutes(plan) {
+  if (!plan) return [];
+  if (Array.isArray(plan.transitRoutes)) {
+    return plan.transitRoutes.filter(r => r && Array.isArray(r.notes) && r.notes.length > 0);
+  }
+  const legacyNotes = Array.isArray(plan.transitNote) ? plan.transitNote.filter(Boolean) : (plan.transitNote ? [plan.transitNote] : []);
+  if (legacyNotes.length > 0) {
+    return [{ fromPlace: S(plan.transitFromPlace || ''), fromIsAccommodation: Boolean(plan.transitFromIsAccommodation), notes: legacyNotes }];
+  }
+  return [];
+}
+
+// 이 plan에 저장된 모든 이동정보 문구를 한 줄로 모아서 반환(요약 표시용)
+export function getTransitNotes(plan) {
+  return getTransitRoutes(plan).flatMap(r => r.notes);
+}
+
+// 숙소는 화면 맨 위에 고정 표시되어 시간 순서상 위치가 없기 때문에,
+// 도착지가 숙소인 이동정보는 숙소 카드가 아니라 "출발지 카드 바로 다음"에 붙여야 자연스럽다.
+// 주어진 plan(출발지 후보)에서 출발해 숙소로 가는 이동정보가 있으면 { plan: 숙소plan, route: 해당 항목 }을 반환한다.
+export function getAccommodationTransitFrom(plan, dayPlans) {
+  if (!plan || !Array.isArray(dayPlans)) return null;
+  for (const p of dayPlans) {
+    if (!p || !p.isAccommodation) continue;
+    const route = getTransitRoutes(p).find(r => S(r.fromPlace) && S(r.fromPlace) === S(plan.place));
+    if (route) return { plan: p, route };
+  }
+  return null;
+}

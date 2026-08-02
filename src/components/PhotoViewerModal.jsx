@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 
 const PhotoViewerModal = ({
@@ -6,9 +6,9 @@ const PhotoViewerModal = ({
   viewPhotoDragRef, zoomImgRef, zoomCardRef, zoomStateRef,
   applyZoomTransform, resetZoom, goPhotoNext, goPhotoPrev,
 }) => {
-  if (!viewPhoto) return null;
+  const containerRef = useRef(null);
 
-  const _vp = typeof viewPhoto === 'string' ? { imgs: [viewPhoto], idx: 0 } : viewPhoto;
+  const _vp = viewPhoto ? (typeof viewPhoto === 'string' ? { imgs: [viewPhoto], idx: 0 } : viewPhoto) : { imgs: [], idx: 0 };
   const imgs = _vp.imgs || [];
   const idx = _vp.idx || 0;
   const n = imgs.length;
@@ -145,6 +145,23 @@ const PhotoViewerModal = ({
     else goPhotoPrev(imgs, idx);
   };
 
+  // React onWheel/onTouchMove는 passive 리스너로 붙어서 preventDefault가 브라우저 자체 확대(핀치줌/Ctrl+휠줌)를
+  // 막지 못하는 경우가 있어, 네이티브 리스너를 passive:false로 직접 붙여서 확실히 막는다.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !viewPhoto) return;
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+    };
+  });
+
+  if (!viewPhoto) return null;
+
   const CARD_W = 300; const CARD_H = 400; const X_GAP = 160;
   const getCardStyle = (offset) => {
     const absOff = Math.abs(offset);
@@ -169,10 +186,9 @@ const PhotoViewerModal = ({
   const offsets = [-2, -1, 0, 1, 2].filter(o => { const ci = idx + o; return ci >= 0 && ci < n; });
 
   return (
-    <div className="fixed inset-0 bg-black/95 z-[99998] flex flex-col items-center justify-center backdrop-blur-sm"
+    <div ref={containerRef} className="fixed inset-0 bg-black/95 z-[99998] flex flex-col items-center justify-center backdrop-blur-sm"
          onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-         onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
-         onWheel={onWheel}
+         onTouchEnd={onTouchEnd}
          onClick={() => { if (z.didDrag) { z.didDrag = false; return; } setViewPhoto(null); }}>
       {/* 카드 영역 */}
       <div className="relative flex-1 w-full" style={{ pointerEvents: 'none', overflow: 'hidden' }}>

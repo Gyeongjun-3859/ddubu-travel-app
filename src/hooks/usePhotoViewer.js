@@ -13,8 +13,17 @@ export function usePhotoViewer() {
     const el = zoomImgRef.current;
     const card = zoomCardRef.current;
     if (!el) return;
+
+    // 사진 가장자리가 확대 프레임 안쪽으로 사라져 빈 공간이 보이지 않도록, 팬 이동거리를 사진 가장자리까지로 제한
+    const maxOx = Math.max(0, el.offsetWidth * (scale - 1) / 2);
+    const maxOy = Math.max(0, el.offsetHeight * (scale - 1) / 2);
+    const clampedOx = Math.min(Math.max(ox, -maxOx), maxOx);
+    const clampedOy = Math.min(Math.max(oy, -maxOy), maxOy);
+    zoomStateRef.current.ox = clampedOx;
+    zoomStateRef.current.oy = clampedOy;
+
     el.style.transition = animate ? 'transform 0.25s cubic-bezier(.4,0,.2,1)' : 'none';
-    el.style.transform = `scale(${scale}) translate(${ox / scale}px, ${oy / scale}px)`;
+    el.style.transform = `scale(${scale}) translate(${clampedOx / scale}px, ${clampedOy / scale}px)`;
     if (card) {
       if (scale > 1.05) {
         card.style.overflow = 'visible';

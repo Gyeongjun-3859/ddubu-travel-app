@@ -1,6 +1,7 @@
 import React from 'react';
 import { Trash2 } from 'lucide-react';
-import { S } from '../utils/helpers';
+import { S, getAccommodationTransitFrom } from '../utils/helpers';
+import TransitConnector from './TransitConnector';
 
 const PlanTimelinePanel = ({
   isDarkMode, textMuted, textMain, tripDays, getDayDateString, planTimeline,
@@ -10,7 +11,14 @@ const PlanTimelinePanel = ({
   return (
     <div className={`flex-1 min-h-0 p-2 sm:p-4 w-full overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
       <div className="grid gap-2 sm:gap-3 pb-2 auto-rows-fr" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))'}}>
-        {tripDays.map(day => (
+        {tripDays.map(day => {
+          // 숙소는 화면 맨 위에 고정 표시되므로, "출발지 카드 다음"에 이동정보 배지를 붙이기 위해 미리 계산해둔다
+          const _accommForDay = (Array.isArray(planTimeline) ? planTimeline : []).filter(p => {
+            if (!p || !p.isAccommodation) return false;
+            const _days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
+            return _days.length === 0 || _days.includes(day);
+          });
+          return (
           <div key={day} className={`flex flex-col rounded-xl border overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
             <div className={`py-1.5 flex flex-col items-center border-b flex-shrink-0 transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
               <span className={`text-[10px] sm:text-[11px] font-bold leading-tight transition-colors duration-300 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
@@ -21,11 +29,7 @@ const PlanTimelinePanel = ({
             <div className={`flex-1 overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
 
               {/* 숙소(isAccommodation) 아이템 상단 고정 렌더링 — Day별 필터 */}
-              {planTimeline.filter(p => {
-                if (!p || !p.isAccommodation) return false;
-                const _days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
-                return _days.length === 0 || _days.includes(day);
-              }).map(plan => {
+              {_accommForDay.map(plan => {
                 const isActive = activeMobileCard === plan.id;
                 return (
                   <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border shadow-sm bg-yellow-50/50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 relative group cursor-pointer transition-all duration-300 hover:shadow-md ${isActive ? 'border-indigo-400' : ''}`}
@@ -78,13 +82,17 @@ const PlanTimelinePanel = ({
                  </div>
                 ) : _dayPlans.map((plan) => {
                   const isActive = activeMobileCard === plan.id;
+                  // 이 plan에서 출발해 숙소로 가는 이동정보가 있으면, 숙소 카드가 아니라 여기(출발지) 바로 아래에 붙인다
+                  const _accomTransit = getAccommodationTransitFrom(plan, _accommForDay);
 
                   // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명 포함 시 무조건 전용 카드 적용)
                   const isTransportTheme = plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword));
                   // [버그 수정 1] 교통/항공권 렌더링 조건 완화 (테마명에 교통수단 포함 시 전용 카드)
                   if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
                     return (
-                      <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group cursor-pointer ${isActive ? 'border-indigo-400' : ''}`}
+                    <React.Fragment key={plan.id}>
+                      <TransitConnector plan={plan} />
+                      <div className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group cursor-pointer ${isActive ? 'border-indigo-400' : ''}`}
                            onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
                         {plan.time !== '99:99' && <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{S(plan.time)}</div>}
                         <div className="flex-1 min-w-0 flex flex-col px-0.5">
@@ -101,11 +109,15 @@ const PlanTimelinePanel = ({
                            <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
                         </div>
                       </div>
+                      {_accomTransit && <TransitConnector plan={_accomTransit.plan} route={_accomTransit.route} />}
+                    </React.Fragment>
                     )
                   }
 
                   return (
-                  <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
+                  <React.Fragment key={plan.id}>
+                    <TransitConnector plan={plan} />
+                    <div className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
                     <div className="flex justify-between items-start mb-1">
                       {plan.time !== '99:99' && <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>}
                       <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
@@ -130,11 +142,14 @@ const PlanTimelinePanel = ({
                         </div>
                       )}
                     </div>
-                  </div>
+                    </div>
+                    {_accomTransit && <TransitConnector plan={_accomTransit.plan} route={_accomTransit.route} />}
+                  </React.Fragment>
                 )}); })()}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

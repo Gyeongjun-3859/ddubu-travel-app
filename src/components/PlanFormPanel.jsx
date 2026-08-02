@@ -1,13 +1,15 @@
-import React from 'react';
-import { X, Globe, MapPin, Tag, Clock, Home, Backpack, ShoppingBag } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Globe, MapPin, Tag, Clock, Home, Backpack, ShoppingBag, Navigation } from 'lucide-react';
 import { REGIONS_BY_COUNTRY } from '../utils/constants';
 import { S, compressAndStoreImage } from '../utils/helpers';
 import SelectOrInput from './SelectOrInput';
+import TransitNoteModal from './TransitNoteModal';
 
 const PlanFormPanel = ({
   planAddFormRef, textMuted, isDarkMode, inputBg, appTheme,
   maxDay, addDay, removeDay, tripDays,
   newDay, setNewDay,
+  planTimeline, handleSaveTransitNote,
   planCountry, setPlanCountry, manualCountry, setManualCountry,
   planRegion, setPlanRegion, manualRegion, setManualRegion,
   newTheme, setNewTheme,
@@ -26,12 +28,30 @@ const PlanFormPanel = ({
   setIsPackingModalOpen, setIsShoppingModalOpen,
   globalPlanCountry, globalManualCountry, globalPlanRegion, globalManualRegion,
 }) => {
+  const [isTransitModalOpen, setIsTransitModalOpen] = useState(false);
+
+  const findPinCoord = (placeName) => {
+    const pin = (Array.isArray(currentRestaurants) ? currentRestaurants : []).find(r => r && r.lat && r.lng && S(r.name) === S(placeName));
+    return pin ? { lat: pin.lat, lng: pin.lng } : null;
+  };
+  const _safePT = Array.isArray(planTimeline) ? planTimeline : [];
+  const accommForDay = _safePT.filter(p => {
+    if (!p || !p.isAccommodation) return false;
+    const _days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
+    return _days.length === 0 || _days.includes(newDay);
+  });
+  const regularDayPlans = _safePT
+    .filter(p => p && !p.isAccommodation && parseInt(p.day || 1) === newDay)
+    .sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
+  const dayPlans = [...accommForDay, ...regularDayPlans];
+
   return (
     <div ref={planAddFormRef} className={`w-full md:w-[22rem] lg:w-96 p-3 sm:p-4 border-b md:border-b-0 md:border-r flex flex-col flex-shrink-0 md:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
       <div className="space-y-2 mt-1">
         <div className="flex items-center justify-between mb-1">
           <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>일차 선택</label>
           <div className="flex space-x-1">
+            <button onClick={() => setIsTransitModalOpen(true)} className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-slate-200 transition-colors duration-300 flex items-center gap-0.5"><Navigation className="w-2.5 h-2.5" /> 이동 정보</button>
             <button onClick={addDay} className="bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-indigo-100 transition-colors duration-300">+ Day 추가</button>
             {maxDay > 1 && <button onClick={removeDay} className="bg-rose-50 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-rose-100 transition-colors duration-300">- Day 삭제</button>}
           </div>
@@ -291,6 +311,14 @@ const PlanFormPanel = ({
         </div>
 
       </div>
+
+      <TransitNoteModal
+        isOpen={isTransitModalOpen}
+        onClose={() => setIsTransitModalOpen(false)}
+        dayPlans={dayPlans}
+        findPinCoord={findPinCoord}
+        onSave={handleSaveTransitNote}
+      />
     </div>
   );
 };

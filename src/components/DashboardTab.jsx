@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Wallet, RefreshCw, Globe, Calendar, ListChecks, Backpack, ShoppingBag, Plane, Trash2, MapPin } from 'lucide-react';
 import { CURRENCIES } from '../utils/constants';
-import { S } from '../utils/helpers';
+import { S, getAccommodationTransitFrom } from '../utils/helpers';
+import TransitConnector from './TransitConnector';
+import TransitRouteViewModal from './TransitRouteViewModal';
 
 const THEME_DEFAULT_PHOTO = {
   '식당': 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80',
@@ -24,7 +26,15 @@ const DashboardTab = ({
   tripDays, getWeatherForDay, todayPlans,
   activeMobileCard, setActiveMobileCard, setSelectedPlanInfo,
   handleEditPlanClick, handleDeletePlan, changeTab, displayCityName, openPhotoViewer,
+  currentRestaurants,
 }) => {
+  const [transitView, setTransitView] = useState(null);
+  const findPinCoord = (placeName) => {
+    const pin = (Array.isArray(currentRestaurants) ? currentRestaurants : []).find(r => r && r.lat && r.lng && S(r.name) === S(placeName));
+    return pin ? { lat: pin.lat, lng: pin.lng } : null;
+  };
+  const openTransitView = (plan, route) => setTransitView({ plan, route });
+
   return (
     <div className={`p-2 sm:p-4 pt-3 sm:pt-4 pb-4 flex flex-col gap-3 transition-opacity duration-300 ${activeTab === 'dashboard' ? 'block opacity-100 z-10 flex-1' : 'hidden opacity-0 -z-10 pointer-events-none'}`}>
       <div className="flex items-end justify-between px-1 flex-shrink-0">
@@ -127,6 +137,8 @@ const DashboardTab = ({
               todayPlans.map((plan) => {
                 const isActive = activeMobileCard === plan.id;
                 const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-600 md:hover:border-indigo-400' : 'border-slate-100 md:hover:border-indigo-400');
+                // 숙소는 맨 위에 고정 표시되므로, 이 plan에서 출발해 숙소로 가는 이동정보는 숙소 카드가 아니라 여기(출발지) 바로 아래에 붙인다
+                const _accomTransit = !plan.isAccommodation ? getAccommodationTransitFrom(plan, todayPlans) : null;
 
                 // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명 포함 시 무조건 전용 카드 적용)
                 const isTransportTheme = plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword));
@@ -140,7 +152,9 @@ const DashboardTab = ({
                   const rentalCompany = rentalMeta.company || S(plan.localName);
                   const rentalCarType = rentalMeta.carType || '';
                   return (
-                    <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group`}
+                    <React.Fragment key={plan.id}>
+                    <TransitConnector plan={plan} onClick={openTransitView} />
+                    <div className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group`}
                          onClick={(e) => {
                            e.stopPropagation();
                            if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
@@ -170,11 +184,14 @@ const DashboardTab = ({
                          <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
                       </div>
                     </div>
+                    </React.Fragment>
                   )
                 }
 
                 return (
-                <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1 sm:p-2 rounded-lg border cursor-pointer shadow-sm transition-all duration-300 group relative ${cardBorder} ${isDarkMode ? 'bg-slate-700 hover:bg-slate-600' : 'bg-white hover:bg-slate-50'}`} onClick={(e) => {
+                <React.Fragment key={plan.id}>
+                {!plan.isAccommodation && <TransitConnector plan={plan} onClick={openTransitView} />}
+                <div className={`flex items-center space-x-1 sm:space-x-2 p-1 sm:p-2 rounded-lg border cursor-pointer shadow-sm transition-all duration-300 group relative ${cardBorder} ${isDarkMode ? 'bg-slate-700 hover:bg-slate-600' : 'bg-white hover:bg-slate-50'}`} onClick={(e) => {
                    e.stopPropagation();
                    if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
                    else setActiveMobileCard(plan.id);
@@ -195,6 +212,8 @@ const DashboardTab = ({
                       <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1.5 transition-colors active:scale-90"><span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
                   </div>
                 </div>
+                {_accomTransit && <TransitConnector plan={_accomTransit.plan} route={_accomTransit.route} onClick={openTransitView} />}
+                </React.Fragment>
               )})
             )}
           </div>
@@ -283,6 +302,14 @@ const DashboardTab = ({
           </div>
         </div>
       </div>
+
+      <TransitRouteViewModal
+        isOpen={Boolean(transitView)}
+        plan={transitView?.plan}
+        route={transitView?.route}
+        onClose={() => setTransitView(null)}
+        findPinCoord={findPinCoord}
+      />
     </div>
   );
 };

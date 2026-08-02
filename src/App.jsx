@@ -3,9 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
 import { App as CapacitorApp } from '@capacitor/app';
-import { X, Menu, LayoutDashboard, Calendar, Map, Wallet, Plane, Backpack, ShoppingBag, Mail, Settings, ClipboardList, CloudSun, MapPin, Navigation, LogOut, Home, Compass, ListChecks, PenLine, Globe, Clock, Tag, Search, Camera, Pencil, FolderOpen, Trash2, Handshake, Undo2, Redo2, RefreshCw } from 'lucide-react';
+import { X, Menu, LayoutDashboard, Calendar, Map as MapIcon, Wallet, Plane, Backpack, ShoppingBag, Mail, Settings, ClipboardList, CloudSun, MapPin, Navigation, LogOut, Home, Compass, ListChecks, PenLine, Globe, Clock, Tag, Search, Camera, Pencil, FolderOpen, Trash2, Handshake, Undo2, Redo2, RefreshCw } from 'lucide-react';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTRY_FLAG, KAKAO_CAT_COLORS, CITY_NAME_TO_EN } from './utils/constants';
-import { toAuthEmail, S, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage } from './utils/helpers';
+import { toAuthEmail, S, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
 import PackingDashboardModal from './components/PackingDashboardModal';
@@ -590,11 +590,26 @@ const saveToDb = useCallback(async (updates, explicitTripId) => {
       console.error("Local save error", e);
     }
 
-    if (supabaseClient && appUserId && appUserId !== "Guest") {
-      const currentVersion = dbVersionRef.current;
-      const nextVersion = currentVersion + 1;
-      try {
-        // Optimistic Locking: 현재 version과 일치할 때만 업데이트
+    if (!(supabaseClient && appUserId && appUserId !== "Guest")) return;
+
+    // 진단용: 이 세션이 실제로 어떤 auth.uid()로 인증돼 있는지 (RLS 판단 기준값) 확인
+    supabaseClient.auth.getSession().then(({ data, error: sessErr }) => {
+      console.log("🔑 [인증 세션 확인]", {
+        hasSession: Boolean(data?.session),
+        authUid: data?.session?.user?.id || null,
+        appUserId,
+        targetId,
+        sessErr: sessErr || null,
+      });
+    });
+
+    const touchesArrayData = Array.isArray(stamped.plan_timeline) || Array.isArray(stamped.current_restaurants);
+
+    try {
+      if (!touchesArrayData) {
+        // 배열이 아닌 단순 필드(도시명, 시작일 등)는 기존 낙관적 락 방식 그대로 사용
+        const currentVersion = dbVersionRef.current;
+        const nextVersion = currentVersion + 1;
         const { data: updated, error } = await supabaseClient
           .from('travel_state')
           .update({ ...stamped, version: nextVersion })
@@ -604,67 +619,109 @@ const saveToDb = useCallback(async (updates, explicitTripId) => {
           .single();
 
         if (updated) {
-          // 성공: version ref 갱신
           dbVersionRef.current = nextVersion;
+          console.log("✅ [DB 저장] 성공", { newVersion: nextVersion });
         } else if (error && error.code !== 'PGRST116') {
-          // PGRST116 = no rows matched (version 충돌) 이외의 진짜 오류
-          console.error("DB save error", error);
+          console.error("❌ [DB 저장 실패]", { code: error.code, message: error.message, details: error.details, hint: error.hint });
         } else {
-          // version 충돌: DB 최신 상태를 가져와 병합 후 재저장
-          console.warn("⚠️ [충돌 감지] version 불일치 — DB 최신 데이터와 병합 후 재저장");
-          const { data: latest } = await supabaseClient
-            .from('travel_state')
-            .select('*')
-            .eq('id', targetId)
-            .single();
-          if (latest) {
-            dbVersionRef.current = latest.version || 1;
-            const mergedVersion = dbVersionRef.current + 1;
-
-            // plan_timeline 병합: updatedAt 기준으로 최신 항목 우선
-            let mergedTimeline = Array.isArray(latest.plan_timeline) ? [...latest.plan_timeline] : [];
-            if (Array.isArray(stamped.plan_timeline)) {
-              const dbMap = new Map(mergedTimeline.map(p => [S(p.id), p]));
-              stamped.plan_timeline.forEach(localP => {
-                if (!localP) return;
-                const dbP = dbMap.get(S(localP.id));
-                if (!dbP) {
-                  // 로컬에만 있는 새 항목 → 추가
-                  mergedTimeline.push(localP);
-                } else {
-                  // 양쪽 모두 있으면 updatedAt 더 최신 것 사용
-                  const localTime = localP.updatedAt || 0;
-                  const dbTime = dbP.updatedAt || 0;
-                  if (localTime >= dbTime) dbMap.set(S(localP.id), localP);
-                }
-              });
-              mergedTimeline = Array.from(dbMap.values());
-              // 로컬에만 있던 신규 항목 포함
-              const dbIds = new Set(mergedTimeline.map(p => S(p.id)));
-              stamped.plan_timeline.forEach(p => { if (p && !dbIds.has(S(p.id))) mergedTimeline.push(p); });
-            }
-
-            const mergedUpdates = { ...latest, ...stamped, plan_timeline: mergedTimeline, version: mergedVersion };
-            const { error: mergeErr } = await supabaseClient
-              .from('travel_state')
-              .update(mergedUpdates)
-              .eq('id', targetId);
-            if (!mergeErr) {
-              dbVersionRef.current = mergedVersion;
-              // 병합된 timeline을 로컬 state에도 반영
-              if (Array.isArray(mergedTimeline)) {
-                setPlanTimeline(mergedTimeline);
-                try {
-                  const allStr2 = localStorage.getItem('my_travel_states') || '{}';
-                  const all2 = JSON.parse(allStr2);
-                  all2[targetId] = { ...(all2[targetId] || {}), plan_timeline: mergedTimeline };
-                  localStorage.setItem('my_travel_states', JSON.stringify(all2));
-                } catch(e) {}
-              }
-            }
+          // version 충돌: 최신 version 번호만 다시 읽어서 재시도 (단순 필드라 항목 병합은 불필요)
+          const { data: latest, error: latestErr } = await supabaseClient
+            .from('travel_state').select('version').eq('id', targetId).single();
+          if (latestErr || !latest) {
+            console.error("❌ [DB 저장 실패] 최신 버전 조회 실패", latestErr);
+            return;
+          }
+          const mergedVersion = (latest.version || 1) + 1;
+          const { error: mergeErr } = await supabaseClient
+            .from('travel_state').update({ ...stamped, version: mergedVersion }).eq('id', targetId);
+          if (mergeErr) {
+            console.error("❌ [DB 저장 실패] 재시도 에러", mergeErr);
+          } else {
+            dbVersionRef.current = mergedVersion;
+            console.log("✅ [DB 저장] 재시도 성공", { newVersion: mergedVersion });
           }
         }
-      } catch (err) { console.error(err); }
+        return;
+      }
+
+      // [핵심] plan_timeline/current_restaurants(일정·핀)를 건드리는 저장은 버전이 맞아도 절대
+      // 로컬 배열로 통째로 덮어쓰지 않고, 항상 최신 DB 데이터를 먼저 읽어서 id 기준으로 병합한 뒤 저장한다.
+      // (버전 번호만 맞으면 통째로 덮어쓰는 방식이었을 때는, 뒤늦게 도착한 오래된 저장 요청이
+      //  그 사이 다른 곳에서 추가된 일정을 조용히 지워버리는 문제가 있었음)
+      const { data: latest, error: latestErr } = await supabaseClient
+        .from('travel_state').select('*').eq('id', targetId).single();
+      if (latestErr || !latest) {
+        console.error("❌ [DB 저장 실패] 최신 데이터 조회 실패 (권한 문제일 수 있음)", latestErr);
+        return;
+      }
+
+      const mergedVersion = (latest.version || dbVersionRef.current || 1) + 1;
+
+      let mergedTimeline = Array.isArray(latest.plan_timeline) ? [...latest.plan_timeline] : [];
+      if (Array.isArray(stamped.plan_timeline)) {
+        const dbMap = new Map(mergedTimeline.map(p => [S(p.id), p]));
+        stamped.plan_timeline.forEach(localP => {
+          if (!localP) return;
+          const dbP = dbMap.get(S(localP.id));
+          // 새 항목이거나, 로컬이 DB보다 최신이면 로컬 값 사용. 그 외엔 DB 값을 유지(삭제되지 않음)
+          if (!dbP || (localP.updatedAt || 0) >= (dbP.updatedAt || 0)) dbMap.set(S(localP.id), localP);
+        });
+        // 이번 저장 직전까지 로컬에 있었는데 이번에 넘어온 배열엔 없는 항목 = 방금 사용자가 삭제한 항목
+        // → 병합 과정에서 되살아나지 않도록 DB 쪽에서도 제거한다
+        const prevLocalIds = new Set((Array.isArray(planTimelineRef.current) ? planTimelineRef.current : []).map(p => S(p?.id)).filter(Boolean));
+        const newLocalIds = new Set(stamped.plan_timeline.map(p => S(p?.id)).filter(Boolean));
+        prevLocalIds.forEach(id => { if (!newLocalIds.has(id)) dbMap.delete(id); });
+        mergedTimeline = Array.from(dbMap.values());
+      }
+
+      let mergedRests = Array.isArray(latest.current_restaurants) ? [...latest.current_restaurants] : [];
+      if (Array.isArray(stamped.current_restaurants)) {
+        const dbMapR = new Map(mergedRests.map(r => [S(r.id), r]));
+        stamped.current_restaurants.forEach(localR => { if (localR) dbMapR.set(S(localR.id), localR); });
+        const prevLocalRestIds = new Set((Array.isArray(currentRestaurantsRef.current) ? currentRestaurantsRef.current : []).map(r => S(r?.id)).filter(Boolean));
+        const newLocalRestIds = new Set(stamped.current_restaurants.map(r => S(r?.id)).filter(Boolean));
+        prevLocalRestIds.forEach(id => { if (!newLocalRestIds.has(id)) dbMapR.delete(id); });
+        mergedRests = Array.from(dbMapR.values());
+      }
+
+      const mergedUpdates = {
+        ...latest,
+        ...stamped,
+        ...(Array.isArray(stamped.plan_timeline) ? { plan_timeline: mergedTimeline } : {}),
+        ...(Array.isArray(stamped.current_restaurants) ? { current_restaurants: mergedRests } : {}),
+        version: mergedVersion,
+      };
+
+      console.log("💾 [DB 저장] 항목 단위 병합 저장 시도", { targetId, mergedVersion, planCount: mergedTimeline.length, restCount: mergedRests.length });
+      const { data: mergeData, error: mergeErr } = await supabaseClient
+        .from('travel_state')
+        .update(mergedUpdates)
+        .eq('id', targetId)
+        .select('id, version');
+
+      const rowsAffected = Array.isArray(mergeData) ? mergeData.length : 0;
+      if (mergeErr) {
+        console.error("❌ [DB 저장 실패] 병합 저장 에러", { code: mergeErr.code, message: mergeErr.message, details: mergeErr.details, hint: mergeErr.hint });
+      } else if (rowsAffected === 0) {
+        console.error("🚫 [DB 저장 실패] 병합 저장이 0건 반영됨 — 에러는 없었지만 실제로 저장 안 됨. RLS 권한 문제 가능성 높음", { targetId, mergedVersion });
+      } else {
+        console.log("✅ [DB 저장] 병합 저장 성공", { newVersion: mergedVersion, rowsAffected });
+        dbVersionRef.current = mergedVersion;
+        if (Array.isArray(stamped.plan_timeline)) setPlanTimeline(mergedTimeline);
+        if (Array.isArray(stamped.current_restaurants)) setCurrentRestaurants(mergedRests);
+        try {
+          const allStr2 = localStorage.getItem('my_travel_states') || '{}';
+          const all2 = JSON.parse(allStr2);
+          all2[targetId] = {
+            ...(all2[targetId] || {}),
+            ...(Array.isArray(stamped.plan_timeline) ? { plan_timeline: mergedTimeline } : {}),
+            ...(Array.isArray(stamped.current_restaurants) ? { current_restaurants: mergedRests } : {}),
+          };
+          localStorage.setItem('my_travel_states', JSON.stringify(all2));
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.error("❌ [DB 저장 실패] 예외 발생", err);
     }
   }, [activeTripId, supabaseClient, appUserId]);
 
@@ -1695,7 +1752,27 @@ function handleDeletePlan(id) {
       showConfirm("이 일정을 정말 삭제하시겠습니까?", doDeletePlanOnly);
     }
   }
-  
+
+  // 도착지(planId) 하나에 출발지별로 이동정보를 여러 개 저장할 수 있다.
+  // 같은 출발지(fromPlace)로 다시 저장하면 그 항목만 덮어쓰고, notes가 빈 배열이면 그 항목만 삭제한다.
+  function handleSaveTransitNote(planId, data) {
+    const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    const fromPlace = S(data?.fromPlace || '');
+    const notes = Array.isArray(data?.notes) ? data.notes.filter(Boolean).map(n => S(n)) : [];
+    const updated = safePlanTimeline.map(p => {
+      if (!p || p.id !== planId) return p;
+      const otherRoutes = getTransitRoutes(p).filter(r => S(r.fromPlace) !== fromPlace);
+      const nextRoutes = notes.length > 0
+        ? [...otherRoutes, { fromPlace, fromIsAccommodation: Boolean(data?.fromIsAccommodation), notes }]
+        : otherRoutes;
+      // 구버전 단일 필드는 더 이상 쓰지 않으므로 정리
+      const { transitNote, transitFromPlace, transitFromIsAccommodation, ...rest } = p;
+      return { ...rest, transitRoutes: nextRoutes };
+    });
+    setPlanTimeline(updated);
+    saveToDb({ plan_timeline: updated });
+  }
+
   function resetPlanForm() {
     setNewTime(""); setNewPlace(""); setNewLocalName(""); setNewFeatures(""); setNewPhoto(""); setNewPlanPhotos([]); setNewIsAccommodation(false); setNewAccommodationDays([]); setNewTheme("기타"); setPinSelectOpen(false);
     setPlanCountry(globalPlanCountry); setPlanRegion(globalPlanRegion);
@@ -2021,7 +2098,7 @@ function deletePackingItem(id) {
                const fallbackCityName = data.display_city_name ? S(data.display_city_name) : "";
                let fallbackCountry = ""; let fallbackRegion = fallbackCityName;
                if (fallbackCityName) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName)) { fallbackCountry = cn; break; } } }
-               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));              } else { setPlanTimeline([]); }
+               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) })));              } else { setPlanTimeline([]); }
 
               loaded = true;
             }
@@ -2388,14 +2465,34 @@ function deletePackingItem(id) {
           setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
           
           // [버그 수정 2] F5 새로고침 시 DB에서 rating과 review 필드 복원 (Fetch 매핑 로직 추가)
+          // [버그 수정 3] PTR/재접속으로 이 fetch가 다시 실행될 때, 방금 추가했지만 아직 DB 저장이 끝나지 않은
+          // 로컬 항목을 서버의 오래된 스냅샷으로 덮어써서 지워버리지 않도록 병합(realtime 핸들러와 동일한 방식)
           if (Array.isArray(data.current_restaurants)) {
-          setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));          } else { setCurrentRestaurants([]); }
-          
+          const cleanRests2 = data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" }));
+          setCurrentRestaurants(prev => {
+            const dbIds = new Set(cleanRests2.map(r => S(r.id)));
+            const localOnly = (Array.isArray(prev) ? prev : []).filter(r => r && !dbIds.has(S(r.id)));
+            return [...cleanRests2, ...localOnly];
+          });
+          } else { setCurrentRestaurants(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []); }
+
           if (Array.isArray(data.plan_timeline)) {
           const fallbackCityName2 = data.display_city_name ? S(data.display_city_name) : "";
           let fallbackCountry2 = ""; let fallbackRegion2 = fallbackCityName2;
           if (fallbackCityName2) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName2)) { fallbackCountry2 = cn; break; } } }
-          setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" })));          } else { setPlanTimeline([]); }
+          const cleanPlans2 = data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) }));
+          setPlanTimeline(prev => {
+            const localMap2 = new Map((Array.isArray(prev) ? prev : []).map(p => [S(p.id), p]));
+            const merged2 = cleanPlans2.map(dbP => {
+              const localP = localMap2.get(S(dbP.id));
+              if (!localP) return dbP;
+              return (localP.updatedAt || 0) > (dbP.updatedAt || 0) ? localP : dbP;
+            });
+            const dbIds2 = new Set(cleanPlans2.map(p => S(p.id)));
+            (Array.isArray(prev) ? prev : []).forEach(p => { if (p && !dbIds2.has(S(p.id))) merged2.push(p); });
+            return merged2;
+          });
+          } else { setPlanTimeline(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []); }
         } else {
            // DB에 row가 없어도 로컬 state가 이미 있으면 유지 (새 여행 insert 타이밍 경쟁 방지)
            setPlanTimeline(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
@@ -2456,7 +2553,7 @@ function deletePackingItem(id) {
             const fallbackCityName3 = payload.new.display_city_name ? S(payload.new.display_city_name) : "";
             let fallbackCountry3 = ""; let fallbackRegion3 = fallbackCityName3;
             if (fallbackCityName3) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName3)) { fallbackCountry3 = cn; break; } } }
-            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "" }));
+            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) }));
             // updatedAt 기준 병합: 로컬 항목과 DB 항목 중 더 최신 것 우선, 로컬 미저장 항목 보존
             setPlanTimeline(prev => {
               const localMap = new Map((Array.isArray(prev) ? prev : []).map(p => [S(p.id), p]));
@@ -3842,7 +3939,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
               <Calendar className="w-3.5 h-3.5" /><span className="hidden sm:inline">일정</span>
             </button>
             <button onClick={() => changeTab('map')} className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'map' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
-              <Map className="w-3.5 h-3.5" /><span className="hidden sm:inline">지도</span>
+              <MapIcon className="w-3.5 h-3.5" /><span className="hidden sm:inline">지도</span>
             </button>
           </div>
         </header>
@@ -3861,6 +3958,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
             tripDays={tripDays} getWeatherForDay={getWeatherForDay} todayPlans={todayPlans}
             activeMobileCard={activeMobileCard} setActiveMobileCard={setActiveMobileCard} setSelectedPlanInfo={setSelectedPlanInfo}
             handleEditPlanClick={handleEditPlanClick} handleDeletePlan={handleDeletePlan} changeTab={changeTab} displayCityName={displayCityName} openPhotoViewer={openPhotoViewer}
+            currentRestaurants={currentRestaurants}
           />
 
           {/* --- Plan Tab --- */}
@@ -3962,6 +4060,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
                 newIsAccommodation={newIsAccommodation} setNewIsAccommodation={setNewIsAccommodation}
                 newAccommodationDays={newAccommodationDays} setNewAccommodationDays={setNewAccommodationDays}
                 editingPlanId={editingPlanId} resetPlanForm={resetPlanForm}
+                planTimeline={planTimeline} handleSaveTransitNote={handleSaveTransitNote}
                 setIsPackingModalOpen={setIsPackingModalOpen} setIsShoppingModalOpen={setIsShoppingModalOpen}
                 globalPlanCountry={globalPlanCountry} globalManualCountry={globalManualCountry} globalPlanRegion={globalPlanRegion} globalManualRegion={globalManualRegion}
               />
@@ -3970,6 +4069,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
                 isDarkMode={isDarkMode} textMuted={textMuted} textMain={textMain} tripDays={tripDays} getDayDateString={getDayDateString} planTimeline={planTimeline}
                 activeMobileCard={activeMobileCard} setActiveMobileCard={setActiveMobileCard} guardPlanForm={guardPlanForm} loadPlanToForm={loadPlanToForm}
                 handleEditPlanClick={handleEditPlanClick} handleDeletePlan={handleDeletePlan} handleCopyLocalName={handleCopyLocalName} openPhotoViewer={openPhotoViewer}
+                currentRestaurants={currentRestaurants} handleSaveTransitNote={handleSaveTransitNote}
               />
             </div>
           </div>
