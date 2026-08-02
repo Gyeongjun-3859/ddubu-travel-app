@@ -10,6 +10,29 @@ import WeatherModal from './components/WeatherModal';
 import PackingDashboardModal from './components/PackingDashboardModal';
 import PackingEditModal from './components/PackingEditModal';
 import ShoppingDashboardModal from './components/ShoppingDashboardModal';
+import ShoppingEditModal from './components/ShoppingEditModal';
+import ExpenseModal from './components/ExpenseModal';
+import MyPinsModal from './components/MyPinsModal';
+import NavModal from './components/NavModal';
+import AddPlaceModal from './components/AddPlaceModal';
+import TransportModal from './components/TransportModal';
+import EditPlanModal from './components/EditPlanModal';
+import ArchiveTab from './components/ArchiveTab';
+import SettingsModal from './components/SettingsModal';
+import TripModal from './components/TripModal';
+import MobileMenu from './components/MobileMenu';
+import PlanDetailModal from './components/PlanDetailModal';
+import PinDetailModal from './components/PinDetailModal';
+import DeleteTripConfirmModal from './components/DeleteTripConfirmModal';
+import PhotoViewerModal from './components/PhotoViewerModal';
+import Toast from './components/Toast';
+import ConfirmModal from './components/ConfirmModal';
+import DashboardTab from './components/DashboardTab';
+import PlanFormPanel from './components/PlanFormPanel';
+import PlanTimelinePanel from './components/PlanTimelinePanel';
+import MapTab from './components/MapTab';
+import LoginScreen from './components/LoginScreen';
+import DynamicStyles from './components/DynamicStyles';
 import { useExchangeRates } from './hooks/useExchangeRates';
 import { useWeather } from './hooks/useWeather';
 import { useCurrencyConverter } from './hooks/useCurrencyConverter';
@@ -137,6 +160,7 @@ const MainApp = () => {
 
   const [editingPlan, setEditingPlan] = useState(null);
   const editFileInputRef = useRef(null);
+  const weatherDragRef = useRef({ down: false, startX: 0, scrollLeft: 0, didDrag: false }); // 헤더 날씨 칩 마우스 드래그 스크롤
 
   const { isLeafletLoaded, isKakaoMapLoaded } = useMapSdkLoader();
   const [isKakaoMap, setIsKakaoMap] = useState(false);
@@ -282,6 +306,7 @@ const MainApp = () => {
   const dbVersionRef = useRef(1); // 현재 DB version 추적 (Optimistic Locking용)
 
 const [activeMobileCard, setActiveMobileCard] = useState(null);
+  const [previewTransportDay, setPreviewTransportDay] = useState(null); // 대표편 카드 자리에 임시로 미리보기 중인 배지 날짜
   // [추가] 여행일기 작성을 위한 상태 변수
   const [isDiaryOpen, setIsDiaryOpen] = useState(false);
   const [diaryRating, setDiaryRating] = useState(0);
@@ -304,7 +329,7 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
   const cancelLongPress = () => {
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
   };  const [archiveFilterYear, setArchiveFilterYear] = useState('all');
-  const [archiveFilterLocation, setArchiveFilterLocation] = useState('all');
+  const [archiveFilterLocation, setArchiveFilterLocation] = useState('전체');
   const isDarkMode = appTheme === 'dark';
 
   useEffect(() => {
@@ -406,7 +431,54 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
         }
     }
   }, []);
-  
+
+  // [NEW] 보관함 국내/해외 필터용: country 필드 없는 옛 완료 여행에 국가 정보 1회성 보정
+  function resolveTripCountry(cityName, timeline) {
+    if (cityName && cityName !== "선택된 지역 없음") {
+      for (const [c, rArray] of Object.entries(REGIONS_BY_COUNTRY)) {
+        if (rArray.includes(cityName)) return c;
+      }
+    }
+    const tl = Array.isArray(timeline) ? timeline : [];
+    const withCountry = tl.find(p => p && p.country && Object.keys(REGIONS_BY_COUNTRY).includes(p.country));
+    return withCountry ? withCountry.country : '';
+  }
+
+  useEffect(() => {
+    if (!isDbLoaded) return;
+    const needsBackfill = trips.filter(t => t && t.archived && t.country === undefined);
+    if (needsBackfill.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const newTrips = [...trips];
+      let changed = false;
+      for (const t of needsBackfill) {
+        let cityName = '', timeline = [];
+        try {
+          const all = JSON.parse(localStorage.getItem('my_travel_states') || '{}');
+          if (all[t.id]) { cityName = all[t.id].display_city_name || ''; timeline = all[t.id].plan_timeline || []; }
+        } catch(e) {}
+        if (!cityName && supabaseClient && appUserId && appUserId !== 'Guest') {
+          try {
+            const { data } = await supabaseClient.from('travel_state').select('display_city_name, plan_timeline').eq('id', t.id).single();
+            if (data) { cityName = data.display_city_name || ''; timeline = data.plan_timeline || []; }
+          } catch(e) {}
+        }
+        const country = resolveTripCountry(cityName, timeline);
+        const idx = newTrips.findIndex(x => x.id === t.id);
+        if (idx !== -1) { newTrips[idx] = { ...newTrips[idx], country }; changed = true; }
+      }
+      if (cancelled || !changed) return;
+      setTrips(newTrips);
+      if (supabaseClient && appUserId && appUserId !== 'Guest') {
+        await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
+      } else if (appUserId === 'Guest') {
+        localStorage.setItem('my_travel_guest_trips', JSON.stringify(newTrips));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [trips, appUserId, supabaseClient, isDbLoaded]);
+
   function getDateStringForDay(dayIndex) {
     if (!travelStartDate) return "";
     const targetDate = new Date(travelStartDate);
@@ -1734,7 +1806,7 @@ function handleDeletePlan(id) {
         const data = modalTransData[type][dir];
         if (data.dep && data.arr) {
           hasAnyData = true;
-          if (type === 'flight') newFlights[dir] = { ...data };
+          newFlights[dir] = { ...data, type };
 
           const isFlight = type === 'flight';
           const emojiDep = isFlight ? '🛫' : (type === 'train' ? '🚆' : '🚌');
@@ -1840,24 +1912,42 @@ function handleDeletePlan(id) {
     setRentalCarData({ ...initialRentalState });
   }
   
-  function handleEditFlight(dir) {
-    setTransType('flight');
+  function handleEditFlight(dir, outboundLeg, inboundLeg) {
+    const activeLeg = dir === 'outbound' ? outboundLeg : inboundLeg;
+    const currentType = activeLeg?.type || 'flight';
+    const legToState = (leg) => leg ? { airline: leg.airline || '', flightNum: leg.flightNum || '', seatNum: leg.seatNum || '', dep: leg.dep || '', arr: leg.arr || '', depTime: leg.depTime || '', arrTime: leg.arrTime || '', day: leg.day || 1 } : { ...initialTransState };
+    setTransType(currentType);
     setTransDir(dir);
     setModalTransData(prev => ({
       ...prev,
-      flight: {
-        outbound: flights.outbound || { ...initialTransState },
-        inbound: flights.inbound || { ...initialTransState }
+      [currentType]: {
+        outbound: (outboundLeg && outboundLeg.type === currentType) ? legToState(outboundLeg) : { ...initialTransState },
+        inbound: (inboundLeg && inboundLeg.type === currentType) ? legToState(inboundLeg) : { ...initialTransState }
       }
     }));
     setIsTransportModalOpen(true);
   }
 
-  function handleDeleteFlight(dir) {
-    const newFlights = { ...flights, [dir]: null };
-    setFlights(newFlights);
-    saveToDb({ flights: newFlights });
-    showToast(`${dir === 'outbound' ? '가는 편' : '오는 편'} 항공권이 삭제되었습니다.`);
+  function handleDeleteFlight(dir, type) {
+    const dirLabel = dir === 'outbound' ? '가는 편' : '오는 편';
+    showConfirm(`${dirLabel} 교통편을 삭제하시겠습니까?\n오늘의 계획에 등록된 해당 일정도 함께 삭제됩니다.`, () => {
+      const updates = {};
+      if (flights[dir]?.type === type) {
+        const newFlights = { ...flights, [dir]: null };
+        setFlights(newFlights);
+        updates.flights = newFlights;
+      }
+      if (type) {
+        const depId = `trans_${type}_${dir}_dep`;
+        const arrId = `trans_${type}_${dir}_arr`;
+        const updatedTimeline = (Array.isArray(planTimeline) ? planTimeline : []).filter(p => p && p.id !== depId && p.id !== arrId);
+        setPlanTimeline(updatedTimeline);
+        updates.plan_timeline = updatedTimeline;
+      }
+      setPreviewTransportDay(null);
+      saveToDb(updates);
+      showToast(`${dirLabel} 교통편이 삭제되었습니다.`);
+    });
   }
 
 function handleAddPackingItem(e) {
@@ -3172,19 +3262,104 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
   const headerWeatherInfo = headerForecast ? getWeatherInfo(headerForecast.code) : (weather ? getWeatherInfo(weather.code) : null);
   const headerTemp = headerForecast ? `${headerForecast.max}°` : (weather ? `${weather.temp}°` : '-');
 
+  const TRANS_TYPE_ICON = { flight: '✈️', train: '🚆', bus: '🚌' };
+
+  // trans_ 접두사가 붙은 교통편 등록 항목(가는편/오는편)들을 오늘의 계획에서 그대로 재구성
+  const getAllTransportLegs = () => {
+    const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+    const legs = [];
+    ['flight', 'train', 'bus'].forEach(type => {
+      ['outbound', 'inbound'].forEach(dir => {
+        const depItem = safeTimeline.find(p => p.id === `trans_${type}_${dir}_dep`);
+        const arrItem = safeTimeline.find(p => p.id === `trans_${type}_${dir}_arr`);
+        if (!depItem || !arrItem) return;
+        const depPlace = S(depItem.place).replace(/[^가-힣a-zA-Z0-9\s]/g, '').replace('출발', '').trim();
+        const arrPlace = S(arrItem.place).replace(/[^가-힣a-zA-Z0-9\s]/g, '').replace('도착', '').trim();
+        const match = S(depItem.features).match(/:\s*(.*?)(?:\s*\|\s*좌석:\s*(.*?))?\s*\|/);
+        legs.push({
+          type, dir, day: parseInt(depItem.day) || 1,
+          dep: depPlace, arr: arrPlace,
+          depTime: depItem.time || '', arrTime: arrItem.time || '',
+          airline: S(depItem.localName),
+          flightNum: match ? S(match[1]).trim() : '',
+          seatNum: (match && match[2]) ? S(match[2]).trim() : '',
+        });
+      });
+    });
+    return legs;
+  };
+
+  // 방향별로 여러 편이 등록돼 있으면, 도착지(가는편)/출발지(오는편)가 대표 여행지와 일치하는 편을 대표편으로 선택
+  const pickRepresentativeLeg = (legs, dir) => {
+    const candidates = legs.filter(l => l.dir === dir);
+    if (candidates.length === 0) return null;
+    const cityValid = displayCityName && displayCityName !== '선택된 지역 없음';
+    if (cityValid) {
+      const matched = candidates.find(l => {
+        const target = dir === 'outbound' ? l.arr : l.dep;
+        return target && (target.includes(displayCityName) || displayCityName.includes(target));
+      });
+      if (matched) return matched;
+    }
+    return candidates[0];
+  };
+
   const renderFlightCards = () => {
-    if (!flights.outbound && !flights.inbound) {
+    const allLegs = getAllTransportLegs();
+    const repOutboundLeg = pickRepresentativeLeg(allLegs, 'outbound');
+    const repInboundLeg = pickRepresentativeLeg(allLegs, 'inbound');
+    // 트랜스 항목이 하나도 없는 구버전 데이터는 flights state로 폴백
+    const displayOutbound = repOutboundLeg || flights.outbound;
+    const displayInbound = repInboundLeg || flights.inbound;
+    const extraLegs = allLegs.filter(l => l !== repOutboundLeg && l !== repInboundLeg);
+
+    // 대표편으로 채택되지 않은 교통 관련 일정(대표 왕복이 아닌 개별 이동)이 있는 날짜만 작은 배지로 알림
+    const transportBadgeDays = (() => {
+      const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+      const generalDays = safeTimeline
+        .filter(p => !p.isAccommodation && !String(p.id).startsWith('trans_') && ['교통', '항공', '비행기', '기차', '버스', '배'].some(k => S(p.theme).includes(k)))
+        .map(p => parseInt(p.day) || 1);
+      const extraLegDays = extraLegs.map(l => l.day);
+      return [...new Set([...generalDays, ...extraLegDays])].sort((a, b) => a - b);
+    })();
+
+    // 배지로 특정 날짜를 미리보기 중이면, 그 날짜에 등록된 편만 방향별로 채우고 없는 쪽은 비움(대표편으로 되돌아가지 않음)
+    const isPreviewingDay = previewTransportDay != null;
+    const dayExtraLegs = isPreviewingDay ? extraLegs.filter(l => l.day === previewTransportDay) : [];
+    const shownOutbound = isPreviewingDay ? (dayExtraLegs.find(l => l.dir === 'outbound') || null) : displayOutbound;
+    const shownInbound = isPreviewingDay ? (dayExtraLegs.find(l => l.dir === 'inbound') || null) : displayInbound;
+
+    const badgeRow = transportBadgeDays.length > 0 && (
+      <div className="flex items-center justify-end gap-1 mb-1 flex-wrap">
+        {transportBadgeDays.map(d => {
+          const isActive = previewTransportDay === d;
+          return (
+          <button
+            key={d}
+            onClick={(e) => { e.stopPropagation(); setPreviewTransportDay(prev => prev === d ? null : d); }}
+            className={`flex items-center gap-0.5 text-[7px] sm:text-[8px] font-bold px-1.5 py-0.5 rounded-full transition-colors duration-300 active:scale-95 ${isActive ? 'bg-indigo-100 text-indigo-600 border border-indigo-300 dark:bg-indigo-900/50 dark:text-indigo-300 dark:border-indigo-700' : (isDarkMode ? 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700 hover:text-indigo-300' : 'bg-slate-100 text-slate-500 border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600')}`}
+          >
+            <Calendar className="w-2.5 h-2.5" /> {getDayDateString(d).split('(')[0]}
+          </button>
+        )})}
+      </div>
+    );
+
+    if (!displayOutbound && !displayInbound) {
       return (
-        <button
-          onClick={() => {
-            setTransType('flight'); setTransDir('outbound');
-            setModalTransData({ flight: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } } });
-            setIsTransportModalOpen(true);
-          }}
-          className={`flex items-center justify-center gap-1.5 w-full mb-2 py-2.5 rounded-lg border border-dashed text-[10px] font-bold transition-all duration-300 active:scale-[0.99] shrink-0 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800 hover:border-indigo-500' : 'border-slate-300 text-slate-500 hover:bg-slate-50 hover:border-indigo-400'}`}
-        >
-          <Plane className="w-3.5 h-3.5" /> 등록된 교통편이 없어요, 여기서 추가하세요
-        </button>
+        <>
+          {badgeRow}
+          <button
+            onClick={() => {
+              setTransType('flight'); setTransDir('outbound');
+              setModalTransData({ flight: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, train: { outbound: { ...initialTransState }, inbound: { ...initialTransState } }, bus: { outbound: { ...initialTransState }, inbound: { ...initialTransState } } });
+              setIsTransportModalOpen(true);
+            }}
+            className={`flex items-center justify-center gap-1.5 w-full mb-2 py-2.5 rounded-lg border border-dashed text-[10px] font-bold transition-all duration-300 active:scale-[0.99] shrink-0 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800 hover:border-indigo-500' : 'border-slate-300 text-slate-500 hover:bg-slate-50 hover:border-indigo-400'}`}
+          >
+            <Plane className="w-3.5 h-3.5" /> 등록된 교통편이 없어요, 여기서 추가하세요
+          </button>
+        </>
       );
     }
 
@@ -3200,68 +3375,71 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
     };
 
     return (
-      <div className={wrapperClass}>
-        {flights.outbound && (() => {
+      <>
+        {badgeRow}
+        <div className={wrapperClass}>
+        {shownOutbound && (() => {
           const ux = getCardUX('outbound');
           return (
           <div onClick={(e) => {
              e.stopPropagation();
-             if (ux.isActive) { handleEditFlight('outbound'); setActiveMobileCard(null); }
+             if (ux.isActive) { handleEditFlight('outbound', shownOutbound, shownInbound); setActiveMobileCard(null); }
              else setActiveMobileCard('flight_outbound');
           }} className={`flex-1 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer md:hover:border-indigo-400 transition-all duration-300 group ${ux.finalBorder}`}>
             <div className="flex justify-between items-center w-full absolute top-1 left-0 right-0 px-1.5">
                <span className="text-[6px] sm:text-[8px] font-bold text-indigo-500 bg-indigo-100 px-1 rounded">가는 편 🛫</span>
                <div className="flex items-center space-x-1 relative">
                  <span className={`text-[6px] sm:text-[7px] font-bold text-slate-400 bg-slate-100/80 dark:bg-slate-700/80 px-1.5 py-0.5 rounded transition-opacity duration-300 ${ux.isActive ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'}`}>
-                    {flights.outbound.flightNum || '편명미상'} {flights.outbound.seatNum ? `| ${flights.outbound.seatNum}` : ''}
+                    {shownOutbound.flightNum || '편명미상'} {shownOutbound.seatNum ? `| ${shownOutbound.seatNum}` : ''}
                  </span>
                  <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity duration-300 absolute right-0 top-0 ${ux.hoverLogic}`}>
-                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleEditFlight('outbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
-                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleDeleteFlight('outbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
+                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleEditFlight('outbound', shownOutbound, shownInbound); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleDeleteFlight('outbound', shownOutbound.type); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
                  </div>
                </div>
             </div>
             <div className="flex w-full items-center justify-between mt-3 sm:mt-4 px-1">
-              <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.depTime}</span></div>
+              <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{shownOutbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{shownOutbound.depTime}</span></div>
               <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
-                <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
-                <span className="text-[6px] sm:text-[8px] font-bold text-indigo-400 truncate w-full text-center">{flights.outbound.airline}</span>
+                <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">{TRANS_TYPE_ICON[shownOutbound.type] || '✈️'}</span></span>
+                <span className="text-[6px] sm:text-[8px] font-bold text-indigo-400 truncate w-full text-center">{shownOutbound.airline}</span>
               </div>
-              <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.outbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.outbound.arrTime}</span></div>
+              <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{shownOutbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{shownOutbound.arrTime}</span></div>
             </div>
           </div>
         )})()}
-        {flights.inbound && (() => {
+        {shownInbound && (() => {
           const ux = getCardUX('inbound');
           return (
           <div onClick={(e) => {
              e.stopPropagation();
-             if (ux.isActive) { handleEditFlight('inbound'); setActiveMobileCard(null); }
+             if (ux.isActive) { handleEditFlight('inbound', shownOutbound, shownInbound); setActiveMobileCard(null); }
              else setActiveMobileCard('flight_inbound');
           }} className={`flex-1 flex flex-col justify-center p-2 rounded-lg border shadow-sm relative cursor-pointer md:hover:border-rose-400 transition-all duration-300 group ${ux.finalBorder}`}>
             <div className="flex justify-between items-center w-full absolute top-1 left-0 right-0 px-1.5">
                <span className="text-[6px] sm:text-[8px] font-bold text-rose-500 bg-rose-100 px-1 rounded">오는 편 🛬</span>
                <div className="flex items-center space-x-1 relative">
                  <span className={`text-[6px] sm:text-[7px] font-bold text-slate-400 bg-slate-100/80 dark:bg-slate-700/80 px-1.5 py-0.5 rounded transition-opacity duration-300 ${ux.isActive ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'}`}>
-                    {flights.inbound.flightNum || '편명미상'} {flights.inbound.seatNum ? `| ${flights.inbound.seatNum}` : ''}
+                    {shownInbound.flightNum || '편명미상'} {shownInbound.seatNum ? `| ${shownInbound.seatNum}` : ''}
                  </span>
                  <div className={`flex space-x-1 bg-white/90 dark:bg-slate-700/90 rounded border border-slate-200 dark:border-slate-600 shadow-sm transition-opacity duration-300 absolute right-0 top-0 ${ux.hoverLogic}`}>
-                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleEditFlight('inbound'); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
-                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleDeleteFlight('inbound'); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
+                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleEditFlight('inbound', shownOutbound, shownInbound); }} className="text-slate-500 hover:text-indigo-600 p-0.5"><span className="text-[10px]">✏️</span></button>
+                   <button onClick={(e) => { if (!ux.isActive) return; e.stopPropagation(); handleDeleteFlight('inbound', shownInbound.type); }} className="text-slate-500 hover:text-rose-500 p-0.5"><span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
                  </div>
                </div>
             </div>
             <div className="flex w-full items-center justify-between mt-3 sm:mt-4 px-1">
-              <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.depTime}</span></div>
+              <div className="flex flex-col w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{shownInbound.dep}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{shownInbound.depTime}</span></div>
               <div className="flex flex-col items-center flex-1 px-0.5 sm:px-1">
-                <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">✈️</span></span>
-                <span className="text-[6px] sm:text-[8px] font-bold text-rose-400 truncate w-full text-center">{flights.inbound.airline}</span>
+                <span className="text-[6px] sm:text-[8px] text-slate-300 w-full flex items-center before:flex-1 before:border-t before:border-dashed before:border-slate-300 after:flex-1 after:border-t after:border-dashed after:border-slate-300"><span className="px-0.5 sm:px-1">{TRANS_TYPE_ICON[shownInbound.type] || '✈️'}</span></span>
+                <span className="text-[6px] sm:text-[8px] font-bold text-rose-400 truncate w-full text-center">{shownInbound.airline}</span>
               </div>
-              <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{flights.inbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{flights.inbound.arrTime}</span></div>
+              <div className="flex flex-col text-right w-[30%]"><span className="text-[10px] sm:text-sm font-black text-slate-700 dark:text-slate-200 truncate">{shownInbound.arr}</span><span className="text-[7px] sm:text-[8px] font-bold text-slate-400">{shownInbound.arrTime}</span></div>
             </div>
           </div>
         )})()}
-      </div>
+        </div>
+      </>
     );
   };
 
@@ -3273,31 +3451,14 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
 
   if (showIdSetup) {
     return (
-      <div className="flex h-screen w-full bg-slate-100 items-center justify-center font-sans select-none p-4">
-        <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-sm flex flex-col items-center animate-in zoom-in-95 duration-300">
-          <div className="text-4xl mb-4 bg-indigo-50 w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-105">🐱</div>
-          <h2 className="text-xl font-black text-slate-900 mb-2">{isLoginMode ? "로그인" : "계정 생성"}</h2>
-          <p className="text-xs text-slate-500 text-center mb-6">{isLoginMode ? "여행 일정을 다시 확인해보세요!" : "아이디를 만들어 일정을 공유하세요!"}</p>
-          
-          <input type="text" placeholder="아이디 (영문/숫자 3자 이상)" value={S(idInput)} onChange={(e) => {setIdInput(e.target.value.replace(/[^a-zA-Z0-9]/g, '')); setIdError("");}} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 transition-all duration-300 mb-3" />
-          <input type="password" placeholder="비밀번호 (4자 이상)" value={S(pwInput)} onChange={(e) => {setPwInput(e.target.value); setIdError("");}} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 transition-all duration-300 mb-3" />
-
-          <div className="flex w-full justify-between items-center mb-5 px-1">
-            <label className="flex items-center space-x-2 cursor-pointer text-xs font-bold text-slate-600"><input type="checkbox" checked={saveCredentials} onChange={e => setSaveCredentials(e.target.checked)} className="accent-indigo-600 w-3.5 h-3.5" /><span>ID/PW 저장</span></label>
-            <label className="flex items-center space-x-2 cursor-pointer text-xs font-bold text-slate-600"><input type="checkbox" checked={autoLogin} onChange={e => {setAutoLogin(e.target.checked); if(e.target.checked) setSaveCredentials(true);}} className="accent-indigo-600 w-3.5 h-3.5" /><span>자동 로그인</span></label>
-          </div>
-
-          {idError && <p className="text-[10px] text-rose-500 font-bold mb-3 text-center animate-in slide-in-from-top-1">{S(idError)}</p>}
-          
-          <div className="flex w-full space-x-2">
-            <button onClick={() => setIsLoginMode(!isLoginMode)} disabled={isLoggingIn} className={`flex-1 bg-slate-100 text-slate-600 rounded-xl py-3 text-xs font-bold transition-all duration-300 ${isLoggingIn ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200'}`}>{isLoginMode ? "회원가입" : "로그인으로"}</button>
-            <button onClick={() => isLoginMode ? handleLogin() : handleSignUp()} disabled={isLoggingIn} className={`flex-[2] bg-indigo-600 text-white rounded-xl py-3 text-sm font-bold shadow-md transition-all duration-300 ${isLoggingIn ? 'opacity-50 cursor-not-allowed' : 'hover:bg-indigo-700 active:scale-95'}`}>
-              {isLoggingIn ? "처리 중..." : (isLoginMode ? "로그인" : "아이디 생성")}
-            </button>
-          </div>
-          <button onClick={handleSkipIdSetup} disabled={isLoggingIn} className="mt-5 text-[10px] text-slate-400 font-bold underline hover:text-slate-600 transition-colors">건너뛰기 (로컬 테스트)</button>
-        </div>
-      </div>
+      <LoginScreen
+        isLoginMode={isLoginMode} setIsLoginMode={setIsLoginMode}
+        idInput={idInput} setIdInput={setIdInput} idError={idError} setIdError={setIdError}
+        pwInput={pwInput} setPwInput={setPwInput}
+        saveCredentials={saveCredentials} setSaveCredentials={setSaveCredentials}
+        autoLogin={autoLogin} setAutoLogin={setAutoLogin}
+        isLoggingIn={isLoggingIn} handleLogin={handleLogin} handleSignUp={handleSignUp} handleSkipIdSetup={handleSkipIdSetup}
+      />
     );
   }
 
@@ -3316,1014 +3477,64 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
       </div>
 
       {/* --- 모달 및 팝업 영역 --- */}
-      {toastMsg && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">
-          {toastMsg}
-        </div>
-      )}
+      <Toast toastMsg={toastMsg} />
 
       {/* 커스텀 확인 모달 (window.confirm 대체) */}
-      {confirmModal && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[100000] flex items-center justify-center p-6" onClick={() => { if (confirmModal.onCancel) confirmModal.onCancel(); setConfirmModal(null); }}>
-          <div className={`${cardBg} rounded-3xl p-6 w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
-            <p className={`text-sm font-bold text-center leading-relaxed mb-6 whitespace-pre-line ${textMain}`}>{confirmModal.msg}</p>
-            {confirmModal.extraBtn ? (
-              <div className="flex flex-col gap-2">
-                <button onClick={() => { confirmModal.onOk(); setConfirmModal(null); }} className="w-full bg-rose-500 text-white py-3 rounded-2xl text-xs font-bold shadow-md hover:bg-rose-600 active:scale-95 transition-all">{confirmModal.okLabel || '확인'}</button>
-                <button onClick={() => { setConfirmModal(null); confirmModal.extraBtn.onClick(); }} className={`w-full py-3 rounded-2xl text-xs font-bold border transition-all active:scale-95 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>{confirmModal.extraBtn.label}</button>
-                <button onClick={() => { setConfirmModal(null); }} className={`w-full py-2 rounded-2xl text-[10px] font-bold transition-all active:scale-95 ${isDarkMode ? 'text-slate-500 hover:text-slate-400' : 'text-slate-400 hover:text-slate-600'}`}>취소</button>
-              </div>
-            ) : (
-              <div className="flex gap-3">
-                <button onClick={() => { if (confirmModal.onCancel) confirmModal.onCancel(); setConfirmModal(null); }} className={`flex-1 py-3 rounded-2xl text-xs font-bold border transition-all active:scale-95 ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>{confirmModal.cancelLabel || '취소'}</button>
-                <button onClick={() => { confirmModal.onOk(); setConfirmModal(null); }} className="flex-1 bg-rose-500 text-white py-3 rounded-2xl text-xs font-bold shadow-md hover:bg-rose-600 active:scale-95 transition-all">{confirmModal.okLabel || '확인'}</button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <ConfirmModal confirmModal={confirmModal} setConfirmModal={setConfirmModal} cardBg={cardBg} isDarkMode={isDarkMode} textMain={textMain} />
 
-      {isMobileMenuOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9500] flex transition-opacity duration-300" onClick={() => setIsMobileMenuOpen(false)}>
-          <div className={`w-64 h-full shadow-2xl flex flex-col animate-in slide-in-from-left duration-300 ${isDarkMode ? 'bg-slate-900 border-r border-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
-            <div className={`p-5 border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} flex items-center justify-between`}>
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-xl">🐱</div>
-                <div className="flex flex-col">
-                  <span className={`text-sm font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{appUserId === 'Guest' ? '게스트' : appUserId}</span>
-                  <span className="text-[10px] text-slate-500 font-bold">환영합니다!</span>
-                </div>
-              </div>
-              <button onClick={() => setIsMobileMenuOpen(false)} className={`text-xl transition-colors hover:text-rose-500 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}><X className="w-[1em] h-[1em] inline" /></button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
-              <div>
-<h3 className={`text-xs font-black mb-3 px-1 flex items-center gap-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>지금 여행중 <Plane className="w-3 h-3" /> <span className="ml-2 inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span></h3>
-                  <div className="space-y-1.5">
-                    {trips.filter(t => !t.archived).map(t => {
-                      // [고도화된 여행 완료 자동 감지 로직]
-                      const isActive = activeTripId === t.id;
-                      let isTimeFinished = false;
-                      
-                      if (isActive && travelStartDate) {
-                        const safePlans = Array.isArray(planTimeline) ? planTimeline.filter(p => p && !p.isAccommodation) : [];
-                        const lastDay = safePlans.length > 0 ? Math.max(...safePlans.map(p => parseInt(p.day || 1))) : maxDay;
-                        const lastTime = safePlans.filter(p => parseInt(p.day) === lastDay).sort((a,b) => S(b.time).localeCompare(S(a.time)))[0]?.time || "23:59";
-                        
-                        const endDate = new Date(travelStartDate);
-                        endDate.setDate(endDate.getDate() + (lastDay - 1));
-                        const [hh, mm] = lastTime.split(':');
-                        endDate.setHours(parseInt(hh), parseInt(mm), 0);
-                        
-                        if (endDate < new Date()) isTimeFinished = true;
-                      }
-                      
-return (
-                        <div key={t.id} className="group relative">
-                          <button 
-                            onClick={() => {
-                              handleSwitchTrip(t.id); // 1. 여행 데이터 교체
-                              setActiveTab('dashboard'); // 2. 보관함에서 대시보드로 화면 전환
-                              setIsMobileMenuOpen(false); // 3. 모바일 사이드바 닫기
-                            }} 
-                            className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-black transition-all duration-300 flex items-center justify-between border-2 ${
-                              isActive 
-                                ? 'bg-indigo-600 text-white border-indigo-400 shadow-lg transform scale-[1.03] z-10' 
-                                : (isDarkMode 
-                                    ? 'bg-slate-800 text-slate-300 border-transparent hover:bg-slate-700' 
-                                    : 'bg-white text-slate-600 border-slate-100 shadow-sm hover:border-indigo-200 hover:bg-indigo-50/30')
-                            }`}
-                          >
-                            <span className="truncate flex items-center pr-8">
-                              {t.isShared ? <Handshake className="w-3 h-3 mr-1.5 flex-shrink-0" /> : <MapPin className="w-3 h-3 mr-1.5 flex-shrink-0" />}
-                              {S(t.name)}
-                            </span>
-                            
-                            {/* 삭제/나가기 버튼 강조 및 위치 고정 */}
-                            <span 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setTripToDelete(t.id); 
-                              }} 
-                              className={`absolute right-3 px-1 py-1 rounded-md transition-all duration-200 ${
-                                isActive 
-                                  ? 'text-indigo-200 hover:text-white hover:bg-indigo-500' 
-                                  : 'text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100'
-                              }`}
-                            >
-                              {t.isShared ? <LogOut className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
-                            </span>
-                          </button>
-                          
-                          {/* 스마트 완료 버튼: 시간이 지났을 때만 노출 */}
-                          {isTimeFinished && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                showConfirm("정말 이 여행을 완료하시겠습니까?\n완료된 여행은 '소중한 여행기록'으로 이동합니다.", async () => {
-                                  const finishDate = new Date().toISOString();
-                                  const newTrips = trips.map(item => item.id === t.id ? { ...item, archived: true, finishDate: finishDate } : item);
-                                  setTrips(newTrips);
-                                  if(supabaseClient && appUserId !== "Guest") {
-                                    await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
-                                    await supabaseClient.from('travel_state').update({ archived: true, finish_date: finishDate, shared_users: [] }).eq('id', t.id);
-                                  }
-                                  showToast("축하합니다! 성공적으로 여행을 마쳤습니다. 🏁");
-                                  setActiveTab('archive');
-                                });
-                              }}
-                              className="w-full mt-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[9px] py-1.5 rounded-lg font-black shadow-lg transition-all animate-in slide-in-from-top-1"
-                            >
-                              🏁 여행 완료 (기록 보관하기)
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+      <MobileMenu
+        isOpen={isMobileMenuOpen} onClose={() => setIsMobileMenuOpen(false)} isDarkMode={isDarkMode} appUserId={appUserId}
+        trips={trips} setTrips={setTrips} activeTripId={activeTripId} travelStartDate={travelStartDate} planTimeline={planTimeline} maxDay={maxDay}
+        handleSwitchTrip={handleSwitchTrip} setActiveTab={setActiveTab} setTripToDelete={setTripToDelete} showConfirm={showConfirm}
+        globalPlanCountry={globalPlanCountry} globalManualCountry={globalManualCountry} supabaseClient={supabaseClient} showToast={showToast}
+        activeTab={activeTab} openAddTripModal={openAddTripModal} openRenameTripModal={openRenameTripModal}
+        pendingInvite={pendingInvite} handleAcceptInvite={handleAcceptInvite} handleRejectInvite={handleRejectInvite}
+        handleUndo={handleUndo} handleRedo={handleRedo} historyIndex={historyIndex} history={history}
+        setIsSettingsOpen={setIsSettingsOpen} handleLogout={handleLogout}
+      />
 
-                  <div className="mt-8 pt-4 border-t border-dashed border-slate-200 dark:border-slate-700">
-                    <button 
-                      onClick={() => { setActiveTab('archive'); setIsMobileMenuOpen(false); }}
-                      className={`w-full flex items-center justify-between px-4 py-4 rounded-2xl text-xs font-black transition-all duration-300 active:scale-95 ${activeTab === 'archive' ? 'bg-indigo-600 text-white shadow-xl' : 'bg-gradient-to-r from-indigo-50 to-blue-50 text-indigo-700 border border-indigo-100 shadow-sm'}`}
-                    >
-                      <div className="flex items-center">
-                        <Camera className="w-5 h-5 mr-2" />
-                        <span>소중한 여행기록</span>
-                      </div>
-                      <FolderOpen className="w-4 h-4 opacity-50" />
-                    </button>
-                </div>
+      <SettingsModal
+        isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)}
+        cardBg={cardBg} isDarkMode={isDarkMode} textMain={textMain} textMuted={textMuted} inputBg={inputBg}
+        appTheme={appTheme} handleThemeChange={handleThemeChange}
+        myLocationIcon={myLocationIcon} setMyLocationIcon={setMyLocationIcon}
+        appFont={appFont} setAppFont={setAppFont}
+        appTextColor={appTextColor} setAppTextColor={setAppTextColor}
+        fontScale={fontScale} handleFontScaleChange={handleFontScaleChange} elementScale={elementScale} handleElementScaleChange={handleElementScaleChange}
+        appUserId={appUserId} isMigratingPhotos={isMigratingPhotos} handleMigratePhotosToStorage={handleMigratePhotosToStorage}
+        inviteIdInput={inviteIdInput} setInviteIdInput={setInviteIdInput} handleSendInvite={handleSendInvite}
+        sharedUsers={sharedUsers} isTripOwner={isTripOwner}
+        kickUserTarget={kickUserTarget} setKickUserTarget={setKickUserTarget}
+        supabaseClient={supabaseClient} activeTripId={activeTripId} setSharedUsers={setSharedUsers} showToast={showToast}
+      />
 
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                   <button onClick={openAddTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}>+ 새 여행</button>
-                   <button onClick={openRenameTripModal} className={`py-2 rounded-lg text-[10px] font-bold border border-dashed transition-all duration-300 flex items-center justify-center gap-1 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50 active:scale-95'}`}><Pencil className="w-3 h-3" /> 이름 변경</button>
-                </div>
-              </div>
+      <PhotoViewerModal
+        viewPhoto={viewPhoto} setViewPhoto={setViewPhoto} setViewPhotoAnim={setViewPhotoAnim}
+        viewPhotoDragRef={viewPhotoDragRef} zoomImgRef={zoomImgRef} zoomCardRef={zoomCardRef} zoomStateRef={zoomStateRef}
+        applyZoomTransform={applyZoomTransform} resetZoom={resetZoom} goPhotoNext={goPhotoNext} goPhotoPrev={goPhotoPrev}
+      />
 
-              {pendingInvite && (
-                <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 animate-in fade-in duration-300">
-                  <h3 className="text-[10px] font-black text-indigo-600 mb-1 flex items-center gap-1"><Mail className="w-3 h-3" /> 새 초대장 도착!</h3>
-                  <p className="text-[9px] text-indigo-500 mb-2 truncate">From: {S(pendingInvite.from_id)}</p>
-                  <div className="flex space-x-1.5">
-                    <button onClick={handleAcceptInvite} className="flex-1 bg-indigo-600 text-white py-1.5 rounded text-[10px] font-bold shadow-sm hover:bg-indigo-700 transition-colors">수락</button>
-                    <button onClick={handleRejectInvite} className="flex-1 bg-white text-slate-600 py-1.5 rounded text-[10px] font-bold shadow-sm border hover:bg-slate-50 transition-colors">거절</button>
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            <div className={`p-4 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} space-y-2`}>
-              <div className="flex space-x-2 mb-2">
-                 <button onClick={handleUndo} disabled={historyIndex <= 0} className={`flex-1 flex items-center justify-center py-2 rounded-xl text-xs font-bold transition-all duration-300 ${historyIndex <= 0 ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800' : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300 active:scale-95'}`}>
-                    <Undo2 className="w-3.5 h-3.5 mr-1" /> 슝
-                 </button>
-                 <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className={`flex-1 flex items-center justify-center py-2 rounded-xl text-xs font-bold transition-all duration-300 ${historyIndex >= history.length - 1 ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800' : 'bg-rose-100 text-rose-600 hover:bg-rose-200 dark:bg-rose-900/50 dark:text-rose-300 active:scale-95'}`}>
-                    뽕 <Redo2 className="w-3.5 h-3.5 ml-1" />
-                 </button>
-              </div>
-              <button onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(true); }} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                <Settings className="w-3.5 h-3.5" /><span>환경 설정</span>
-              </button>
-              <button onClick={handleLogout} className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 border border-dashed active:scale-95 ${isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>
-                <LogOut className="w-3.5 h-3.5" /><span>로그아웃</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isSettingsOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsSettingsOpen(false)}>
-           <div className={`${cardBg} p-6 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
-              <div className={`flex justify-between items-center mb-5 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                 <h3 className={`font-black text-sm flex items-center gap-1.5 ${textMain}`}><Settings className="w-4 h-4" /> 환경 설정</h3>
-                 <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors"><X className="w-[1em] h-[1em] inline" /></button>
-              </div>
-              
-              <div className="space-y-4 max-h-[65vh] overflow-y-auto custom-scrollbar pr-2">
-                 <div className="flex flex-col space-y-2">
-                    <label className={`text-xs font-bold ${textMuted}`}>앱 테마 설정</label>
-                    <div className="flex space-x-2">
-                       <button onClick={() => handleThemeChange('light')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'light' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>기본(Light)</button>
-                       <button onClick={() => handleThemeChange('dark')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'dark' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'}`}>다크 모드</button>
-                       <button onClick={() => handleThemeChange('pastel')} className={`flex-1 py-2 text-xs font-bold border rounded-lg transition-all duration-300 ${appTheme === 'pastel' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100'}`}>파스텔</button>
-                    </div>
-                 </div>
-
-                 {/* [NEW] 내 위치 캐릭터 아이콘 설정 */}
-                 <div className="flex flex-col space-y-2 mt-3 mb-4">
-                    <label className={`text-xs font-bold flex items-center gap-1 ${textMuted}`}><MapPin className="w-3.5 h-3.5" /> 내 위치 캐릭터 설정</label>
-                    <div className="grid grid-cols-4 sm:grid-cols-7 gap-2 px-1 pb-1 box-border">
-                       {['🚶‍♂️', '🏃‍♀️', '👶', '🚗', '🐎', '🐶', '🐱'].map(icon => (
-                          <button key={icon} onClick={() => { setMyLocationIcon(icon); try{localStorage.setItem('my_travel_loc_icon', icon)}catch(e){} }} className={`py-1.5 text-xl rounded-lg transition-all duration-300 border shadow-sm ${myLocationIcon === icon ? 'bg-indigo-100 border-indigo-500 scale-110 z-10' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:scale-105'}`}>
-                             {icon}
-                          </button>
-                       ))}
-                    </div>
-                 </div>
-
-                 <div className="flex flex-col space-y-2 mt-3">
-                    <label className={`text-xs font-bold ${textMuted}`}>폰트 (글꼴) 설정</label>
-                    <select value={appFont} onChange={e => { setAppFont(e.target.value); try{localStorage.setItem('my_travel_font', e.target.value)}catch(err){} }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer transition-colors duration-300`}>
-                       <option value="'Pretendard', -apple-system, sans-serif">Pretendard (기본/Mac 추천)</option>
-                       <option value="'Malgun Gothic', '맑은 고딕', sans-serif">맑은 고딕 (Windows 기본)</option>
-                       <option value="'Noto Sans KR', sans-serif">Noto Sans KR (깔끔한 고딕)</option>
-                       <option value="'Nanum Gothic', sans-serif">나눔고딕 (둥근 고딕)</option>
-                    </select>
-                  </div>
-
-                  {/* [NEW] 앱 글자 색상 설정 UI 수정 */}
-                  <div className="flex flex-col space-y-2 mt-3">
-                    <label className={`text-xs font-bold ${textMuted}`}>앱 글자 색상 설정</label>
-                    <div className="grid grid-cols-2 gap-2">
-                       {[
-                         { id: 'original', label: '초기 테마 (파랑/회색 혼합)' },
-                         { id: 'default', label: '기본 (다크/라이트 자동)', color: isDarkMode ? '#e2e8f0' : '#1e293b', weight: 'font-semibold' },
-                         { id: 'high-contrast', label: '고대비 (선명함)', color: isDarkMode ? '#ffffff' : '#000000', weight: 'font-black' },
-                         { id: 'monochrome', label: '단색 (부드러움)', color: isDarkMode ? '#94a3b8' : '#64748b', weight: 'font-medium' }
-                       ].map(item => (
-                         <button key={item.id} onClick={() => { setAppTextColor(item.id); localStorage.setItem('my_travel_text_color', item.id); }} className={`flex items-center space-x-2 p-2 rounded-lg border-2 text-[10px] font-bold transition-all ${appTextColor === item.id ? 'border-indigo-500 bg-indigo-50/20 shadow-inner' : 'border-slate-100 dark:border-slate-700'}`}>
-                           {item.id === 'original' ? (
-                             <div className="w-6 h-6 rounded-full border border-slate-300 flex-shrink-0" style={{ background: 'linear-gradient(45deg, #4f46e5, #64748b)' }}></div>
-                           ) : (
-                             <div className={`w-6 h-6 rounded-full border border-slate-300 flex items-center justify-center flex-shrink-0 ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}>
-                               <span className={item.weight} style={{ color: item.color, fontSize: '10px' }}>Aa</span>
-                             </div>
-                           )}
-                           <span>{item.label}</span>
-                         </button>
-                       ))}
-                    </div>
-                  </div>
-                 
-                 <div className="flex flex-col space-y-2 pt-2">
-                    <label className={`text-xs font-bold ${textMuted}`}>화면/글자 크기 (글꼴: {fontScale}, 요소: {elementScale})</label>
-                    <input type="range" min="0.5" max="1.5" step="0.1" value={fontScale} onChange={handleFontScaleChange} className="w-full accent-indigo-600 transition-all duration-300" />
-                    <input type="range" min="0.5" max="1.5" step="0.1" value={elementScale} onChange={handleElementScaleChange} className="w-full accent-indigo-600 mt-2 transition-all duration-300" />
-                 </div>
-
-                 {appUserId !== 'Guest' && (
-                   <div className={`flex flex-col space-y-2 border-t pt-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                      <label className={`text-xs font-bold ${textMuted}`}>사진 최적화</label>
-                      <p className={`text-[10px] ${textMuted}`}>예전에 등록한 사진들을 저장소로 옮겨서 여행 불러오는 속도를 빠르게 합니다. 한 번만 눌러주세요.</p>
-                      <button onClick={handleMigratePhotosToStorage} disabled={isMigratingPhotos} className={`w-full py-2 rounded-lg text-xs font-bold shadow-sm transition-all duration-300 ${isMigratingPhotos ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'}`}>
-                        {isMigratingPhotos ? '정리 중...' : '사진 최적화 실행'}
-                      </button>
-                   </div>
-                 )}
-
-                 <div className={`flex flex-col space-y-3 border-t pt-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                    <label className={`text-xs font-bold ${textMuted}`}>🤝 일정 공유 및 관리</label>
-                    <div className="space-y-3 animate-in fade-in duration-300">
-                       <div className="flex space-x-2">
-                          <input type="text" value={inviteIdInput} onChange={e => setInviteIdInput(e.target.value)} placeholder="초대할 친구 아이디 입력" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold rounded-lg outline-none focus:border-indigo-500 transition-colors duration-300`} />
-                          <button onClick={handleSendInvite} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300 whitespace-nowrap">초대 발송</button>
-                       </div>
-                       
-                       <div className={`p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
-                          <p className={`text-[10px] font-bold ${textMuted} mb-2`}>현재 이 일정을 함께 보는 사람</p>
-                          <div className="flex flex-wrap gap-1.5">
-                             <span className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 px-2 py-1 rounded text-[9px] font-bold shadow-sm">👑 나 ({appUserId})</span>
-                             {sharedUsers.filter(u => u !== appUserId).map((user, idx) => (
-                               <div key={idx} className="flex items-center bg-white text-slate-600 dark:bg-slate-700 dark:text-slate-300 border dark:border-slate-600 px-2 py-1 rounded shadow-sm">
-                                 <span className="text-[9px] font-bold">👤 {user}</span>
-                                 {isTripOwner && (
-                                   <button onClick={() => setKickUserTarget(user)} className="ml-1.5 pl-1.5 border-l border-slate-200 dark:border-slate-500 text-rose-500 hover:text-rose-600 text-[9px] font-black transition-colors">강퇴</button>
-                                 )}
-                               </div>
-                             ))}
-                             {sharedUsers.filter(u => u !== appUserId).length === 0 && <span className="text-[9px] text-slate-400 py-1 pl-1">아직 참여 중인 친구가 없습니다.</span>}
-                          </div>
-                       </div>
-                    </div>
-                 </div>
-              </div>
-              <button onClick={() => setIsSettingsOpen(false)} className={`w-full mt-6 rounded-xl py-3 text-xs font-bold transition-colors duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}>닫기</button>
-           </div>
-        </div>
-      )}
-
-      {/* 강퇴 확인 모달 */}
-      {kickUserTarget && (
-        <div className="fixed inset-0 bg-black/60 z-[99999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
-           <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95 duration-300`}>
-              <div className="text-3xl mb-3">⚠️</div>
-              <h3 className={`text-sm font-black mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>공유 중단 확인</h3>
-              <p className={`text-[11px] font-bold mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'} leading-relaxed`}>
-                 <span className="text-indigo-500 font-black">[{kickUserTarget}]</span> 사용자와<br/>공유를 중지하시겠습니까?
-              </p>
-              <div className="flex space-x-2">
-                 <button className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`} onClick={() => setKickUserTarget(null)}>취소</button>
-                 <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600 active:scale-95 transition-all duration-300" onClick={async () => {
-                    const newShared = sharedUsers.filter(u => u !== kickUserTarget);
-                    setSharedUsers(newShared);
-                    if(supabaseClient) await supabaseClient.from('travel_state').update({ shared_users: newShared }).eq('id', activeTripId);
-                    showToast(`${kickUserTarget} 님을 여행에서 내보냈습니다.`);
-                    setKickUserTarget(null);
-                 }}>중지하기</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {viewPhoto && (() => {
-        const _vp = typeof viewPhoto === 'string' ? { imgs: [viewPhoto], idx: 0 } : viewPhoto;
-        const imgs = _vp.imgs || [];
-        const idx = _vp.idx || 0;
-        const n = imgs.length;
-        const dr = viewPhotoDragRef.current;
-        const z = zoomStateRef.current;
-
-        // DOM 직접 조작으로 렉 없는 줌 처리
-        const getTouchDist = (t) => {
-          const dx = t[0].clientX - t[1].clientX;
-          const dy = t[0].clientY - t[1].clientY;
-          return Math.sqrt(dx * dx + dy * dy);
-        };
-
-        const onTouchStart = (e) => {
-          if (e.touches.length === 2) {
-            z.dist = getTouchDist(e.touches);
-            z.baseScale = z.scale;
-            z.baseOx = z.ox; z.baseOy = z.oy;
-            dr.startX = null;
-          } else if (e.touches.length === 1) {
-            const now = Date.now();
-            // 더블탭
-            if (now - z.lastTap < 280) {
-              z.lastTap = 0;
-              if (z.scale > 1.05) {
-                resetZoom(true);
-              } else {
-                z.scale = 2.5; z.ox = 0; z.oy = 0;
-                applyZoomTransform(2.5, 0, 0, true);
-              }
-              return;
-            }
-            z.lastTap = now;
-            z.panStartX = e.touches[0].clientX;
-            z.panStartY = e.touches[0].clientY;
-            z.baseOx = z.ox; z.baseOy = z.oy;
-            if (z.scale <= 1.05) dr.startX = e.touches[0].clientX;
-            else dr.startX = null;
-          }
-        };
-
-        const onTouchMove = (e) => {
-          if (e.touches.length === 2 && z.dist !== null) {
-            e.preventDefault();
-            const newDist = getTouchDist(e.touches);
-            const newScale = Math.min(Math.max(z.baseScale * (newDist / z.dist), 1), 5);
-            z.scale = newScale;
-            if (newScale <= 1.05) { z.ox = 0; z.oy = 0; }
-            applyZoomTransform(newScale, z.ox, z.oy, false);
-          } else if (e.touches.length === 1 && z.scale > 1.05) {
-            e.preventDefault();
-            const movedX = Math.abs(e.touches[0].clientX - z.panStartX);
-            const movedY = Math.abs(e.touches[0].clientY - z.panStartY);
-            if (movedX > 4 || movedY > 4) z.didDrag = true;
-            z.ox = z.baseOx + (e.touches[0].clientX - z.panStartX);
-            z.oy = z.baseOy + (e.touches[0].clientY - z.panStartY);
-            applyZoomTransform(z.scale, z.ox, z.oy, false);
-          }
-        };
-
-        const onTouchEnd = (e) => {
-          if (z.dist !== null) {
-            z.dist = null;
-            if (z.scale <= 1.05) resetZoom(true);
-            return;
-          }
-          if (z.scale > 1.05) { dr.startX = null; return; }
-          if (dr.startX === null) return;
-          const diff = dr.startX - e.changedTouches[0].clientX;
-          dr.startX = null;
-          if (Math.abs(diff) < 30) return;
-          e.stopPropagation();
-          resetZoom(false);
-          if (diff > 0) goPhotoNext(imgs, idx);
-          else goPhotoPrev(imgs, idx);
-        };
-
-        const onWheel = (e) => {
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            const newScale = Math.min(Math.max(z.scale * (e.deltaY < 0 ? 1.12 : 0.89), 1), 5);
-            z.scale = newScale;
-            if (newScale <= 1.05) { z.ox = 0; z.oy = 0; }
-            applyZoomTransform(newScale, z.ox, z.oy, false);
-            return;
-          }
-          if (z.scale > 1.05) return;
-          if (n < 2 || dr.wheelLock) return;
-          const delta = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-          if (Math.abs(delta) < 10) return;
-          dr.wheelLock = true;
-          setTimeout(() => { dr.wheelLock = false; }, 450);
-          resetZoom(false);
-          if (delta > 0) goPhotoNext(imgs, idx);
-          else goPhotoPrev(imgs, idx);
-        };
-
-        const onPointerDown = (e) => {
-          if (e.button !== 0) return;
-          z.didDrag = false;
-          if (z.scale > 1.05) {
-            z.panStartX = e.clientX;
-            z.panStartY = e.clientY;
-            z.baseOx = z.ox;
-            z.baseOy = z.oy;
-            z.mouseDown = true;
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } else {
-            dr.startX = e.clientX;
-          }
-        };
-        const onPointerMove = (e) => {
-          if (!z.mouseDown || z.scale <= 1.05) return;
-          const movedX = Math.abs(e.clientX - z.panStartX);
-          const movedY = Math.abs(e.clientY - z.panStartY);
-          if (movedX > 4 || movedY > 4) z.didDrag = true;
-          e.preventDefault();
-          z.ox = z.baseOx + (e.clientX - z.panStartX);
-          z.oy = z.baseOy + (e.clientY - z.panStartY);
-          applyZoomTransform(z.scale, z.ox, z.oy, false);
-        };
-        const onPointerUp = (e) => {
-          if (z.mouseDown) {
-            z.mouseDown = false;
-            return;
-          }
-          if (dr.startX === null || z.scale > 1.05) return;
-          const diff = dr.startX - e.clientX;
-          dr.startX = null;
-          if (Math.abs(diff) < 30) return;
-          e.stopPropagation();
-          resetZoom(false);
-          if (diff > 0) goPhotoNext(imgs, idx);
-          else goPhotoPrev(imgs, idx);
-        };
-
-        const CARD_W = 300; const CARD_H = 400; const X_GAP = 160;
-        const getCardStyle = (offset) => {
-          const absOff = Math.abs(offset);
-          const scale = absOff === 0 ? 1 : absOff === 1 ? 0.78 : 0.62;
-          const brightness = absOff === 0 ? 1 : absOff === 1 ? 0.5 : 0.3;
-          const opacity = absOff === 0 ? 1 : absOff === 1 ? 0.9 : 0.65;
-          const zIndex = 10 - absOff;
-          const tx = offset * X_GAP;
-          const ty = absOff === 0 ? 0 : absOff === 1 ? 28 : 50;
-          return {
-            position: 'absolute', width: CARD_W, height: CARD_H,
-            left: '50%', top: '50%', marginLeft: -CARD_W / 2, marginTop: -CARD_H / 2 - 30,
-            borderRadius: 18, overflow: 'hidden',
-            background: '#ffffff',
-            transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-            filter: `brightness(${brightness})`, opacity, zIndex,
-            transition: 'transform 0.32s cubic-bezier(.4,0,.2,1), opacity 0.32s, filter 0.32s',
-            boxShadow: absOff === 0 ? '0 24px 64px rgba(0,0,0,0.95)' : '0 8px 24px rgba(0,0,0,0.6)',
-            cursor: absOff === 0 ? 'default' : 'pointer', pointerEvents: 'none',
-          };
-        };
-        const offsets = [-2, -1, 0, 1, 2].filter(o => { const ci = idx + o; return ci >= 0 && ci < n; });
-
-        return (
-          <div className="fixed inset-0 bg-black/95 z-[99998] flex flex-col items-center justify-center backdrop-blur-sm"
-               onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-               onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
-               onWheel={onWheel}
-               onClick={() => { if (z.didDrag) { z.didDrag = false; return; } setViewPhoto(null); }}>
-            {/* 카드 영역 */}
-            <div className="relative flex-1 w-full" style={{ pointerEvents: 'none', overflow: 'hidden' }}>
-              {offsets.map(offset => {
-                const ci = idx + offset;
-                return (
-                  <div key={ci}
-                       ref={offset === 0 ? zoomCardRef : null}
-                       style={{ ...getCardStyle(offset), pointerEvents: 'auto' }}
-                       onClick={e => {
-                         e.stopPropagation();
-                         if (z.scale > 1.05) return;
-                         if (offset < 0) goPhotoPrev(imgs, idx);
-                         else if (offset > 0) goPhotoNext(imgs, idx);
-                       }}>
-                    <img
-                      ref={offset === 0 ? zoomImgRef : null}
-                      src={imgs[ci]}
-                      alt="" draggable={false}
-                      style={{
-                        width: '100%', height: '100%',
-                        objectFit: 'contain',
-                        transformOrigin: 'center center',
-                        willChange: 'transform',
-                        display: 'block',
-                      }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-            {/* 하단 미니 썸네일 */}
-            {n > 1 && (
-              <div className="flex gap-2 pb-6 pt-2 px-4 flex-shrink-0" style={{ zIndex: 30 }}
-                   onClick={e => e.stopPropagation()}>
-                {imgs.map((img, i) => (
-                  <div key={i} onClick={e => {
-                         e.stopPropagation();
-                         resetZoom(false);
-                         setViewPhoto({ imgs, idx: i });
-                         setViewPhotoAnim(null);
-                       }}
-                       className="relative flex-shrink-0 cursor-pointer transition-all duration-200"
-                       style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden',
-                         border: i === idx ? '2.5px solid white' : '2px solid rgba(255,255,255,0.25)',
-                         opacity: i === idx ? 1 : 0.55,
-                         transform: i === idx ? 'scale(1.12)' : 'scale(1)',
-                         boxShadow: i === idx ? '0 4px 16px rgba(0,0,0,0.7)' : 'none' }}>
-                    <img src={img} className="w-full h-full object-cover" alt="" draggable={false} />
-                  </div>
-                ))}
-              </div>
-            )}
-            <button className="absolute top-4 right-4 text-white bg-black/50 px-3 py-1.5 rounded-full hover:bg-black/80 transition-colors text-sm font-bold" style={{ zIndex: 30 }}
-                    onClick={e => { e.stopPropagation(); setViewPhoto(null); }}><X className="w-[1em] h-[1em] inline" /></button>
-          </div>
-        );
-      })()}
-
-      {tripToDelete && (
-        <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
-           <div className={`bg-white dark:bg-slate-800 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl animate-in zoom-in-95 duration-300`}>
-              <div className="flex justify-center mb-3">{trips.find(t=>t.id===tripToDelete)?.isShared ? <LogOut className="w-8 h-8 text-slate-400" /> : <Trash2 className="w-8 h-8 text-slate-400" />}</div>
-              <h3 className={`text-sm font-black mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                 {trips.find(t=>t.id===tripToDelete)?.isShared ? '공유 목록에서 나가기' : '여행 삭제'}
-              </h3>
-              <p className={`text-[11px] font-bold mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'} leading-relaxed`}>
-                 {trips.find(t=>t.id===tripToDelete)?.isShared 
-                   ? '이 공유 여행을 내 문서함 목록에서 지우시겠습니까?' 
-                   : '정말 이 여행을 삭제하시겠습니까?\n삭제된 데이터는 절대 복구할 수 없습니다.'}
-              </p>
-              <div className="flex space-x-2">
-                 <button className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`} onClick={() => setTripToDelete(null)}>취소</button>
-                 <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600 active:scale-95 transition-all duration-300" onClick={confirmDeleteTrip}>
-                    {trips.find(t=>t.id===tripToDelete)?.isShared ? '나가기' : '삭제하기'}
-                 </button>
-              </div>
-           </div>
-        </div>
-      )}
-      {isExpenseModalOpen && (() => {
-        // 국가 → 화폐 코드/기호 변환 헬퍼 (country가 지역명으로 잘못 저장된 구버전 데이터도 역추적)
-        const resolveCountry = (country, region) => {
-          // 1순위: country가 알려진 국가명이면 그대로 사용
-          if (country && Object.keys(REGIONS_BY_COUNTRY).includes(country)) return country;
-          // 2순위: region으로 국가 역추적
-          if (region) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(region)) return cn; } }
-          // 3순위: country 자체가 지역명일 수도 있음 (구버전 버그 데이터)
-          if (country) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(country)) return cn; } }
-          return country || '';
-        };
-        const getCountryCurrency = (country, region) => {
-          const c = resolveCountry(country, region);
-          if (c === '한국') return { code: 'KRW', sym: '₩' };
-          if (c === '일본') return { code: 'JPY', sym: '¥' };
-          if (c === '중국') return { code: 'CNY', sym: '元' };
-          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
-          if (c === '영국') return { code: 'GBP', sym: '£' };
-          if (c === '태국') return { code: 'THB', sym: '฿' };
-          if (c === '베트남') return { code: 'VND', sym: '₫' };
-          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
-          if (c === '호주') return { code: 'AUD', sym: 'A$' };
-          return { code: 'USD', sym: '$' };
-        };
-        const toKrw = (localAmt, curCode) => {
-          if (!localAmt || isNaN(Number(localAmt))) return 0;
-          const r = rates && rates['KRW'] && rates[curCode] ? (rates['KRW'] / rates[curCode]) : 1350;
-          return Math.round(Number(localAmt) * r);
-        };
-
-        // 일정 일정 목록: 교통편·숙소 제외, D1→ 오름차순
-        const allPlans = (Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [])
-          .filter(p => !p.isTransport && !p.isAccommodation)
-          .sort((a, b) => (Number(a.day) - Number(b.day)) || S(a.time).localeCompare(S(b.time)));
-        const dayFiltered = expenseFilterDay === 'all' ? allPlans : allPlans.filter(p => String(p.day) === String(expenseFilterDay));
-        const fullyFiltered = expenseFilterTheme === 'all' ? dayFiltered : dayFiltered.filter(p => (p.theme || '기타') === expenseFilterTheme);
-        const planTotalKrw = fullyFiltered.reduce((sum, p) => sum + (Number(p.expenseKrw) || 0), 0);
-
-        // 기본지출: basicExpenses 배열 + 교통편 일정 + 숙소 일정 + 기타지출([기타] prefix)
-        const timelinePlans = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-        // 교통편: outbound/inbound dep 쌍을 왕복카드로 묶기
-        const transTypes = ['flight', 'train', 'bus'];
-        const transportItems = [];
-        transTypes.forEach(type => {
-          const dep = timelinePlans.find(p => p.id === `trans_${type}_outbound_dep`);
-          const arr = timelinePlans.find(p => p.id === `trans_${type}_inbound_dep`);
-          if (dep || arr) {
-            const depPlace = dep ? S(dep.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
-            const arrPlace = arr ? S(arr.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
-            const depFlag = getFlagForCity(depPlace) || '';
-            const arrFlag = getFlagForCity(arrPlace) || COUNTRY_FLAG[arr?.country] || '';
-            const totalKrw = (Number(dep?.expenseKrw) || 0) + (Number(arr?.expenseKrw) || 0);
-            transportItems.push({ id: `transport_grouped_${type}`, name: depPlace && arrPlace ? `${depPlace} / ${arrPlace}` : (depPlace || arrPlace || type), depFlag, arrFlag, depPlace, arrPlace, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
-          } else {
-            // 구버전 데이터: isTransport이고 id가 trans_ 형식이 아닌 것들
-            timelinePlans.filter(p => p.isTransport && !String(p.id).startsWith('trans_') && !String(p.id).endsWith('_arr'))
-              .forEach(p => {
-                if (!transportItems.find(t => t.planId === p.id)) {
-                  transportItems.push({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, category: '항공권/교통', isFromTimeline: true, planId: p.id });
-                }
-              });
-          }
-        });
-        // 렌터카: dep+arr을 하나의 카드로 그룹핑
-        const rentalDep = timelinePlans.find(p => p.id === 'trans_rental_dep');
-        const rentalArr = timelinePlans.find(p => p.id === 'trans_rental_arr');
-        // planTimeline의 basic-exp- 항목 중 렌터카 관련 항목 추출 → transport_grouped_rental에 합산
-        const basicRentalPlans = timelinePlans.filter(p => p.id && String(p.id).startsWith('basic-exp-') && S(p.place).includes('렌터카'));
-        const basicRentalKrw = basicRentalPlans.reduce((s, p) => s + (Number(p.expenseKrw) || 0), 0);
-        const basicRentalIds = new Set(basicRentalPlans.map(p => p.id));
-        if (rentalDep || rentalArr || basicRentalPlans.length > 0) {
-          const timelineKrw = (Number(rentalDep?.expenseKrw) || 0) + (Number(rentalArr?.expenseKrw) || 0);
-          const totalKrw = timelineKrw + basicRentalKrw;
-          const meta = rentalDep?.rentalMeta || rentalArr?.rentalMeta || {};
-          transportItems.push({ id: 'transport_grouped_rental', name: `🚗 렌터카${meta.company ? ` (${meta.company})` : ''}`, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: rentalDep, arrPlan: rentalArr, isRentalGrouped: true });
-        }
-        const accomItems = timelinePlans
-          .filter(p => p.isAccommodation)
-          .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, category: '숙소', isFromTimeline: true, planId: p.id }));
-        const manualItems = timelinePlans
-          .filter(p => p.id && String(p.id).startsWith('manual-exp-'))
-          .map(p => ({ id: p.id, name: p.place.replace(/^\[기타\]\s*/, ''), amtKrw: Number(p.expenseKrw) || 0, category: '기타', isFromTimeline: true, planId: p.id }));
-        const basicExpItems = timelinePlans
-          .filter(p => p.id && String(p.id).startsWith('basic-exp-') && !basicRentalIds.has(p.id))
-          .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, amtLocal: p.expenseLocal || '', sym: p.sym || '', category: S(p.theme || '기타'), isFromTimeline: true, planId: p.id, dayLabel: `D${p.day}` }));
-        const basicItems = [...basicExpenses, ...transportItems, ...accomItems, ...manualItems, ...basicExpItems];
-        const basicTotalKrw = basicItems.reduce((sum, b) => sum + (Number(b.amtKrw) || 0), 0);
-
-        const grandTotal = planTotalKrw + basicTotalKrw;
-
-        return (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsExpenseModalOpen(false)}>
-          <div className={`${cardBg} p-5 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]`} onClick={e => e.stopPropagation()}>
-            <div className={`flex justify-between items-center mb-3 border-b pb-3 flex-shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`font-black text-sm flex items-center gap-1.5 ${textMain}`}><Wallet className="w-4 h-4" /> 여행정산</h3>
-              <button onClick={() => setIsExpenseModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors"><X className="w-[1em] h-[1em] inline" /></button>
-            </div>
-
-            {/* 총 합계 */}
-            <div className={`p-3 rounded-2xl mb-3 flex flex-col items-center border shadow-md flex-shrink-0 ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-100'}`}>
-              <span className={`text-[10px] font-black uppercase tracking-wider mb-0.5 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-600'}`}>Total Expense</span>
-              <span className="text-2xl font-black text-rose-500">₩{grandTotal.toLocaleString()}</span>
-              <div className={`flex gap-3 mt-1 text-[9px] font-bold ${textMuted}`}>
-                <span>일정 ₩{planTotalKrw.toLocaleString()}</span>
-                <span>+</span>
-                <span>기본지출 ₩{basicTotalKrw.toLocaleString()}</span>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-3 mb-3 scroll-smooth min-h-0">
-
-              {/* ── 기본지출 섹션 ── */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <h4 className={`text-[10px] font-black ${textMain}`}>📋 기본지출</h4>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[9px] font-bold text-rose-500`}>₩{basicTotalKrw.toLocaleString()}</span>
-                    <button onClick={() => {
-                      // 오늘 날짜 기준 자동 Day 계산
-                      let todayDayNum = 1;
-                      if (travelStartDate) {
-                        const start = new Date(travelStartDate); start.setHours(0,0,0,0);
-                        const today = new Date(); today.setHours(0,0,0,0);
-                        const diff = Math.round((today - start) / 86400000) + 1;
-                        todayDayNum = (diff >= 1 && diff <= safeMaxDay) ? diff : 1;
-                      }
-                      setBasicExpAddIsKrw(false); setBasicExpAddName(''); setBasicExpAddAmt(''); setBasicExpAddCat('기타'); setBasicExpAddDay(todayDayNum); setIsBasicExpAddOpen(true);
-                    }} className="bg-indigo-600 text-white px-2 py-0.5 text-[9px] font-bold rounded-lg hover:bg-indigo-700 active:scale-95 transition-all">+ 추가</button>
-                  </div>
-                </div>
-                {basicItems.length === 0 ? (
-                  <p className={`text-[10px] ${textMuted} text-center py-2`}>기본지출 내역 없음</p>
-                ) : (
-                  <div className="flex flex-col gap-1">
-                    {basicItems.map(item => {
-                      const hasAmt = Number(item.amtKrw) > 0;
-                      const catColor = item.category === '항공권/교통' ? (isDarkMode ? 'bg-sky-900 text-sky-300' : 'bg-sky-500 text-white')
-                        : item.category === '숙소' ? (isDarkMode ? 'bg-emerald-900 text-emerald-300' : 'bg-emerald-500 text-white')
-                        : (isDarkMode ? 'bg-amber-900 text-amber-300' : 'bg-amber-500 text-white');
-                      const openModal = () => {
-                        if (item.isGroupedTransport) {
-                          // 왕복카드: 항공권은 원화 기본
-                          const p = item.depPlan || item.arrPlan;
-                          if (p) {
-                            const totalKrw = (Number(item.depPlan?.expenseKrw) || 0) + (Number(item.arrPlan?.expenseKrw) || 0);
-                            setExpenseAmtModalPlan({ ...p, _groupedTransport: item });
-                            setExpenseAmtValue(totalKrw > 0 ? String(totalKrw) : '');
-                            setExpenseAmtIsKrw(true); // 항공권은 원화 기본
-                          }
-                        } else if (item.isFromTimeline) {
-                          const p = timelinePlans.find(tp => String(tp.id) === String(item.planId));
-                          if (p) {
-                            // 숙소/교통 기본지출은 원화 기본
-                            const totalKrw = Number(p.expenseKrw) || 0;
-                            setExpenseAmtModalPlan(p);
-                            setExpenseAmtValue(totalKrw > 0 ? String(totalKrw) : '');
-                            setExpenseAmtIsKrw(true);
-                          }
-                        }
-                      };
-                      const canOpen = item.isFromTimeline;
-                      // 수동 추가 항목은 현지화로 표시 (amtLocal/sym 있으면)
-                      const displayBasicAmt = (!item.isFromTimeline && item.amtLocal && item.sym)
-                        ? `${item.sym}${Number(item.amtLocal).toLocaleString()}`
-                        : `₩${Number(item.amtKrw).toLocaleString()}`;
-                      return (
-                      <div key={item.id} onClick={canOpen ? openModal : undefined} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 ${canOpen ? 'cursor-pointer active:scale-[0.98]' : ''} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
-                        <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${catColor}`}>{item.category || '기타'}</span>
-                        {item.isGroupedTransport && item.depPlace && item.arrPlace ? (
-                          <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>
-                            {item.depFlag && <span>{item.depFlag}</span>}{item.depPlace}
-                            <span className="mx-1 text-slate-400 font-black">&#8596;</span>
-                            {item.arrFlag && <span>{item.arrFlag}</span>}{item.arrPlace}
-                          </span>
-                        ) : (
-                          <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>{item.name}</span>
-                        )}
-                        <span className={`text-[10px] font-black flex-shrink-0 ${hasAmt ? 'text-rose-500' : textMuted}`}>{displayBasicAmt}</span>
-                        <button onClick={e => {
-                          e.stopPropagation();
-                          if (item.category === '기타' && item.isFromTimeline) {
-                            const updated = planTimeline.filter(p => String(p.id) !== String(item.planId));
-                            setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
-                          } else if (!item.isFromTimeline) {
-                            setBasicExpenses(prev => prev.filter(b => b.id !== item.id));
-                          }
-                        }} className={`text-[10px] transition-colors flex-shrink-0 ${(item.category === '기타' && item.isFromTimeline) || !item.isFromTimeline ? 'text-slate-300 hover:text-rose-400' : 'text-slate-200 cursor-not-allowed opacity-30'}`} title={item.isFromTimeline && item.category !== '기타' ? '일정 탭에서 삭제하세요' : '삭제'}>🗑️</button>
-                      </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* ── 여행일정 지출 섹션 ── */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <h4 className={`text-[10px] font-black ${textMain}`}>📅 여행일정 지출</h4>
-                  <span className={`text-[9px] font-bold text-rose-500`}>₩{planTotalKrw.toLocaleString()}</span>
-                </div>
-                {/* 필터 */}
-                <div className="flex gap-1.5 mb-2">
-                  <select value={expenseFilterDay} onChange={e => setExpenseFilterDay(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-lg`}>
-                    <option value="all">전체 Day</option>
-                    {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
-                  </select>
-                  <select value={expenseFilterTheme} onChange={e => setExpenseFilterTheme(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1.5 text-[10px] font-bold outline-none rounded-lg`}>
-                    <option value="all">전체 테마</option>
-                    <option value="식당">식당</option>
-                    <option value="디저트">디저트</option>
-                    <option value="관광지">관광지</option>
-                    <option value="쇼핑">쇼핑</option>
-                    <option value="기타">기타</option>
-                  </select>
-                </div>
-                {fullyFiltered.length === 0 ? (
-                  <p className={`text-[10px] ${textMuted} text-center py-2`}>일정이 없습니다.</p>
-                ) : (
-                  <div className="flex flex-col gap-1">
-                    {fullyFiltered.map(plan => {
-                      const cur = getCountryCurrency(plan.country, plan.region);
-                      const hasAmount = Number(plan.expenseLocal) > 0 || Number(plan.expenseKrw) > 0;
-                      const isKrwCurrency = cur.code === 'KRW';
-                      // 항상 현지 화폐 기본 표시 (expenseLocal 있으면 현지화, 없으면 원화)
-                      const displayAmt = isKrwCurrency
-                        ? `₩${(Number(plan.expenseKrw) || 0).toLocaleString()}`
-                        : Number(plan.expenseLocal) > 0
-                          ? `${cur.sym}${Number(plan.expenseLocal).toLocaleString()}`
-                          : `${cur.sym}0`;
-                      const openThisPlan = () => {
-                        // 항상 현지화 기본 (한국 여행이면 원화=현지화)
-                        const hasLocal = Number(plan.expenseLocal) > 0;
-                        setExpenseAmtModalPlan(plan);
-                        setExpenseAmtValue(hasLocal ? String(plan.expenseLocal) : "");
-                        setExpenseAmtIsKrw(isKrwCurrency); // 한국만 원화, 나머지는 현지화
-                      };
-                      return (
-                        <div key={plan.id} onClick={openThisPlan} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 cursor-pointer active:scale-[0.98] ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>
-                          <span className={`text-[7px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${isDarkMode ? 'bg-indigo-900 text-indigo-300' : 'bg-indigo-600 text-white'}`}>D{plan.day}</span>
-                          <span className={`flex-1 text-[10px] font-bold truncate min-w-0 ${textMain}`}>{S(plan.place)}</span>
-                          <span className={`text-[10px] font-black flex-shrink-0 ${hasAmount ? 'text-rose-500' : (isDarkMode ? 'text-slate-500' : 'text-slate-300')}`}>{displayAmt}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-            <button onClick={() => setIsExpenseModalOpen(false)} className="w-full bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300 flex-shrink-0">닫기</button>
-          </div>
-        </div>
-        );
-      })()}
-
-      {/* 금액 수정 모달 */}
-      {expenseAmtModalPlan && (() => {
-        const plan = expenseAmtModalPlan;
-        const isGrouped = !!plan._groupedTransport;
-        const resolveCountryAmt = (country, region) => {
-          if (country && Object.keys(REGIONS_BY_COUNTRY).includes(country)) return country;
-          if (region) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(region)) return cn; } }
-          if (country) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(country)) return cn; } }
-          return country || '';
-        };
-        const getCurModal = (country, region) => {
-          const c = resolveCountryAmt(country, region);
-          if (c === '한국') return { code: 'KRW', sym: '₩' };
-          if (c === '일본') return { code: 'JPY', sym: '¥' };
-          if (c === '중국') return { code: 'CNY', sym: '元' };
-          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
-          if (c === '영국') return { code: 'GBP', sym: '£' };
-          if (c === '태국') return { code: 'THB', sym: '฿' };
-          if (c === '베트남') return { code: 'VND', sym: '₫' };
-          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
-          if (c === '호주') return { code: 'AUD', sym: 'A$' };
-          return { code: 'USD', sym: '$' };
-        };
-        // 전역 여행 국가 기준으로 화폐 결정
-        const basePlan = isGrouped ? (plan._groupedTransport.depPlan || plan) : plan;
-        const cur = getCurModal(globalPlanCountry || basePlan.country, globalPlanRegion || basePlan.region);
-        const isLocalCurrency = !expenseAmtIsKrw && cur.code !== 'KRW';
-        const activeSym = expenseAmtIsKrw ? '₩' : cur.sym;
-        const activeCode = expenseAmtIsKrw ? 'KRW' : cur.code;
-        const toKrwModal = (amt, code) => {
-          if (!amt || isNaN(Number(amt))) return 0;
-          const r = rates && rates['KRW'] && rates[code] ? (rates['KRW'] / rates[code]) : 1350;
-          return Math.round(Number(amt) * r);
-        };
-        const krwPreview = expenseAmtIsKrw ? Number(expenseAmtValue) : toKrwModal(expenseAmtValue, cur.code);
-        const closeModal = () => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); setExpenseAmtIsKrw(false); };
-        const saveAmt = () => {
-          const inputAmt = expenseAmtValue;
-          const localAmt = expenseAmtIsKrw ? '' : inputAmt;
-          const krwAmt = expenseAmtIsKrw ? inputAmt : String(toKrwModal(inputAmt, cur.code));
-          let updated = [...(Array.isArray(planTimeline) ? planTimeline : [])];
-          if (isGrouped) {
-            // 왕복카드: 전체 금액을 dep에 저장, arr는 0 (반반 분배시 홀수 반올림 오차 방지)
-            const { depPlan, arrPlan } = plan._groupedTransport;
-            updated = updated.map(p => {
-              if (depPlan && String(p.id) === String(depPlan.id)) return { ...p, expenseLocal: localAmt, expenseKrw: krwAmt };
-              if (arrPlan && String(p.id) === String(arrPlan.id)) return { ...p, expenseLocal: '', expenseKrw: '0' };
-              return p;
-            });
-          } else {
-            updated = updated.map(p => String(p.id) === String(plan.id) ? { ...p, expenseLocal: localAmt, expenseKrw: krwAmt } : p);
-          }
-          setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
-          closeModal();
-          showToast("💸 금액이 저장되었습니다!");
-        };
-        const titleLabel = isGrouped ? plan._groupedTransport.name : S(plan.place);
-        const subLabel = isGrouped ? '항공권/교통 (왕복)' : `D${plan.day} · ${S(plan.theme || '기타')}`;
-        return (
-          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[10000] flex items-center justify-center p-4" onClick={closeModal}>
-            <div className={`${cardBg} p-6 rounded-3xl w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
-              <div className={`flex justify-between items-center mb-4 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                <h3 className={`font-black text-sm flex items-center gap-1.5 ${textMain}`}><Wallet className="w-4 h-4" /> 금액 입력</h3>
-                <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 text-lg"><X className="w-[1em] h-[1em] inline" /></button>
-              </div>
-              <p className={`text-[11px] font-bold mb-1 truncate ${textMuted}`}>📍 {titleLabel}</p>
-              <p className={`text-[9px] mb-4 ${textMuted}`}>{subLabel}</p>
-              <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>지출 금액</label>
-              <div className="flex items-center gap-2 mb-2">
-                {/* 화폐단위 클릭 → 원화/현지화 토글 */}
-                {cur.code !== 'KRW' ? (
-                  <button
-                    onClick={() => { setExpenseAmtIsKrw(p => !p); setExpenseAmtValue(""); }}
-                    className={`text-sm font-black px-2 py-1 rounded-lg border transition-all active:scale-95 ${expenseAmtIsKrw ? (isDarkMode ? 'bg-indigo-900 border-indigo-600 text-indigo-300' : 'bg-indigo-50 border-indigo-300 text-indigo-600') : (isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300 hover:border-indigo-500' : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-indigo-300')}`}
-                    title={expenseAmtIsKrw ? '현지 화폐로 전환' : '원화로 전환'}
-                  >{activeSym}</button>
-                ) : (
-                  <span className={`text-sm font-black ${textMuted}`}>₩</span>
-                )}
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={expenseAmtValue ? Number(expenseAmtValue).toLocaleString() : ''}
-                  onChange={e => { const raw = e.target.value.replace(/,/g, ''); if (raw === '' || /^\d*$/.test(raw)) setExpenseAmtValue(raw); }}
-                  onKeyDown={e => e.key === 'Enter' && saveAmt()}
-                  autoFocus
-                  placeholder="0"
-                  className={`flex-1 border rounded-xl p-3 text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`}
-                />
-              </div>
-              {expenseAmtValue && cur.code !== 'KRW' && !expenseAmtIsKrw && (
-                <p className={`text-[10px] font-bold text-center mb-4 ${textMuted}`}>≈ ₩{krwPreview.toLocaleString()} (자동 환산)</p>
-              )}
-              <div className="flex gap-2 mt-4">
-                <button onClick={closeModal} className={`flex-1 py-3 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
-                <button onClick={saveAmt} className="flex-1 bg-indigo-600 text-white py-3 rounded-xl text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">확인</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-      
-      {/* 기본지출 추가 모달 */}
-      {isBasicExpAddOpen && (() => {
-        const globalCur = (() => {
-          const c = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : globalManualCountry;
-          if (c === '한국') return { code: 'KRW', sym: '₩' };
-          if (c === '일본') return { code: 'JPY', sym: '¥' };
-          if (c === '중국') return { code: 'CNY', sym: '元' };
-          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
-          if (c === '영국') return { code: 'GBP', sym: '£' };
-          if (c === '태국') return { code: 'THB', sym: '฿' };
-          if (c === '베트남') return { code: 'VND', sym: '₫' };
-          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
-          if (c === '호주') return { code: 'AUD', sym: 'A$' };
-          return { code: 'USD', sym: '$' };
-        })();
-        const activeSym = basicExpAddIsKrw ? '₩' : globalCur.sym;
-        const toKrwAdd = (amt) => {
-          if (!amt || isNaN(Number(amt))) return 0;
-          if (basicExpAddIsKrw) return Number(amt);
-          const r = rates && rates['KRW'] && rates[globalCur.code] ? (rates['KRW'] / rates[globalCur.code]) : 1350;
-          return Math.round(Number(amt) * r);
-        };
-        const cats = ['항공권', '숙소', '교통', '투어', '기타'];
-        const closeAdd = () => { setIsBasicExpAddOpen(false); setBasicExpAddName(''); setBasicExpAddAmt(''); setBasicExpAddCat('기타'); setBasicExpAddIsKrw(false); };
-        const saveAdd = () => {
-          if (!basicExpAddName.trim() || !basicExpAddAmt) { showToast("항목명과 금액을 입력하세요."); return; }
-          const krwAmt = toKrwAdd(basicExpAddAmt);
-          const localAmt = basicExpAddIsKrw ? '' : basicExpAddAmt;
-          const newId = 'basic-exp-' + Date.now();
-          // planTimeline에 저장 (시간 없이, 일정 하단에 표시)
-          const newPlan = {
-            id: newId, day: basicExpAddDay, time: '99:99', // 시간 없이 맨 하단 정렬용
-            place: basicExpAddName.trim(), localName: '', features: basicExpAddCat,
-            photo: '', photos: [], country: S(globalPlanCountry), region: S(globalPlanRegion),
-            isAccommodation: false, isTransport: false, theme: basicExpAddCat,
-            expenseLocal: localAmt, expenseKrw: String(krwAmt),
-            sym: basicExpAddIsKrw ? '₩' : globalCur.sym, isBasicExp: true
-          };
-          const updatedTimeline = [...(Array.isArray(planTimeline) ? planTimeline : []), newPlan];
-          setPlanTimeline(updatedTimeline);
-          saveToDb({ plan_timeline: updatedTimeline });
-          showToast("기본지출이 추가되었습니다!");
-          closeAdd();
-        };
-        return (
-          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[10001] flex items-center justify-center p-4" onClick={closeAdd}>
-            <div className={`${cardBg} p-6 rounded-3xl w-full max-w-xs shadow-2xl animate-in zoom-in-95 duration-200`} onClick={e => e.stopPropagation()}>
-              <div className={`flex justify-between items-center mb-4 border-b pb-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                <h3 className={`font-black text-sm flex items-center gap-1.5 ${textMain}`}><ClipboardList className="w-4 h-4" /> 기본지출 추가</h3>
-                <button onClick={closeAdd} className="text-slate-400 hover:text-slate-600 text-lg"><X className="w-[1em] h-[1em] inline" /></button>
-              </div>
-              <div className="space-y-3">
-                {/* Day 선택 버튼 */}
-                <div>
-                  <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>Day 선택</label>
-                  <div className={`grid gap-1 p-1 rounded-lg border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
-                    {tripDays.map(d => (
-                      <button key={d} onClick={() => setBasicExpAddDay(d)} className={`py-1.5 text-[10px] font-bold rounded transition-all duration-200 ${basicExpAddDay === d ? 'bg-indigo-600 text-white shadow-md' : (isDarkMode ? 'text-slate-400 hover:bg-slate-600' : 'text-slate-400 hover:bg-slate-100')}`}>D{d}</button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>항목명</label>
-                  <input type="text" value={basicExpAddName} onChange={e => setBasicExpAddName(e.target.value)} placeholder="예: 편의점, 택시" autoFocus className={`w-full border rounded-xl p-3 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
-                </div>
-                <div>
-                  <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>카테고리</label>
-                  <select value={basicExpAddCat} onChange={e => setBasicExpAddCat(e.target.value)} className={`w-full border rounded-xl p-3 text-xs font-bold outline-none ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`}>
-                    {cats.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className={`text-[9px] font-bold ${textMuted} mb-1 block`}>금액</label>
-                  <div className="flex items-center gap-2">
-                    {globalCur.code !== 'KRW' ? (
-                      <button onClick={() => { setBasicExpAddIsKrw(p => !p); setBasicExpAddAmt(''); }} className={`text-sm font-black px-2 py-1 rounded-lg border transition-all active:scale-95 ${basicExpAddIsKrw ? (isDarkMode ? 'bg-indigo-900 border-indigo-600 text-indigo-300' : 'bg-indigo-50 border-indigo-300 text-indigo-600') : (isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600')}`}>{activeSym}</button>
-                    ) : (
-                      <span className={`text-sm font-black ${textMuted}`}>₩</span>
-                    )}
-                    <input type="text" inputMode="numeric" value={basicExpAddAmt ? Number(basicExpAddAmt).toLocaleString() : ''} onChange={e => { const raw = e.target.value.replace(/,/g, ''); if (raw === '' || /^\d*$/.test(raw)) setBasicExpAddAmt(raw); }} onKeyDown={e => e.key === 'Enter' && saveAdd()} placeholder="0" className={`flex-1 border rounded-xl p-3 text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
-                  </div>
-                  {basicExpAddAmt && globalCur.code !== 'KRW' && !basicExpAddIsKrw && (
-                    <p className={`text-[10px] font-bold text-center mt-1 ${textMuted}`}>≈ ₩{toKrwAdd(basicExpAddAmt).toLocaleString()} (자동 환산)</p>
-                  )}
-                </div>
-              </div>
-              <div className="flex gap-2 mt-5">
-                <button onClick={closeAdd} className={`flex-1 py-3 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>취소</button>
-                <button onClick={saveAdd} className="flex-1 bg-indigo-600 text-white py-3 rounded-xl text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all">추가</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      <DeleteTripConfirmModal
+        tripToDelete={tripToDelete} setTripToDelete={setTripToDelete} trips={trips} isDarkMode={isDarkMode} confirmDeleteTrip={confirmDeleteTrip}
+      />
+      <ExpenseModal
+        isExpenseModalOpen={isExpenseModalOpen} setIsExpenseModalOpen={setIsExpenseModalOpen}
+        expenseAmtModalPlan={expenseAmtModalPlan} setExpenseAmtModalPlan={setExpenseAmtModalPlan}
+        expenseAmtValue={expenseAmtValue} setExpenseAmtValue={setExpenseAmtValue}
+        expenseAmtIsKrw={expenseAmtIsKrw} setExpenseAmtIsKrw={setExpenseAmtIsKrw}
+        isBasicExpAddOpen={isBasicExpAddOpen} setIsBasicExpAddOpen={setIsBasicExpAddOpen}
+        basicExpAddName={basicExpAddName} setBasicExpAddName={setBasicExpAddName}
+        basicExpAddAmt={basicExpAddAmt} setBasicExpAddAmt={setBasicExpAddAmt}
+        basicExpAddCat={basicExpAddCat} setBasicExpAddCat={setBasicExpAddCat}
+        basicExpAddIsKrw={basicExpAddIsKrw} setBasicExpAddIsKrw={setBasicExpAddIsKrw}
+        basicExpAddDay={basicExpAddDay} setBasicExpAddDay={setBasicExpAddDay}
+        expenseFilterDay={expenseFilterDay} setExpenseFilterDay={setExpenseFilterDay}
+        expenseFilterTheme={expenseFilterTheme} setExpenseFilterTheme={setExpenseFilterTheme}
+        cardBg={cardBg} textMain={textMain} textMuted={textMuted} inputBg={inputBg} isDarkMode={isDarkMode}
+        planTimeline={planTimeline} setPlanTimeline={setPlanTimeline} basicExpenses={basicExpenses} setBasicExpenses={setBasicExpenses}
+        rates={rates} tripDays={tripDays} globalPlanCountry={globalPlanCountry} globalPlanRegion={globalPlanRegion} globalManualCountry={globalManualCountry}
+        travelStartDate={travelStartDate} safeMaxDay={safeMaxDay} showToast={showToast} saveToDb={saveToDb}
+      />
 
       <WeatherModal
         isOpen={isWeatherModalOpen}
@@ -4342,184 +3553,24 @@ return (
         isDarkMode={isDarkMode} textMain={textMain}
         packingList={packingList} onToggleItem={togglePackingItem}
       />
-      {isShoppingModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsShoppingModalOpen(false)}>
-          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
-             <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                <h3 className={`text-sm font-black flex items-center gap-1.5 ${textMain}`}><ShoppingBag className="w-4 h-4 text-pink-500" /> 쇼핑리스트</h3>
-                <button onClick={() => setIsShoppingModalOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg transition-colors"><X className="w-[1em] h-[1em] inline" /></button>
-             </div>
-             <div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
-                <div className="flex flex-col space-y-2 shrink-0">
-<div className="flex space-x-1.5">
-                    <select value={shoppingItemDay} onChange={e => { setShoppingItemDay(e.target.value); setShoppingLinkPlanId("manual"); }} className={`flex-[1] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[10px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
-                       <option value="">미지정</option>
-                       {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
-                    </select>
-                    <select value={shoppingItemTheme} onChange={e => setShoppingItemTheme(e.target.value)} className={`flex-[1.2] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[10px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
-                       <option value="쇼핑">쇼핑 🛍️</option>
-                       <option value="식당">식당 🍽️</option>
-                       <option value="관광지">관광지 📸</option>
-                       <option value="숙소">숙소 🏠</option>
-                       <option value="기타">기타 📌</option>
-                    </select>
-{/* [NEW] 쇼핑리스트 세부 일정 콤보박스: Day + Theme 완벽 교차 필터링 적용 */}
-                    <select value={shoppingLinkPlanId} onChange={e => setShoppingLinkPlanId(e.target.value)} className={`flex-[1.5] ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[10px] font-bold outline-none rounded-lg shadow-sm transition-colors duration-300`}>
-                       <option value="manual">➕ 수동입력</option>
-                       {planTimeline.filter(p => {
-                          const matchDay = !shoppingItemDay || String(p.day) === String(shoppingItemDay);
-                          // 이모지나 띄어쓰기로 인한 필터링 누락 방지 (순수 텍스트만 비교)
-                          const rawPlanTheme = S(p.theme || '기타').replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
-                          const rawShopTheme = S(shoppingItemTheme).replace(/[^\uAC00-\uD7A3a-zA-Z]/g, '').trim();
-                          const matchTheme = !shoppingItemTheme || shoppingItemTheme === 'all' || rawPlanTheme === rawShopTheme;
-                          return matchDay && matchTheme;
-                       }).map(p => (
-                          <option key={p.id} value={p.id}>[{p.time || '종일'}] {S(p.place)}</option>
-                       ))}
-                    </select>
-                  </div>
-<div className="flex flex-col space-y-1.5">
-                    <div className="flex space-x-1.5">
-                      <select id="shopType" className={`w-20 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-1 py-2.5 text-[10px] font-bold outline-none rounded-lg shadow-sm`}>
-                        <option value="shared">공동용 👨‍👩‍👧‍👦</option>
-                        <option value="personal">개인용 🔒</option>
-                      </select>
-                      <input type="text" placeholder="살 물건 입력 후 우측 등록버튼" value={newShoppingItem} onChange={e => setNewShoppingItem(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') document.getElementById('addShopBtn')?.click(); }} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-pink-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
-                      <button id="addShopBtn" onClick={() => {
-                        // [버그 수정] 사진만 넣어도 저장되도록 예외 처리
-                        if (!newShoppingItem.trim() && !newShoppingPhoto) {
-                          showToast("물건 이름이나 사진을 최소 하나는 입력해주세요!");
-                          return;
-                        }
-                        const itemName = newShoppingItem.trim() || "사진 첨부 아이템";
-                        let targetDay = shoppingItemDay;
-                        let targetPlace = null;
-                        let dbUpdates = {};
-                        
-                        // [수정 완료] 쇼핑 리스트 등록 시 핀 목록(currentRestaurants) 연동 제거
-                        if (shoppingLinkPlanId !== 'manual' && shoppingLinkPlanId) {
-                            const linkedPlan = planTimeline.find(p => String(p.id) === String(shoppingLinkPlanId));
-                            if (linkedPlan) {
-                                targetDay = linkedPlan.day;
-                                targetPlace = linkedPlan.place;
-                            }
-                        } else {
-                            targetPlace = itemName;
-                        }
-
-                        const isPersonal = document.getElementById('shopType')?.value === 'personal';
-                        // [NEW] 쇼핑 아이템에 img 필드 추가
-                        const newItem = { id: Date.now().toString(), text: newShoppingItem.trim(), isChecked: false, day: targetDay, theme: shoppingItemTheme, linkedPlace: targetPlace, isPersonal: isPersonal, userId: appUserId, img: newShoppingPhoto };
-                        const newList = [...shoppingList, newItem];
-                        setShoppingList(newList); 
-                        dbUpdates.shopping_list = newList;
-                        
-                        saveToDb(dbUpdates);
-                        setNewShoppingItem("");
-                        setNewShoppingPhoto(""); // 입력 완료 후 사진 초기화
-                      }} className="bg-pink-500 text-white px-3 py-2.5 rounded-lg text-[10px] font-bold shadow-sm hover:bg-pink-600 active:scale-95 transition-all">등록</button>
-                    </div>
-                    {/* [NEW] 사진 첨부 영역 */}
-                    <div className="flex space-x-1.5">
-                      <input type="file" accept="image/*" ref={shoppingFileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if(file) compressAndStoreImage(supabaseClient, appUserId, activeTripId, file, (compressed) => setNewShoppingPhoto(S(compressed))); }} className="hidden" />
-                      <button type="button" onClick={() => shoppingFileInputRef.current?.click()} className={`flex-shrink-0 px-2 py-1.5 text-[9px] font-bold rounded-lg border transition-all duration-300 flex items-center justify-center ${newShoppingPhoto ? 'bg-pink-50 border-pink-300 text-pink-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100')}`}>
-                        📸 파일
-                      </button>
-                      <input type="text" placeholder="또는 이미지 URL 복붙" value={newShoppingPhoto} onChange={e => setNewShoppingPhoto(e.target.value)} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-2 py-1.5 text-[9px] font-bold outline-none rounded-lg shadow-sm`} />
-                    </div>
-                  </div>
-<div className="flex items-center justify-between px-1 mt-2">
-                    <select value={shoppingFilterTheme} onChange={e => setShoppingFilterTheme(e.target.value)} className={`w-24 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-1 text-[9px] font-bold outline-none rounded-md shadow-sm transition-colors duration-300`}>
-                       <option value="all">테마 전체</option>
-                       <option value="쇼핑">쇼핑</option>
-                       <option value="식당">식당</option>
-                       <option value="관광지">관광지</option>
-                       <option value="숙소">숙소</option>
-                       <option value="기타">기타</option>
-                    </select>
-                    <label className="flex items-center space-x-1.5 cursor-pointer group">
-                      <input type="checkbox" checked={showAllShopping} onChange={e => setShowAllShopping(e.target.checked)} className="accent-pink-500 w-3 h-3 cursor-pointer" />
-                      <span className={`text-[10px] font-bold ${textMuted}`}>모든 Day 보기</span>
-                    </label>
-                  </div>
-                </div>
-
-<div className="flex flex-wrap gap-2 overflow-y-auto custom-scrollbar flex-1 pb-2 content-start">
-                  {(() => {
-                    {/* [교차 필터링 핵심 로직] */}
-                    const filteredList = shoppingList.filter(item => {
-                      const dayMatch = showAllShopping || String(item.day) === String(shoppingItemDay || "");
-                      const themeMatch = shoppingFilterTheme === 'all' || item.theme === shoppingFilterTheme;
-                      return dayMatch && themeMatch;
-                    });
-                    
-                    if (shoppingList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">기록된 항목이 없습니다.</p>;
-                    if (filteredList.length === 0) return <p className="text-center text-xs text-slate-400 py-10 font-bold w-full">해당 Day와 테마에 맞는 정보가 없습니다.</p>;
-
-                    return filteredList.map(item => {
-                      const isEditing = editingItemId === item.id;
-                      return (
-                       <div 
-                         key={item.id} 
-                         onMouseDown={() => startLongPress(item.id)}
-                         onMouseUp={cancelLongPress}
-                         onTouchStart={() => startLongPress(item.id)}
-                         onTouchEnd={cancelLongPress}
-                         className={`group cursor-pointer flex flex-col justify-center px-3 py-2 rounded-xl border shadow-sm transition-all duration-300 w-full ${isEditing ? 'border-pink-500 ring-2 ring-pink-500 bg-white dark:bg-slate-800' : (item.isChecked ? (isDarkMode ? 'bg-slate-700 text-slate-400 border-slate-600 line-through' : 'bg-slate-200 border-slate-300 text-slate-500 line-through') : (isDarkMode ? 'bg-pink-900/30 border-pink-500/50 text-pink-300 hover:bg-pink-900/50' : 'bg-pink-50 border-pink-200 text-pink-700 hover:bg-pink-100'))}`} 
-                         onClick={() => {
-                            if (isEditing) return;
-                            const newList = shoppingList.map(s => s.id === item.id ? { ...s, isChecked: !s.isChecked } : s);
-                            setShoppingList(newList); saveToDb({ shopping_list: newList });
-                         }}
-                       >
-                         {isEditing ? (
-                           <div className="space-y-2 py-1 no-recolor" onClick={e => e.stopPropagation()}>
-                             <input 
-                               autoFocus
-                               className="w-full text-xs font-black p-1 border-b border-pink-300 bg-transparent outline-none" 
-                               value={item.text} 
-                               onChange={(e) => {
-                                 const newList = shoppingList.map(s => s.id === item.id ? { ...s, text: e.target.value } : s);
-                                 setShoppingList(newList);
-                               }}
-                             />
-                             <div className="flex space-x-2">
-                               <select 
-                                 className="flex-1 text-[10px] p-1 rounded bg-pink-50 border border-pink-200"
-                                 value={item.theme}
-                                 onChange={(e) => {
-                                   const newList = shoppingList.map(s => s.id === item.id ? { ...s, theme: e.target.value } : s);
-                                   setShoppingList(newList);
-                                 }}
-                               >
-                                 {['쇼핑', '식당', '디저트', '관광지', '숙소', '기타'].map(t => <option key={t} value={t}>{t}</option>)}
-                               </select>
-                               <button 
-                                 onClick={() => { setEditingItemId(null); saveToDb({ shopping_list: shoppingList }); }}
-                                 className="bg-pink-500 text-white px-3 py-1 rounded text-[10px] font-black"
-                               >완료</button>
-                             </div>
-                           </div>
-                         ) : (
-                           <>
-                             <div className="flex items-center justify-between w-full">
-                               <span className="text-[11px] font-bold truncate max-w-[200px]">{item.text}</span>
-                               <button onClick={(e) => { e.stopPropagation(); const newList = shoppingList.filter(s => s.id !== item.id); setShoppingList(newList); saveToDb({ shopping_list: newList }); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-pink-400 hover:text-pink-600'}`}><X className="w-[1em] h-[1em] inline" /></button>
-                             </div>
-                             <div className="flex items-center space-x-1 mt-0.5 opacity-60">
-                               <span className="text-[8px] font-bold bg-black/5 px-1 rounded">{item.linkedPlace ? `📍 ${item.linkedPlace}` : (item.day ? `Day ${item.day}` : '미지정')}</span>
-                               <span className="text-[8px] font-bold bg-black/5 px-1 rounded">{item.theme || '기타'}</span>
-                             </div>
-                           </>
-                         )}
-                       </div>
-                    )});
-                  })()}
-                </div>
-             </div>
-          </div>
-        </div>
-      )}
+      <ShoppingEditModal
+        isOpen={isShoppingModalOpen}
+        onClose={() => setIsShoppingModalOpen(false)}
+        isDarkMode={isDarkMode} textMuted={textMuted} inputBg={inputBg}
+        shoppingItemDay={shoppingItemDay} setShoppingItemDay={setShoppingItemDay}
+        shoppingLinkPlanId={shoppingLinkPlanId} setShoppingLinkPlanId={setShoppingLinkPlanId}
+        tripDays={tripDays} shoppingItemTheme={shoppingItemTheme} setShoppingItemTheme={setShoppingItemTheme}
+        planTimeline={planTimeline}
+        newShoppingItem={newShoppingItem} setNewShoppingItem={setNewShoppingItem}
+        newShoppingPhoto={newShoppingPhoto} setNewShoppingPhoto={setNewShoppingPhoto}
+        showToast={showToast} appUserId={appUserId} saveToDb={saveToDb}
+        shoppingList={shoppingList} setShoppingList={setShoppingList}
+        shoppingFileInputRef={shoppingFileInputRef} supabaseClient={supabaseClient} activeTripId={activeTripId}
+        shoppingFilterTheme={shoppingFilterTheme} setShoppingFilterTheme={setShoppingFilterTheme}
+        showAllShopping={showAllShopping} setShowAllShopping={setShowAllShopping}
+        editingItemId={editingItemId} setEditingItemId={setEditingItemId}
+        onStartLongPress={startLongPress} onCancelLongPress={cancelLongPress}
+      />
 
       <ShoppingDashboardModal
         isOpen={isDashboardShoppingOpen}
@@ -4540,1320 +3591,79 @@ return (
         saveToDb={saveToDb} onDeleteItem={deletePackingItem}
       />
 
-      {/* 일정 상세 모달 */}
-      {selectedPlanInfo && (
-        <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPlanInfo(null)}>
-          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
-            {selectedPlanInfo.photo && (
-              <div className="w-full h-48 relative cursor-pointer" onClick={() => openPhotoViewer(selectedPlanInfo.photos && selectedPlanInfo.photos.length > 0 ? selectedPlanInfo.photos : [selectedPlanInfo.photo])}>
-                <img src={selectedPlanInfo.photo} className="w-full h-full object-cover" alt="" />
-                {selectedPlanInfo.time && selectedPlanInfo.time !== '99:99' && (
-                  <div className="absolute top-3 left-3 bg-indigo-600 text-white text-xs font-bold px-2 py-1 rounded shadow-md">
-                    {S(selectedPlanInfo.time)}
-                  </div>
-                )}
-                {selectedPlanInfo.photos && selectedPlanInfo.photos.length > 1 && (
-                  <div className="absolute top-3 right-3 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md">📷 {selectedPlanInfo.photos.length}</div>
-                )}
-                <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors duration-200 flex items-center justify-center">
-                  <span className="opacity-0 hover:opacity-100 text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full transition-opacity duration-200">🔍 크게 보기</span>
-                </div>
-              </div>
-            )}
-            <div className="p-5 flex flex-col">
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="text-lg font-black text-slate-900 dark:text-slate-100 leading-tight">
-                   {S(selectedPlanInfo.place)} {selectedPlanInfo.isAccommodation ? '🏠' : ''}
-                </h3>
-                {/* 사진 없을 때만 우측에 시간 뱃지 표시 (사진 있을 때는 사진 위 좌측에 이미 표시됨) */}
-                {!selectedPlanInfo.photo && selectedPlanInfo.time && selectedPlanInfo.time !== '99:99' && (
-                  <span className="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold px-2 py-1 rounded shadow-sm shrink-0 whitespace-nowrap ml-2">{S(selectedPlanInfo.time)}</span>
-                )}
-              </div>
-              
-              {/* 렌터카 대여/반납: 장소 복사 */}
-              {(selectedPlanInfo.id === 'trans_rental_dep' || selectedPlanInfo.id === 'trans_rental_arr') && selectedPlanInfo.rentalMeta ? (() => {
-                const meta = selectedPlanInfo.rentalMeta;
-                const isDep = selectedPlanInfo.id === 'trans_rental_dep';
-                const mainPlace = isDep ? meta.depPlace : meta.arrPlace;
-                const subPlace = isDep ? meta.arrPlace : meta.depPlace;
-                const mainLabel = isDep ? '🚗 대여장소' : '🏁 반납장소';
-                const subLabel = isDep ? '🏁 반납장소' : '🚗 대여장소';
-                return (
-                  <div className="flex flex-col gap-1.5 mb-3">
-                    {mainPlace && (
-                      <div className="flex items-center text-sm font-bold text-indigo-500 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, mainPlace)}>
-                        <span className="mr-2">{mainLabel}: {mainPlace}</span>
-                        <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800 shrink-0">복사</span>
-                      </div>
-                    )}
-                    {subPlace && (
-                      <div className="flex items-center text-xs font-bold text-slate-400 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, subPlace)}>
-                        <span className="mr-2">{subLabel}: {subPlace}</span>
-                        <span className="text-[10px] bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-600 shrink-0">복사</span>
-                      </div>
-                    )}
-                    {meta.carType && <p className="text-xs text-slate-500 font-bold">🚙 {meta.carType}</p>}
-                    {meta.company && <p className="text-xs text-slate-400 font-bold">🏢 {meta.company}</p>}
-                  </div>
-                );
-              })() : selectedPlanInfo.localName && (
-                <div className="flex items-center text-sm font-bold text-indigo-500 mb-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, selectedPlanInfo.localName)}>
-                  <span className="mr-2">📍 {S(selectedPlanInfo.localName)}</span>
-                  <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800">복사</span>
-                </div>
-              )}
-              
-<div className="flex justify-between items-center mt-3 mb-1">
-              <span className="text-[11px] font-black text-slate-700 dark:text-slate-300">📝 기록된 메모</span>
-              <div className="flex space-x-1.5">
-                {/* [삭제 버튼] 입력된 금액이 있을 때만 삭제 버튼 노출 */}
-                {selectedPlanInfo.expenseLocal && !isSettleMode && (
-                   <button onClick={() => {
-                     const updated = planTimeline.map(p => String(p.id) === String(selectedPlanInfo.id) ? { ...p, expenseLocal: "", expenseKrw: "" } : p);
-                     setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
-                     setSelectedPlanInfo({ ...selectedPlanInfo, expenseLocal: "", expenseKrw: "" });
-                     showToast("정산 내역이 삭제되었습니다.");
-                   }} className="bg-slate-100 text-slate-400 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 px-2 py-1 rounded-md text-[9px] font-bold hover:text-rose-500 transition-all active:scale-95 inline-flex items-center gap-1"><Trash2 className="w-3 h-3" /> 삭제</button>
-                )}
-<button onClick={() => {
-                  setIsSettleMode(!isSettleMode);
-                  setSettleLocal(selectedPlanInfo.expenseLocal || "");
-                  setSettleKrw(selectedPlanInfo.expenseKrw || "");
-                  setIsDiaryOpen(false); // 정산 열 때 일기는 닫기
-                }} className="bg-rose-50 text-rose-500 border border-rose-200 dark:bg-rose-900/30 dark:border-rose-800 dark:text-rose-400 px-2 py-1 rounded-md text-[9px] font-bold shadow-sm hover:bg-rose-100 transition-all active:scale-95">
-                  {isSettleMode ? '취소' : '💸 정산'}
-                </button>
-                <button onClick={() => {
-                  if (isDiaryOpen) {
-                    // 닫을 때 현재 작성 중인 내용 자동 저장
-                    const safeReviewText = diaryReview ? String(diaryReview).trim() : "";
-                    const updatedTimeline = (planTimeline || []).map(p =>
-                      String(p.id) === String(selectedPlanInfo.id)
-                        ? { ...p, rating: Number(diaryRating) || 0, review: safeReviewText }
-                        : p
-                    );
-                    const updatedRests = (currentRestaurants || []).map(r =>
-                      S(r.name).trim() === S(selectedPlanInfo.place).trim()
-                        ? { ...r, rating: Number(diaryRating) || 0, review: safeReviewText }
-                        : r
-                    );
-                    setPlanTimeline(updatedTimeline);
-                    setCurrentRestaurants(updatedRests);
-                    setSelectedPlanInfo(prev => ({ ...prev, rating: diaryRating, review: safeReviewText }));
-                    saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests });
-                    setIsDiaryOpen(false);
-                  } else {
-                    // 열 때 state 초기화 후 현재 일정 값 로드
-                    setDiaryRating(0);
-                    setDiaryReview("");
-                    setDiaryRating(selectedPlanInfo.rating || 0);
-                    setDiaryReview(selectedPlanInfo.review || "");
-                    setIsSettleMode(false);
-                    setIsDiaryOpen(true);
-                  }
-                }} className={`px-2 py-1 rounded-md text-[9px] font-bold shadow-sm transition-all active:scale-95 border ${isDiaryOpen ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
-                  {isDiaryOpen ? '닫기' : '📝 일기'}
-                </button>
-              </div>
-            </div>
+      <PlanDetailModal
+        selectedPlanInfo={selectedPlanInfo} setSelectedPlanInfo={setSelectedPlanInfo} cardBg={cardBg} isDarkMode={isDarkMode} openPhotoViewer={openPhotoViewer} handleCopyLocalName={handleCopyLocalName}
+        planTimeline={planTimeline} setPlanTimeline={setPlanTimeline} saveToDb={saveToDb}
+        isSettleMode={isSettleMode} setIsSettleMode={setIsSettleMode} settleLocal={settleLocal} setSettleLocal={setSettleLocal} settleKrw={settleKrw} setSettleKrw={setSettleKrw}
+        isDiaryOpen={isDiaryOpen} setIsDiaryOpen={setIsDiaryOpen} diaryReview={diaryReview} setDiaryReview={setDiaryReview} diaryRating={diaryRating} setDiaryRating={setDiaryRating}
+        currentRestaurants={currentRestaurants} setCurrentRestaurants={setCurrentRestaurants} showToast={showToast} rates={rates}
+      />
 
-            {/* 메모 영역 (정산/일기창이 모두 닫혀있을 때만 표시) */}
-            {!isSettleMode && !isDiaryOpen && (
-              <div className="animate-in fade-in duration-300">
-                {selectedPlanInfo.features ? (
-                  <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">{S(selectedPlanInfo.features)}</p>
-                ) : (
-                  <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
-                )}
-                {/* [추가] 저장된 별점이 있다면 표시 */}
-                {selectedPlanInfo.rating > 0 && (
-                  <div className="mt-2 flex items-center space-x-1 px-1">
-                    <span className="text-yellow-400">⭐</span>
-                    <span className="text-xs font-black text-slate-700 dark:text-slate-300">{selectedPlanInfo.rating}점</span>
-                    {selectedPlanInfo.review && <span className="text-[10px] text-slate-400 truncate ml-2">"{selectedPlanInfo.review}"</span>}
-                  </div>
-                )}
-              </div>
-            )}
+      <PinDetailModal
+        selectedPinInfo={selectedPinInfo} setSelectedPinInfo={setSelectedPinInfo} cardBg={cardBg} setViewPhoto={setViewPhoto} handleCopyLocalName={handleCopyLocalName} openEditPinModal={openEditPinModal}
+      />
 
-            {/* --- 여행일기 작성 영역 --- */}
-            {isDiaryOpen && (
-              <div className={`mt-3 p-3 rounded-xl border shadow-inner animate-in slide-in-from-top-2 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-indigo-50/30 border-indigo-100'}`}>
-                <div className="flex flex-col space-y-3">
-                  {/* 0.5점 단위 별점 UI (스와이프/드래그 지원) */}
-                  <div className="flex flex-col space-y-1">
-                    <label className="text-[9px] font-black text-indigo-500">이 장소는 어땠나요? ✨</label>
-                    <div className="flex items-center">
-                      <div 
-                        className="flex items-center space-x-1.5 cursor-pointer touch-none"
-                        style={{ touchAction: 'none' }}
-                        onPointerDown={(e) => {
-                          e.currentTarget.setPointerCapture(e.pointerId);
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-                          setDiaryRating(Math.round((x / rect.width) * 10) / 2);
-                        }}
-                        onPointerMove={(e) => {
-                          if (e.buttons !== 1) return; // 클릭/터치 유지 상태일 때만 작동
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-                          setDiaryRating(Math.round((x / rect.width) * 10) / 2);
-                        }}
-                        onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
-                        onPointerCancel={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
-                      >
-                        {[1, 2, 3, 4, 5].map((num) => (
-                          <div key={num} className="relative w-7 h-7 pointer-events-none">
-                            {/* 회색 배경 별 */}
-                            <svg className={`w-7 h-7 ${isDarkMode ? 'text-slate-700' : 'text-slate-200'}`} fill="currentColor" viewBox="0 0 24 24">
-                              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
-                            </svg>
-                            {/* 노란색 채우기 별 (조건부 폭 조절) */}
-                            <div className="absolute top-0 left-0 h-full overflow-hidden" 
-                                 style={{ width: diaryRating >= num ? '100%' : (diaryRating >= num - 0.5 ? '50%' : '0%') }}>
-                              <svg className="w-7 h-7 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
-                              </svg>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <span className="ml-3 text-sm font-black text-indigo-600 w-8 text-right">{diaryRating}점</span>
-                    </div>
-                  </div>
-                  {/* 소감 입력창 */}
-                  <textarea 
-                    placeholder="여행의 소중한 기억을 한 줄로 남겨보세요!"
-                    value={diaryReview}
-                    onChange={e => setDiaryReview(e.target.value)}
-                    className={`w-full p-2.5 text-xs font-bold rounded-lg border outline-none h-20 resize-none transition-all ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-indigo-200 focus:border-indigo-500 shadow-sm'}`}
-                  />
-                  <button onClick={() => {
-// 1. 일정(Timeline) 데이터 업데이트
-                    // [버그 수정 1] 여행 소감(review) 텍스트 명시적 문자열 캐싱 및 DB Payload 누락 방지
-                    const safeReviewText = diaryReview ? String(diaryReview).trim() : "";
-                    
-                    const updatedTimeline = (planTimeline || []).map(p => 
-                      String(p.id) === String(selectedPlanInfo.id) 
-                        ? { ...p, rating: Number(diaryRating) || 0, review: safeReviewText } 
-                        : p
-                    );
-                    
-                    // 2. 장소(Pins) 데이터 업데이트 (장소명이 일치하는 경우 연동)
-                    const updatedRests = (currentRestaurants || []).map(r => 
-                      S(r.name).trim() === S(selectedPlanInfo.place).trim() 
-                        ? { ...r, rating: Number(diaryRating) || 0, review: safeReviewText } 
-                        : r
-                    );
+      <TripModal
+        tripModal={tripModal} setTripModal={setTripModal} cardBg={cardBg} isDarkMode={isDarkMode} inputBg={inputBg} submitTripModal={submitTripModal} isSubmittingTrip={isSubmittingTrip}
+      />
 
-                    // 3. 리액트 상태 즉시 반영
-                    setPlanTimeline(updatedTimeline);
-                    setCurrentRestaurants(updatedRests);
-                    
-                    // 4. 현재 열려있는 상세 모달 정보도 즉시 갱신
-                    setSelectedPlanInfo(prev => ({ ...prev, rating: diaryRating, review: diaryReview }));
+      <TransportModal
+        isOpen={isTransportModalOpen} onClose={() => setIsTransportModalOpen(false)}
+        isDarkMode={isDarkMode} textMuted={textMuted} inputBg={inputBg}
+        transType={transType} setTransType={setTransType} transDir={transDir} setTransDir={setTransDir}
+        modalTransData={modalTransData} setModalTransData={setModalTransData} tripDays={tripDays} handleTimeInput={handleTimeInput}
+        rentalCarData={rentalCarData} setRentalCarData={setRentalCarData} rentalFileInputRef={rentalFileInputRef}
+        supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId} handleSaveTransport={handleSaveTransport}
+      />
 
-                    // 5. DB 저장 (배열 내부 데이터이므로 배열 전체를 전달)
-                    saveToDb({ 
-                      plan_timeline: updatedTimeline, 
-                      current_restaurants: updatedRests 
-                    });
+      <EditPlanModal
+        editingPlan={editingPlan} setEditingPlan={setEditingPlan} isDarkMode={isDarkMode} appTheme={appTheme} textMuted={textMuted} inputBg={inputBg}
+        tripDays={tripDays} handleTimeInput={handleTimeInput} editFileInputRef={editFileInputRef} handlePlanPhotoUpload={handlePlanPhotoUpload}
+        supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId}
+        planTimeline={planTimeline} setPlanTimeline={setPlanTimeline} currentRestaurants={currentRestaurants} setCurrentRestaurants={setCurrentRestaurants}
+        setDisplayCityName={setDisplayCityName} saveToDb={saveToDb} showToast={showToast}
+      />
 
-                    setIsDiaryOpen(false);
-                    showToast("기록이 소중하게 저장되었습니다! 📝");
-                  }} className="w-full bg-indigo-600 text-white py-2.5 rounded-xl font-black text-xs shadow-md hover:bg-indigo-700 active:scale-95 transition-all">
-                    일기 저장하기 ✨
-                  </button>
-                </div>
-              </div>
-            )}
+      <AddPlaceModal
+        isOpen={isAddPlaceModalOpen} onClose={() => setIsAddPlaceModalOpen(false)}
+        cardBg={cardBg} isDarkMode={isDarkMode} textMuted={textMuted} inputBg={inputBg} clickedLocation={clickedLocation}
+        newManualTheme={newManualTheme} setNewManualTheme={setNewManualTheme}
+        newManualPlaceName={newManualPlaceName} setNewManualPlaceName={setNewManualPlaceName}
+        newManualLocalName={newManualLocalName} setNewManualLocalName={setNewManualLocalName}
+        newManualFeature={newManualFeature} setNewManualFeature={setNewManualFeature}
+        pinLinkDay={pinLinkDay} setPinLinkDay={setPinLinkDay} pinLinkPlanId={pinLinkPlanId} setPinLinkPlanId={setPinLinkPlanId}
+        newManualTime={newManualTime} setNewManualTime={setNewManualTime} handleTimeInput={handleTimeInput}
+        tripDays={tripDays} planTimeline={planTimeline} showToast={showToast}
+        newManualPhotos={newManualPhotos} setNewManualPhotos={setNewManualPhotos} setNewManualPhoto={setNewManualPhoto}
+        newManualIsAccommodation={newManualIsAccommodation} setNewManualIsAccommodation={setNewManualIsAccommodation}
+        newManualAccommodationDays={newManualAccommodationDays} setNewManualAccommodationDays={setNewManualAccommodationDays}
+        newManualIsLandmark={newManualIsLandmark} setNewManualIsLandmark={setNewManualIsLandmark}
+        manualFileInputRef={manualFileInputRef} supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId}
+        handleManualPlaceAdd={handleManualPlaceAdd}
+      />
 
-            {isSettleMode ? (
-              <div className={`mt-3 p-3 rounded-xl border shadow-inner animate-in slide-in-from-top-2 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <div className="flex space-x-2 mb-2">
-                 <div className="flex-1">
-                    <label className="text-[9px] font-bold text-slate-500 mb-1 flex justify-between"><span>현지 지출액</span><span className="text-indigo-400 font-black">자동환전 ✨</span></label>
-                    <input type="text" inputMode="numeric" placeholder="금액 입력" value={settleLocal ? Number(settleLocal).toLocaleString() : ''} onChange={e => {
-                      const raw = e.target.value.replace(/,/g, '');
-                      if (raw !== '' && !/^\d*$/.test(raw)) return;
-                      setSettleLocal(raw);
-                      if(raw && !isNaN(raw)) {
-                        let curCode = 'USD';
-                        const c = selectedPlanInfo.country;
-                        if (c === '한국') curCode = 'KRW';
-                        else if (c === '일본') curCode = 'JPY';
-                        else if (['프랑스', '이탈리아', '스페인', '독일'].includes(c)) curCode = 'EUR';
-                        else if (c === '중국') curCode = 'CNY';
-                        else if (c === '영국') curCode = 'GBP';
-                        else if (c === '호주') curCode = 'AUD';
+      <MyPinsModal
+        isOpen={isMyPinsModalOpen} onClose={() => setIsMyPinsModalOpen(false)}
+        cardBg={cardBg} isDarkMode={isDarkMode}
+        myPinsFilter={myPinsFilter} setMyPinsFilter={setMyPinsFilter} tripDays={tripDays}
+        myPinsThemeFilter={myPinsThemeFilter} setMyPinsThemeFilter={setMyPinsThemeFilter}
+        filteredMyPins={filteredMyPins} planTimeline={planTimeline}
+        setClickedLocation={setClickedLocation} setNewManualPlaceName={setNewManualPlaceName} setNewManualLocalName={setNewManualLocalName} setNewManualFeature={setNewManualFeature}
+        setNewManualPhoto={setNewManualPhoto} setNewManualIsAccommodation={setNewManualIsAccommodation} setPinLinkDay={setPinLinkDay} setPinLinkPlanId={setPinLinkPlanId}
+        setNewManualTime={setNewManualTime} setIsAddPlaceModalOpen={setIsAddPlaceModalOpen}
+        setViewPhoto={setViewPhoto} pinQuickView={pinQuickView} setPinQuickView={setPinQuickView}
+        activeTab={activeTab} setActiveTab={setActiveTab} isKakaoMap={isKakaoMap} kakaoMapInstanceRef={kakaoMapInstanceRef} mapInstanceRef={mapInstanceRef} pendingMapFlyRef={pendingMapFlyRef}
+        setMovingPinId={setMovingPinId} setIsPinMode={setIsPinMode} showToast={showToast} openEditPinModal={openEditPinModal}
+        safeCurrentRestaurants={safeCurrentRestaurants} setCurrentRestaurants={setCurrentRestaurants} saveToDb={saveToDb} handleCopyLocalName={handleCopyLocalName}
+      />
 
-                        const rate = rates[curCode] || 1;
-                        const krwRate = rates['KRW'] || 1350;
-                        const krwVal = raw * (krwRate / rate);
-                        setSettleKrw(Math.round(krwVal));
-                      } else { setSettleKrw(""); }
-                    }} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-[9px] font-bold text-slate-500 mb-1 block">원화 환산액(₩)</label>
-                    <input type="text" inputMode="numeric" placeholder="자동계산" value={settleKrw ? Number(settleKrw).toLocaleString() : ''} onChange={e => { const raw = e.target.value.replace(/,/g, ''); if (raw === '' || /^\d*$/.test(raw)) setSettleKrw(raw); }} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
-                  </div>
-                </div>
-                <button onClick={() => {
-                  const updatedTimeline = planTimeline.map(p => String(p.id) === String(selectedPlanInfo.id) ? { ...p, expenseLocal: settleLocal, expenseKrw: settleKrw } : p);
-                  setPlanTimeline(updatedTimeline);
-                  console.log("💸 [DB 저장] 정산 업데이트 데이터:", { plan_timeline: updatedTimeline });
-                  saveToDb({ plan_timeline: updatedTimeline });
-                  setSelectedPlanInfo({ ...selectedPlanInfo, expenseLocal: settleLocal, expenseKrw: settleKrw });
-                  setIsSettleMode(false);
-                  showToast("정산 금액이 완벽하게 저장되었습니다! 💸");
-                }} className="w-full bg-rose-500 text-white py-2 rounded-md text-xs font-bold shadow-sm hover:bg-rose-600 transition-colors active:scale-95">저장하기</button>
-              </div>
-            ) : (
-              (selectedPlanInfo.expenseLocal || selectedPlanInfo.expenseKrw) && (
-                /* [통합 지출 카드] 지출 내역과 메모 중복을 하나로 합쳤습니다 */
-                <div className={`mt-3 p-3 rounded-xl border animate-in fade-in ${isDarkMode ? 'bg-rose-900/20 border-rose-800' : 'bg-rose-50 border-rose-100'}`}>
-                  <h4 className="text-[11px] font-black text-rose-500 mb-1.5 flex justify-between items-center">
-                    <span>💸 지출 내역</span>
-                    {selectedPlanInfo.theme && <span className="text-[9px] bg-rose-100 text-rose-600 dark:bg-rose-800 dark:text-rose-300 px-1.5 py-0.5 rounded shadow-sm">{selectedPlanInfo.theme}</span>}
-                  </h4>
-                  <div className="flex justify-between items-center text-xs font-bold text-rose-600 dark:text-rose-400">
-                    <span>현지: {(() => {
-                        const c = selectedPlanInfo.country;
-                        let sym = '$';
-                        if (c === '한국') sym = '₩'; 
-                        else if (c === '일본' || c === '중국') sym = '¥'; 
-                        else if (['프랑스','이탈리아','스페인','독일'].includes(c)) sym = '€'; 
-                        else if (c === '영국') sym = '£';
-                        return `${sym}${Number(selectedPlanInfo.expenseLocal).toLocaleString()}`;
-                    })()}</span>
-                    <span>원화: ₩{Number(selectedPlanInfo.expenseKrw).toLocaleString()}</span>
-                  </div>
-                </div>
-              )
-            )}
-              
-              <button onClick={() => setSelectedPlanInfo(null)} className="mt-5 w-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors duration-300">닫기</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedPinInfo && (
-        <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPinInfo(null)}>
-          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
-            {selectedPinInfo.img && !S(selectedPinInfo.img).includes("unsplash") && (
-              <div className="w-full h-48 relative cursor-pointer" onClick={e => { e.stopPropagation(); const imgs = Array.isArray(selectedPinInfo.imgs) && selectedPinInfo.imgs.length > 0 ? selectedPinInfo.imgs : (Array.isArray(selectedPinInfo.photos) && selectedPinInfo.photos.length > 0 ? selectedPinInfo.photos : [selectedPinInfo.img]); setViewPhoto({ imgs, idx: 0 }); }}>
-                <img src={selectedPinInfo.img} className="w-full h-full object-cover" alt="" />
-                {selectedPinInfo.isAccommodation && <div className="absolute top-3 left-3 bg-yellow-400 text-white text-xs font-bold px-2 py-1 rounded shadow-md">숙소</div>}
-                <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors flex items-center justify-center">
-                  <span className="opacity-0 hover:opacity-100 text-white text-2xl drop-shadow">🔍</span>
-                </div>
-              </div>
-            )}
-            <div className="p-5 flex flex-col">
-              <h3 className="text-lg font-black text-slate-900 mb-2">{S(selectedPinInfo.name)} {selectedPinInfo.isAccommodation && !selectedPinInfo.img ? '🏠' : ''}</h3>
-              
-              {selectedPinInfo.localName && (
-                <div className="flex items-center text-sm font-bold text-indigo-500 mb-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={(e) => handleCopyLocalName(e, selectedPinInfo.localName)}>
-                  <span className="mr-2">📍 {S(selectedPinInfo.localName)}</span>
-                  <span className="text-[10px] bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">복사</span>
-                </div>
-              )}
-              
-              {selectedPinInfo.signature && S(selectedPinInfo.signature) !== "직접 추가한 장소" ? (
-                <p className="text-sm text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">{S(selectedPinInfo.signature)}</p>
-              ) : (
-                <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
-              )}
-              
-              {selectedPinInfo.lat && selectedPinInfo.lng && (
-                <button onClick={() => openGoogleMapsNav(selectedPinInfo.lat, selectedPinInfo.lng, 'driving')} className="w-full mt-4 bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2">
-                  <span>🧭</span><span>구글 네비게이션으로 길 안내</span>
-                </button>
-              )}
-              <div className="flex space-x-2 mt-2">
-                <button onClick={() => {
-                  openEditPinModal(selectedPinInfo);
-                  setSelectedPinInfo(null);
-                }} className="flex-1 bg-indigo-100 text-indigo-600 py-3 rounded-xl font-bold text-sm hover:bg-indigo-200 transition-colors duration-300">정보 수정</button>
-                <button onClick={() => setSelectedPinInfo(null)} className="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors duration-300">닫기</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {tripModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 z-[9998] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300">
-          <div className={`${cardBg} w-full max-w-xs p-5 flex flex-col animate-in zoom-in-95 z-[9999] duration-300`} onClick={e => e.stopPropagation()}>
-            <div className={`flex items-center justify-between pb-3 border-b mb-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h2 className="text-sm font-black text-indigo-500 flex items-center gap-1.5">{tripModal.mode === 'add' ? <><Plane className="w-4 h-4" /> 새 여행 만들기</> : <><Pencil className="w-4 h-4" /> 여행 이름 변경</>}</h2>
-              <button onClick={() => setTripModal({ ...tripModal, isOpen: false })} className="transition-colors hover:text-slate-500"><X className="w-[1em] h-[1em] inline" /></button>
-            </div>
-            <input 
-              type="text" 
-              value={S(tripModal.name)} 
-              onChange={e => setTripModal({ ...tripModal, name: e.target.value })} 
-              placeholder="여행 이름을 입력하세요" 
-              className={`w-full ${inputBg} p-3 text-xs font-bold outline-none mb-4 transition-all duration-300 focus:ring-2 focus:ring-indigo-500 rounded`}
-              autoFocus
-              onKeyDown={e => e.key === 'Enter' && submitTripModal()}
-            />
-            <button onClick={submitTripModal} disabled={isSubmittingTrip} className={`w-full bg-indigo-600 text-white py-2.5 rounded-lg font-bold text-xs shadow-md transition-all duration-300 ${isSubmittingTrip ? 'opacity-50 cursor-not-allowed' : 'hover:bg-indigo-700 active:scale-95'}`}>확인</button>
-          </div>
-        </div>
-      )}
-
-      {isTransportModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsTransportModalOpen(false)}>
-          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
-            <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-              <div className="flex items-center space-x-2">
-                <span className="text-indigo-500 text-sm">✈️</span>
-                <h3 className="text-xs font-bold">교통권 등록</h3>
-              </div>
-              <button onClick={() => setIsTransportModalOpen(false)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}><X className="w-[1em] h-[1em] inline" /></button>
-            </div>
-            
-            <div className="p-4 space-y-3">
-              <div className={`grid grid-cols-4 gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} p-1 rounded-lg`}>
-                 <button onClick={() => {setTransType('flight'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'flight' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>✈️ 항공권</button>
-                 <button onClick={() => {setTransType('train'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'train' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚆 기차</button>
-                 <button onClick={() => {setTransType('bus'); setTransDir('outbound');}} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'bus' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚌 버스</button>
-                 <button onClick={() => setTransType('rental')} className={`py-1.5 text-[10px] font-bold rounded transition-colors duration-300 ${transType === 'rental' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>🚗 렌터카</button>
-              </div>
-
-              {transType !== 'rental' && (
-              <div className="flex space-x-2 items-center">
-                 <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>가는 편 (Outbound)</button>
-                 <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'inbound' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>오는 편 (Inbound)</button>
-                 <button onClick={() => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...initialTransState}}}))} className="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-500 rounded border hover:bg-slate-200 transition-colors duration-300">초기화</button>
-              </div>
-              )}
-
-              {transType !== 'rental' ? (
-              <>
-              <div className="flex flex-col space-y-1 animate-in fade-in duration-300">
-                 <label className={`text-[9px] font-bold ${textMuted} px-1`}>일차 선택 (Day)</label>
-                 <select value={modalTransData[transType][transDir].day} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], day: parseInt(e.target.value)}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold outline-none rounded-lg cursor-pointer transition-all duration-300`}>
-                    {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
-                 </select>
-              </div>
-
-              <div className="flex space-x-2">
-                <div className="flex flex-col space-y-1 w-1/3">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>{transType === 'flight' ? '항공사' : (transType === 'train' ? '기차 종류' : '버스 회사')}</label>
-                  <input type="text" placeholder={transType === 'flight' ? '대한항공' : 'KTX, 고속버스'} value={modalTransData[transType][transDir].airline} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], airline: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
-                </div>
-                <div className="flex flex-col space-y-1 w-1/3">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>{transType === 'flight' ? '항공편명' : '편명/번호'}</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'KE001' : '102호'} value={modalTransData[transType][transDir].flightNum} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], flightNum: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
-                </div>
-                <div className="flex flex-col space-y-1 w-1/3">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>좌석번호</label>
-                  <input type="text" placeholder="12A" value={modalTransData[transType][transDir].seatNum} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], seatNum: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
-                </div>
-              </div>
-
-              <div className="flex space-x-2 items-center">
-                <div className="flex flex-col space-y-1 w-[45%]">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>출발지</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'ICN' : '서울역'} value={modalTransData[transType][transDir].dep} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], dep: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
-                  <input type="text" maxLength="5" placeholder="10:00" value={modalTransData[transType][transDir].depTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], depTime: val}}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 transition-all duration-300 focus:border-indigo-500 outline-none`} />
-                </div>
-                <div className="flex flex-col items-center justify-center text-slate-400 font-bold w-[10%]">➔</div>
-                <div className="flex flex-col space-y-1 w-[45%]">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>도착지</label>
-                  <input type="text" placeholder={transType === 'flight' ? 'NRT' : '부산역'} value={modalTransData[transType][transDir].arr} onChange={e => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], arr: e.target.value}}}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg transition-all duration-300 focus:border-indigo-500 outline-none`} />
-                  <input type="text" maxLength="5" placeholder="12:00" value={modalTransData[transType][transDir].arrTime} onChange={e => handleTimeInput(e, val => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...prev[transType][transDir], arrTime: val}}})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 transition-all duration-300 focus:border-indigo-500 outline-none`} />
-                </div>
-              </div>
-              </>
-              ) : (
-              /* 렌터카 폼 */
-              <div className="space-y-3 animate-in fade-in duration-300">
-                <div>
-                  <label className={`text-[9px] font-bold ${textMuted} px-1 mb-1 block`}>렌터카 사용 기간 (Day 선택, 복수 선택 가능)</label>
-                  <div className={`grid gap-1 p-1 rounded-lg border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
-                    {tripDays.map(d => (
-                      <button key={d} type="button" onClick={() => setRentalCarData(prev => ({ ...prev, days: prev.days.includes(d) ? prev.days.filter(x => x !== d) : [...prev.days, d].sort((a,b)=>a-b) }))} className={`py-1.5 text-[10px] font-bold rounded transition-all duration-200 ${rentalCarData.days.includes(d) ? 'bg-indigo-600 text-white shadow-md' : (isDarkMode ? 'text-slate-400 hover:bg-slate-600' : 'text-slate-400 hover:bg-slate-100')}`}>D{d}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex space-x-2">
-                  <div className="flex flex-col space-y-1 flex-1">
-                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>렌터카 업체</label>
-                    <input type="text" placeholder="Toyota Rent a Car" value={rentalCarData.company} onChange={e => setRentalCarData(prev => ({...prev, company: e.target.value}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg focus:border-indigo-500 outline-none`} />
-                  </div>
-                  <div className="flex flex-col space-y-1 flex-1">
-                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>차종</label>
-                    <input type="text" placeholder="Toyota Yaris" value={rentalCarData.carType} onChange={e => setRentalCarData(prev => ({...prev, carType: e.target.value}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg focus:border-indigo-500 outline-none`} />
-                  </div>
-                </div>
-                <div className="flex space-x-2">
-                  <div className="flex flex-col space-y-1 flex-1">
-                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>🚗 대여 장소</label>
-                    <input type="text" placeholder="공항 렌터카 센터" value={rentalCarData.depPlace} onChange={e => setRentalCarData(prev => ({...prev, depPlace: e.target.value}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg focus:border-indigo-500 outline-none`} />
-                    <input type="text" maxLength="5" placeholder="10:00" value={rentalCarData.depTime} onChange={e => handleTimeInput(e, val => setRentalCarData(prev => ({...prev, depTime: val})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 focus:border-indigo-500 outline-none`} />
-                  </div>
-                  <div className="flex flex-col items-center justify-center text-slate-400 font-bold w-8 pt-4">→</div>
-                  <div className="flex flex-col space-y-1 flex-1">
-                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>🏁 반납 장소</label>
-                    <input type="text" placeholder="공항 렌터카 센터" value={rentalCarData.arrPlace} onChange={e => setRentalCarData(prev => ({...prev, arrPlace: e.target.value}))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg focus:border-indigo-500 outline-none`} />
-                    <input type="text" maxLength="5" placeholder="18:00" value={rentalCarData.arrTime} onChange={e => handleTimeInput(e, val => setRentalCarData(prev => ({...prev, arrTime: val})))} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold rounded-lg mt-1 focus:border-indigo-500 outline-none`} />
-                  </div>
-                </div>
-                {/* 사진 추가 */}
-                <div>
-                  <label className={`text-[9px] font-bold ${textMuted} px-1 mb-1 block`}>사진 (최대 3장)</label>
-                  <input type="file" accept="image/*" multiple ref={rentalFileInputRef} className="hidden" onChange={e => {
-                    const files = Array.from(e.target.files || []);
-                    files.forEach(file => compressAndStoreImage(supabaseClient, appUserId, activeTripId, file, compressed => {
-                      setRentalCarData(prev => prev.photos.length < 3 ? { ...prev, photos: [...prev.photos, compressed] } : prev);
-                    }));
-                    e.target.value = '';
-                  }} />
-                  <div className="flex gap-1.5">
-                    {(rentalCarData.photos || []).map((img, i) => (
-                      <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 flex-shrink-0">
-                        <img src={img} className="w-full h-full object-cover" alt="" />
-                        <button type="button" onClick={() => setRentalCarData(prev => ({ ...prev, photos: prev.photos.filter((_, idx) => idx !== i) }))} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px]"><X className="w-[1em] h-[1em] inline" /></button>
-                      </div>
-                    ))}
-                    {(rentalCarData.photos || []).length < 3 && (
-                      <button type="button" onClick={() => rentalFileInputRef.current?.click()} className={`w-14 h-14 rounded-lg border-dashed border-2 flex flex-col items-center justify-center gap-0.5 flex-shrink-0 transition-colors ${isDarkMode ? 'border-slate-500 text-slate-400 hover:bg-slate-700' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
-                        <span className="text-lg leading-none">+</span>
-                        <span className="text-[7px] font-bold">사진</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-              )}
-
-              <button onClick={handleSaveTransport} className={`w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-3 text-xs font-bold shadow-md active:scale-95 transition-all duration-300 mt-2`}>
-                일괄 등록하기 ✨
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {editingPlan && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[6000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setEditingPlan(null)}>
-          <div className={`${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'} w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 rounded-2xl`} onClick={e => e.stopPropagation()}>
-            <div className={`flex items-center justify-between p-3 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-              <div className="flex items-center space-x-2">
-                <span className="text-orange-500 text-sm">✏️</span>
-                <h3 className="text-xs font-bold">일정 수정하기</h3>
-              </div>
-              <button onClick={() => setEditingPlan(null)} className={`p-1 rounded transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'}`}><X className="w-[1em] h-[1em] inline" /></button>
-            </div>
-            
-            <div className="p-4 space-y-3">
-              <div className={`grid gap-1 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} border border-slate-200/80 rounded-lg p-1 shadow-sm`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
-                {tripDays.map(d => (
-                  <button key={d} onClick={() => setEditingPlan({...editingPlan, day: d})} className={`flex-1 text-[10px] font-bold py-1.5 rounded transition-all duration-300 border border-transparent ${parseInt(editingPlan.day) === d ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}>D{d}</button>
-                ))}
-              </div>
-
-              <div className="flex space-x-2">
-                <div className="flex flex-col space-y-1 w-1/2">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>국가 <Globe className="w-3 h-3 inline" /></label>
-                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center transition-colors duration-300`}>
-                    <SelectOrInput 
-                      inputId="edit-country-input"
-                      value={editingPlan.countrySelect} manualValue={editingPlan.manualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
-                      options={Object.keys(REGIONS_BY_COUNTRY)}
-                      onChangeSelect={e => setEditingPlan({...editingPlan, countrySelect: e.target.value, regionSelect: "", manualCountry: "", manualRegion: ""})}
-                      onChangeManual={val => setEditingPlan({...editingPlan, manualCountry: val})}
-                      onCancelManual={() => setEditingPlan({...editingPlan, countrySelect: "", manualCountry: ""})}
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-col space-y-1 w-1/2">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>지역 <MapPin className="w-3 h-3 inline" /></label>
-                  <div className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} px-2 py-1.5 shadow-sm h-8 flex items-center transition-colors duration-300`}>
-                    <SelectOrInput 
-                      inputId="edit-region-input"
-                      value={editingPlan.regionSelect} manualValue={editingPlan.manualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
-                      options={(!editingPlan.countrySelect || editingPlan.countrySelect === '수동입력') ? null : REGIONS_BY_COUNTRY[editingPlan.countrySelect]}
-                      onChangeSelect={e => setEditingPlan({...editingPlan, regionSelect: e.target.value, manualRegion: ""})}
-                      onChangeManual={val => setEditingPlan({...editingPlan, manualRegion: val})}
-                      onCancelManual={() => setEditingPlan({...editingPlan, regionSelect: "", manualRegion: ""})}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex space-x-2 items-end">
-                <div className="flex flex-col space-y-1 w-1/3">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>시간 <Clock className="w-3 h-3 inline" /></label>
-                  <input type="text" maxLength="5" value={S(editingPlan.time)} onChange={(e) => handleTimeInput(e, (val) => setEditingPlan({...editingPlan, time: val}))} placeholder="09:00" className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
-                </div>
-                <div className="flex flex-col space-y-1 flex-1 relative">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 <MapPin className="w-3 h-3 inline" /></label>
-                  <input type="text" placeholder="장소 이름 입력" value={S(editingPlan.place)} onChange={(e) => setEditingPlan({...editingPlan, place: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6 transition-all duration-300`} />
-                </div>
-              </div>
-
-              <div className="flex space-x-2 items-end">
-                <div className="flex flex-col space-y-1 flex-1">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어(복사용)</label>
-                  <input type="text" placeholder="현지어 입력" value={S(editingPlan.localName)} onChange={(e) => setEditingPlan({...editingPlan, localName: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm transition-all duration-300`} />
-                </div>
-<div className="flex flex-col space-y-1 flex-1">
-                  <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모 📝</label>
-                  <input type="text" placeholder="메모 입력" value={S(editingPlan.features)} onChange={(e) => setEditingPlan({...editingPlan, features: e.target.value})} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-1.5 text-[10px] font-bold rounded outline-none transition-all duration-300`} />
-                </div>
-              </div>
-
-              {/* [NEW] 테마 분류 선택 드롭다운 추가 */}
-{/* [수정됨] 통합된 테마 분류 섹션 (필수 문구 제거 및 디자인 통일) */}
-              <div className="flex flex-col space-y-1 w-full mb-3">
-                <label className={`text-[9px] font-black ${textMuted} px-1 flex justify-between`}>
-                  <span>테마 분류 📌</span>
-                  <span className="text-[7px] opacity-50">미선택 시 '기타' 자동 지정</span>
-                </label>
-                <select 
-                  value={S(editingPlan.theme || "기타")} 
-                  onChange={e => setEditingPlan({...editingPlan, theme: e.target.value})} 
-                  className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2.5 text-xs font-bold rounded-xl outline-none cursor-pointer shadow-sm focus:border-indigo-400 transition-all duration-300`}
-                >
-                  <option value="교통">교통 🚌</option>
-                  <option value="식당">식당 🍽️</option>
-                  <option value="디저트">디저트 🍰</option>
-                  <option value="관광지">관광지 📸</option>
-                  <option value="쇼핑">쇼핑 🛍️</option>
-                  <option value="숙소">숙소 🏠</option>
-                  <option value="기타">기타 📌</option>
-                </select>
-              </div>
-
-              <div className="flex flex-col space-y-1 w-full">
-                <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>사진 (최대 3장 / Ctrl+V 붙여넣기)</label>
-                <input type="file" accept="image/*" multiple ref={editFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, true)} className="hidden" />
-                <div className="flex gap-1.5">
-                  {(Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : [])).map((img, i) => (
-                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border flex-shrink-0 shadow-sm cursor-pointer" style={{borderColor: i === 0 ? '#6366f1' : undefined}} onClick={e => { e.stopPropagation(); if (i !== 0) setEditingPlan(prev => { const imgs = (Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : [])); const arr = [...imgs]; arr.splice(i, 1); arr.unshift(img); return { ...prev, photos: arr, photo: arr[0] }; }); }}>
-                      <img src={img} className="w-full h-full object-cover" alt="" />
-                      <button type="button" onClick={e => { e.stopPropagation(); setEditingPlan(prev => { const imgs = (Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : [])).filter((_, idx) => idx !== i); return {...prev, photos: imgs, photo: imgs[0] || ""}; }); }} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] leading-none hover:bg-black/90"><X className="w-[1em] h-[1em] inline" /></button>
-                      <div className={`absolute bottom-0 left-0 right-0 text-white text-[7px] text-center font-bold py-0.5 ${i === 0 ? 'bg-indigo-600/80' : 'bg-black/40'}`}>{i === 0 ? '대표' : '탭=대표'}</div>
-                    </div>
-                  ))}
-                  {(Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : [])).length < 3 && (
-                    <button type="button" onClick={() => editFileInputRef.current?.click()} className={`w-16 h-16 rounded-lg border-dashed border-2 flex flex-col items-center justify-center gap-0.5 flex-shrink-0 transition-colors ${isDarkMode ? 'border-slate-500 text-slate-400 hover:bg-slate-700' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
-                      <span className="text-lg leading-none">+</span>
-                      <span className="text-[8px] font-bold">사진 추가</span>
-                    </button>
-                  )}
-                </div>
-                {(Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : [])).length < 3 && (
-                  <input
-                    type="text"
-                    placeholder="URL 붙여넣기 후 Enter (웹 사진 복사 후 Ctrl+V)"
-                    className={`w-full border p-1.5 text-[9px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        const url = e.target.value.trim();
-                        if (!url) return;
-                        setEditingPlan(prev => {
-                          const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []);
-                          if (imgs.length >= 3) return prev;
-                          const newImgs = [...imgs, url];
-                          return { ...prev, photos: newImgs, photo: newImgs[0] };
-                        });
-                        e.target.value = '';
-                      }
-                    }}
-                    onPaste={e => {
-                      const items = e.clipboardData?.items;
-                      if (!items) return;
-                      for (let i = 0; i < items.length; i++) {
-                        if (items[i].type.indexOf('image') !== -1) {
-                          e.preventDefault();
-                          const file = items[i].getAsFile();
-                          compressAndStoreImage(supabaseClient, appUserId, activeTripId, file, compressed => {
-                            setEditingPlan(prev => {
-                              const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []);
-                              if (imgs.length >= 3) return prev;
-                              const newImgs = [...imgs, compressed];
-                              return { ...prev, photos: newImgs, photo: newImgs[0] };
-                            });
-                          });
-                          e.target.value = '';
-                          return;
-                        }
-                      }
-                    }}
-                  />
-                )}
-              </div>
-
-              <div className="my-1.5 px-1">
-                <div className="flex items-center space-x-2">
-                  <input type="checkbox" id="editPlanIsAcc" checked={Boolean(editingPlan.isAccommodation)} onChange={e => setEditingPlan({...editingPlan, isAccommodation: e.target.checked, accommodationDays: e.target.checked ? (editingPlan.accommodationDays || []) : []})} className="accent-indigo-600 w-3.5 h-3.5 rounded cursor-pointer" />
-                  <label htmlFor="editPlanIsAcc" className={`text-[10px] font-bold ${textMuted} cursor-pointer flex items-center gap-1`}>이 장소를 숙소로 설정 <Home className="w-3 h-3" /></label>
-                </div>
-                {editingPlan.isAccommodation && (
-                  <div className="mt-2 ml-5">
-                    <p className={`text-[9px] font-bold mb-1.5 ${textMuted}`}>숙박 Day 선택 (복수 선택 가능)</p>
-                    <div className="flex flex-wrap gap-1">
-                      {tripDays.map(d => (
-                        <button
-                          key={d}
-                          type="button"
-                          onClick={() => setEditingPlan(prev => {
-                            const days = Array.isArray(prev.accommodationDays) ? prev.accommodationDays : [];
-                            return { ...prev, accommodationDays: days.includes(d) ? days.filter(x => x !== d) : [...days, d] };
-                          })}
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${(Array.isArray(editingPlan.accommodationDays) && editingPlan.accommodationDays.includes(d)) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}
-                        >D{d}</button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-2 flex space-x-2">
-                <button onClick={() => {
-                  const finalCountry = editingPlan.countrySelect === "수동입력" ? editingPlan.manualCountry : editingPlan.countrySelect;
-                  const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
-// [저장 로직 수정] 테마(theme) 데이터가 핀 목록에도 저장되도록 강제 연동합니다.
-// [데이터 보정] 테마가 비어있거나 선택되지 않은 경우 '기타'로 강제 할당하여 저장
-const planData = {
-                    ...editingPlan,
-                    country: finalCountry,
-                    region: finalRegion,
-                    theme: (editingPlan.theme && editingPlan.theme.trim() !== "") ? editingPlan.theme : "기타",
-                    rating: editingPlan.rating || 0,
-                    review: editingPlan.review || "",
-                    accommodationDays: editingPlan.isAccommodation ? (Array.isArray(editingPlan.accommodationDays) ? editingPlan.accommodationDays : []) : []
-                  };           
-                  const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-                  let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
-                  
-                  const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
-                  const matchedIndex = safeCurrentRestaurants.findIndex(r => r && S(r.name).trim() === S(editingPlan.place).trim());
-                  let dbUpdates = { plan_timeline: updatedTimeline };
-                  
-                  if (matchedIndex !== -1) {
-                      const updatedRests = [...safeCurrentRestaurants];
-                      updatedRests[matchedIndex] = {
-                          ...updatedRests[matchedIndex],
-                          localName: editingPlan.localName ? S(editingPlan.localName) : updatedRests[matchedIndex].localName,
-                          signature: editingPlan.features ? S(editingPlan.features) : updatedRests[matchedIndex].signature,
-                          img: editingPlan.photo ? S(editingPlan.photo) : updatedRests[matchedIndex].img,
-                          imgs: Array.isArray(editingPlan.photos) && editingPlan.photos.length > 0 ? editingPlan.photos : updatedRests[matchedIndex].imgs,
-                          isAccommodation: editingPlan.isAccommodation || editingPlan.theme === "숙소",
-                          theme: editingPlan.theme || "기타"
-                      };
-                      setCurrentRestaurants(updatedRests);
-                      dbUpdates.current_restaurants = updatedRests;
-                      dbUpdates.current_restaurants = updatedRests;
-                  }
-                  
-                  setPlanTimeline(updatedTimeline); 
-                  
-                  // displayCityName: 드롭다운 지역 선택 or 수동입력 텍스트만 허용 (장소명 오염 방지)
-                  const regionIsFromDropdown = editingPlan.regionSelect && editingPlan.regionSelect !== "수동입력";
-                  const regionIsManual = editingPlan.regionSelect === "수동입력" && editingPlan.manualRegion;
-                  if (finalRegion && (regionIsFromDropdown || regionIsManual)) {
-                    setDisplayCityName(S(finalRegion));
-                    dbUpdates.display_city_name = S(finalRegion);
-                  }
-                  saveToDb(dbUpdates);
-                  setEditingPlan(null); showToast("일정이 예쁘게 수정됐어요! 📝");
-                }} className="w-full bg-orange-500 text-white rounded-md py-2 text-[11px] font-bold shadow-sm hover:bg-orange-600 active:scale-95 transition-all duration-300">
-                  수정 내용 저장
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isAddPlaceModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[9000] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsAddPlaceModalOpen(false)}>
-          <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
-            <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-              <h3 className="text-sm font-black flex items-center">
-                <span className="mr-2 text-indigo-500 text-lg">📍</span> 
-                {clickedLocation?.id ? '핀 정보 수정' : '새 지도 핀 등록'}
-              </h3>
-              <button onClick={() => setIsAddPlaceModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors"><X className="w-[1em] h-[1em] inline" /></button>
-            </div>
-            
-            <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh] custom-scrollbar scroll-smooth">
-              <div className="flex flex-col space-y-1">
-              <div className="flex flex-col space-y-1 mb-3">
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>테마 분류</label>
-                <select value={newManualTheme} onChange={e => setNewManualTheme(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`}>
-                  <option value="교통편">교통편 🚌</option>
-                  <option value="식당">식당 🍽️</option>
-                  <option value="디저트">디저트 🍰</option>
-                  <option value="관광지">관광지 📸</option>
-<option value="쇼핑">쇼핑 🛍️</option>
-                <option value="숙소">숙소 🏠</option>
-                <option value="기타">기타 📌</option>
-                </select>
-              </div>
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>장소 이름 (필수)</label>
-                <input type="text" placeholder="예: 에펠탑" value={newManualPlaceName} onChange={e => setNewManualPlaceName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
-              </div>
-
-              <div className="flex flex-col space-y-1">
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>현지어 이름 (복사용)</label>
-                <input type="text" placeholder="예: Tour Eiffel" value={newManualLocalName} onChange={e => setNewManualLocalName(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
-              </div>
-
-              <div className="flex flex-col space-y-1">
-                <label className={`text-[9px] font-bold ${textMuted} px-1`}>메모 / 특징</label>
-                <input type="text" placeholder="간단한 메모 입력" value={newManualFeature} onChange={e => setNewManualFeature(e.target.value)} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-xs font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg transition-all duration-300`} />
-              </div>
-
-              <div className="flex flex-col space-y-2 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300">
-                <div className="flex space-x-2 items-end">
-                  <div className={`flex flex-col space-y-1 ${pinLinkDay ? 'w-1/3' : 'w-full'} transition-all duration-300`}>
-                    <label className={`text-[9px] font-bold ${textMuted} px-1`}>일정 동기화</label>
-                    <select value={pinLinkDay} onChange={e => {
-                       setPinLinkDay(e.target.value); 
-                       setPinLinkPlanId(""); 
-                       setNewManualTime(""); 
-                    }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[11px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
-                      <option value="">-- 연동 안 함 --</option>
-                      {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
-                      <option value="0">보관함</option>
-                    </select>
-                  </div>
-                  {pinLinkDay && (
-                     <div className="flex flex-col space-y-1 w-2/3 animate-in fade-in duration-300">
-                       <label className={`text-[9px] font-bold ${textMuted} px-1`}>기존 일정 연동 (또는 직접 입력)</label>
-                       
-                       {pinLinkPlanId === 'manual' ? (
-                          <div className="relative w-full">
-                            <input 
-                              type="text" 
-                              placeholder="시간 입력 (예: 09:00)" 
-                              maxLength="5"
-                              value={newManualTime} 
-                              onChange={e => handleTimeInput(e, setNewManualTime)} 
-                              autoFocus
-                              className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-indigo-300 ring-1 ring-indigo-500'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg transition-all duration-300 pr-6`} 
-                            />
-                            <button onClick={() => setPinLinkPlanId("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"><X className="w-[1em] h-[1em] inline" /></button>
-                          </div>
-                       ) : (
-                          <select value={pinLinkPlanId} onChange={e => {
-                             const val = e.target.value;
-                             setPinLinkPlanId(val);
-                             if (val !== 'manual' && val !== '') {
-                                const matched = planTimeline.find(p => String(p.id) === String(val));
-                                if (matched) {
-                                   setNewManualTime(matched.time);
-                                   setNewManualPlaceName(matched.place);
-                                   if(matched.localName) setNewManualLocalName(matched.localName);
-                                   if(matched.features && matched.features !== "직접 추가한 장소") setNewManualFeature(matched.features);
-                                   if(matched.theme) setNewManualTheme(S(matched.theme));
-                                   setNewManualIsAccommodation(Boolean(matched.isAccommodation));
-                                   setNewManualAccommodationDays(Array.isArray(matched.accommodationDays) ? matched.accommodationDays : []);
-                                   const matchedImgs = Array.isArray(matched.photos) && matched.photos.length > 0 ? matched.photos : (matched.photo ? [matched.photo] : []);
-                                   if (matchedImgs.length > 0) { setNewManualPhotos(matchedImgs); setNewManualPhoto(matchedImgs[0]); }
-                                   showToast("✨ 선택한 일정의 데이터가 쏙 채워졌어요!");
-                                }
-                             } else {
-                                setNewManualTime("");
-                             }
-                          }} className={`w-full ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'} p-2 text-[10px] font-bold outline-none shadow-sm rounded-lg cursor-pointer transition-all duration-300`}>
-                             <option value="">-- 일정 선택 --</option>
-                             {planTimeline.filter(p => String(p.day) === String(pinLinkDay)).map(p => (
-                                <option key={p.id} value={p.id}>[{p.time}] {S(p.place)}</option>
-                             ))}
-                             <option value="manual">➕ 새 일정으로 (시간 수동 입력)</option>
-                          </select>
-                       )}
-                     </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex flex-col space-y-1 w-full pt-1">
-                <label className={`text-[9px] font-bold px-1 ${textMuted}`}>사진 (최대 3장) 📸</label>
-                <input type="file" accept="image/*" multiple ref={manualFileInputRef} onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  files.forEach(file => {
-                    compressAndStoreImage(supabaseClient, appUserId, activeTripId, file, (compressed) => {
-                      setNewManualPhotos(prev => {
-                        if (prev.length >= 3) return prev;
-                        const next = [...prev, compressed];
-                        setNewManualPhoto(next[0]);
-                        return next;
-                      });
-                    });
-                  });
-                  e.target.value = '';
-                }} className="hidden" />
-                <div className="flex gap-1.5">
-                  {newManualPhotos.map((img, i) => (
-                    <div key={i} className={`relative w-16 h-16 rounded-lg overflow-hidden shrink-0 cursor-pointer border-2 ${i === 0 ? 'border-indigo-500' : 'border-slate-200'}`}
-                         onClick={() => {
-                           setNewManualPhotos(prev => { const next = [...prev]; const [sel] = next.splice(i, 1); next.unshift(sel); setNewManualPhoto(next[0]); return next; });
-                           showToast('⭐ 대표사진으로 설정했습니다!');
-                         }}>
-                      <img src={img} className="w-full h-full object-cover" alt="" />
-                      <button type="button" className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px]" onClick={e => { e.stopPropagation(); setNewManualPhotos(prev => { const n = prev.filter((_, j) => j !== i); setNewManualPhoto(n[0] || ''); return n; }); }}><X className="w-[1em] h-[1em] inline" /></button>
-                      {i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-indigo-500/80 text-white text-[7px] text-center font-bold">대표</div>}
-                    </div>
-                  ))}
-                  {newManualPhotos.length < 3 && (
-                    <button type="button" onClick={() => manualFileInputRef.current?.click()} className={`w-16 h-16 rounded-lg border-dashed border-2 flex flex-col items-center justify-center text-[8px] font-bold shrink-0 transition-colors ${isDarkMode ? 'border-slate-500 text-slate-400 hover:bg-slate-700' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
-                      <span className="text-lg">+</span>
-                      <span>사진 추가</span>
-                    </button>
-                  )}
-                </div>
-                {newManualPhotos.length < 3 && (
-                  <input
-                    type="text"
-                    placeholder="URL 붙여넣기 후 Enter (웹 사진 복사 후 Ctrl+V)"
-                    className={`w-full border p-1.5 text-[9px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        const url = e.target.value.trim();
-                        if (!url) return;
-                        setNewManualPhotos(prev => prev.length < 3 ? [...prev, url] : prev);
-                        setNewManualPhoto(url);
-                        e.target.value = '';
-                      }
-                    }}
-                    onPaste={e => {
-                      const items = e.clipboardData?.items;
-                      if (!items) return;
-                      for (let i = 0; i < items.length; i++) {
-                        if (items[i].type.indexOf('image') !== -1) {
-                          e.preventDefault();
-                          const file = items[i].getAsFile();
-                          compressAndStoreImage(supabaseClient, appUserId, activeTripId, file, compressed => {
-                            setNewManualPhotos(prev => prev.length < 3 ? [...prev, compressed] : prev);
-                            setNewManualPhoto(compressed);
-                          });
-                          e.target.value = '';
-                          return;
-                        }
-                      }
-                    }}
-                  />
-                )}
-              </div>
-
-              <div className="flex flex-col my-2 px-1 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700 transition-colors duration-300 gap-y-2">
-                <div className="flex flex-wrap gap-y-2 items-center">
-                  <div className="flex items-center space-x-2 mr-3">
-                    <input type="checkbox" id="manualPlanIsAcc" checked={newManualIsAccommodation} onChange={e => { setNewManualIsAccommodation(e.target.checked); if (!e.target.checked) setNewManualAccommodationDays([]); }} className="accent-indigo-600 w-4 h-4 cursor-pointer" />
-                    <label htmlFor="manualPlanIsAcc" className={`text-xs font-bold ${textMuted} cursor-pointer flex items-center gap-1`}>이 장소를 숙소로 설정 <Home className="w-3.5 h-3.5" /></label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <input type="checkbox" id="manualPlanIsLandmark" checked={newManualIsLandmark} onChange={e => setNewManualIsLandmark(e.target.checked)} className="accent-yellow-500 w-4 h-4 cursor-pointer" />
-                    <label htmlFor="manualPlanIsLandmark" className={`text-xs font-bold ${textMuted} cursor-pointer`}>랜드마크 지정 👑</label>
-                  </div>
-                </div>
-                {newManualIsAccommodation && tripDays.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    <span className={`text-[10px] font-bold ${textMuted} self-center`}>숙박 Day:</span>
-                    {tripDays.map(d => (
-                      <button key={d} type="button"
-                        onClick={() => setNewManualAccommodationDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])}
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${newManualAccommodationDays.includes(d) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}>
-                        D{d}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            <div className="p-4 border-t dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex gap-2">
-              <button onClick={() => handleManualPlaceAdd(false)} className={`flex-1 ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'} rounded-xl py-3 text-xs font-bold shadow-sm active:scale-95 transition-all duration-300`}>
-                일단 저장하기 💾
-              </button>
-              <button onClick={() => handleManualPlaceAdd(true)} className="flex-1 bg-indigo-600 text-white rounded-xl py-3 text-xs font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300">
-                지도에 핀 꽂기 📍
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isMyPinsModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[3500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsMyPinsModalOpen(false)}>
-          <div className={`${cardBg} w-full max-w-5xl flex flex-col animate-in zoom-in-95 duration-300 max-h-[85vh] rounded-3xl overflow-hidden`} onClick={e => e.stopPropagation()}>
-            <div className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 border-b gap-3 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-              <h3 className="text-sm font-black flex items-center gap-1.5 shrink-0"><MapPin className="w-4 h-4 text-indigo-500" /> 내 핀/장소 목록</h3>
-              
-              <div className="flex items-center space-x-1 overflow-x-auto custom-scrollbar flex-1 pb-1 sm:pb-0 scroll-smooth">
-                 <button onClick={() => setMyPinsFilter('all')} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors ${myPinsFilter === 'all' ? 'bg-indigo-600 text-white shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-200 text-slate-500 hover:bg-slate-300')}`}>전체보기</button>
-                 {tripDays.map(d => (
-                    <button key={d} onClick={() => setMyPinsFilter(d)} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors ${myPinsFilter === d ? 'bg-indigo-600 text-white shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-200 text-slate-500 hover:bg-slate-300')}`}>Day {d}</button>
-                 ))}
-                 <button onClick={() => setMyPinsFilter('unlinked')} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors border ${myPinsFilter === 'unlinked' ? 'bg-slate-600 text-white border-slate-600 shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400 border-transparent' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
-                 <select value={Array.isArray(myPinsThemeFilter) ? myPinsThemeFilter[0] : myPinsThemeFilter} onChange={e => setMyPinsThemeFilter([e.target.value])} className={`ml-2 px-2 py-1 rounded-full text-[10px] font-bold outline-none cursor-pointer transition-colors border ${isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>                    <option value="all">테마 전체</option>
-                    <option value="교통편">교통편 🚌</option>
-                    <option value="식당">식당 🍽️</option>
-                    <option value="디저트">디저트 🍰</option>
-                    <option value="관광지">관광지 📸</option>
-                    <option value="쇼핑">쇼핑 🛍️</option>
-                    <option value="숙소">숙소 🏠</option>
-                    <option value="기타">기타 📌</option>
-                 </select>
-              </div>
-
-              <div className="flex items-center space-x-3 shrink-0">
-                <button onClick={() => {
-                  setIsMyPinsModalOpen(false);
-                  setClickedLocation(null);
-                  setNewManualPlaceName("");
-                  setNewManualLocalName("");
-                  setNewManualFeature("");
-                  setNewManualPhoto("");
-                  setNewManualIsAccommodation(false);
-                  setPinLinkDay("");
-                  setPinLinkPlanId("");
-                  setNewManualTime("");
-                  setIsAddPlaceModalOpen(true);
-                }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-indigo-700 active:scale-95 transition-all duration-300">
-                  <span className="mr-1 text-sm">➕</span> 새 장소 추가
-                </button>
-                <button onClick={() => setIsMyPinsModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg transition-colors"><X className="w-[1em] h-[1em] inline" /></button>
-              </div>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-50/50 dark:bg-slate-900/50 scroll-smooth">
-              {filteredMyPins.length === 0 ? (
-                <div className="text-center py-20 text-xs font-bold text-slate-400 flex flex-col items-center">
-                  <span className="text-4xl mb-3 opacity-20">📍</span>
-                  등록된 핀이 없습니다.<br/>우측 상단의 '새 장소 추가'를 눌러 장소를 기록해보세요!
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                  {filteredMyPins.map(pin => (
-                    <div key={pin.id} className={`flex flex-col p-2 border rounded-xl shadow-sm transition-all duration-300 hover:shadow-md ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} relative group`}>
-
-                      {pin.isLandmark && <div className="absolute top-1 right-1 bg-yellow-400 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm z-10">👑 랜드마크</div>}
-
-                      {pin.img && !S(pin.img).includes("unsplash") ? (
-                        <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0 cursor-pointer" onClick={() => { const pinImgs = Array.isArray(pin.imgs) && pin.imgs.length > 0 ? pin.imgs : (pin.img ? [pin.img] : []); if (pinImgs.length > 0) setViewPhoto({ imgs: pinImgs, idx: 0 }); }}>
-                          <img src={pin.img} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
-                          {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm z-10">숙소</div>}
-                          <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors duration-200 flex items-center justify-center">
-                            <span className="opacity-0 hover:opacity-100 text-white text-[9px] font-bold bg-black/50 px-2 py-0.5 rounded-full transition-opacity">🔍 크게 보기</span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className={`w-full h-12 flex items-center justify-center rounded-lg mb-1.5 shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
-                          {pin.isAccommodation ? '🏠 숙소' : '📍 장소'}
-                        </div>
-                      )}
-                      
-                      <div className="flex-1 min-w-0 flex flex-col justify-center">
-                        <div className="flex items-center mb-1 gap-1">
-                          <span className="text-[8px] font-bold bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-400 px-1 py-0.5 rounded shrink-0">
-                            {(() => {
-                               const linked = planTimeline.find(p => p && S(p.place).trim() === S(pin.name).trim());
-                               return linked?.theme || pin.theme || '기타';
-                            })()}
-                          </span>
-                          <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate leading-tight flex-1 cursor-pointer hover:text-indigo-500 transition-colors" onClick={() => setPinQuickView(pin)}>{S(pin.name)}</h4>
-                          {pin.lat && pin.lng && (
-                            <button onClick={() => {
-                              setIsMyPinsModalOpen(false);
-                              if (activeTab === 'map') {
-                                // 이미 지도 탭 — 즉시 이동
-                                setTimeout(() => {
-                                  if (isKakaoMap && kakaoMapInstanceRef.current && window.kakao) {
-                                    kakaoMapInstanceRef.current.setCenter(new window.kakao.maps.LatLng(pin.lat, pin.lng));
-                                    kakaoMapInstanceRef.current.setLevel(3);
-                                  } else if (mapInstanceRef.current) {
-                                    mapInstanceRef.current.flyTo([pin.lat, pin.lng], 17);
-                                  }
-                                  window.dispatchEvent(new CustomEvent('onPinClick', { detail: String(pin.id) }));
-                                }, 100);
-                              } else {
-                                // 다른 탭 → 탭 전환 후 이동 (pendingMapFlyRef 경로)
-                                pendingMapFlyRef.current = { lat: pin.lat, lng: pin.lng, id: pin.id };
-                                setActiveTab('map');
-                              }
-                            }} className="shrink-0 bg-indigo-500 hover:bg-indigo-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded transition-colors" title="지도에서 위치 보기">
-                              📍이동
-                            </button>
-                          )}
-                        </div>
-                        {pin.localName && (
-                          <p className="text-[9px] font-bold text-indigo-500 truncate cursor-pointer hover:opacity-80 leading-tight mb-0.5 transition-opacity" onClick={(e) => handleCopyLocalName(e, pin.localName)}>
-                            📋 {S(pin.localName)}
-                          </p>
-                        )}
-                      </div>
-                      
-                      <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-700">
-                        <button onClick={(e) => {
-                          e.stopPropagation();
-                          setMovingPinId(pin.id);
-                          setIsPinMode(true);
-                          setIsMyPinsModalOpen(false);
-                          setActiveTab('map');
-                          showToast("🗺️ 지도에서 핀을 꽂을 위치를 클릭해주세요!");
-                        }} className="flex-1 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 py-1 rounded text-[9px] font-bold hover:bg-emerald-100 transition-colors duration-300">
-                          위치 지정
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); openEditPinModal(pin); }} className="flex-1 bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 py-1 rounded text-[9px] font-bold hover:bg-slate-200 transition-colors duration-300">
-                          수정
-                        </button>
-                        <button onClick={(e) => {
-                           e.stopPropagation();
-                           const updated = safeCurrentRestaurants.filter(r => r && S(r.id) !== S(pin.id));
-                           setCurrentRestaurants(updated);
-                           saveToDb({ current_restaurants: updated });
-                           showToast("핀이 삭제되었습니다.");
-                        }} className="w-6 flex items-center justify-center bg-rose-50 text-rose-500 dark:bg-rose-900/30 dark:text-rose-400 py-1 rounded hover:bg-rose-100 transition-colors duration-300">
-                           <span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {pinQuickView && (
-        <div className="fixed inset-0 bg-black/60 z-[9500] backdrop-blur-sm flex items-center justify-center p-6 transition-opacity duration-300" onClick={() => setPinQuickView(null)}>
-          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
-            {pinQuickView.img && !S(pinQuickView.img).includes("unsplash") && (
-              <div className="w-full h-44 relative cursor-pointer" onClick={() => { const qImgs = Array.isArray(pinQuickView.imgs) && pinQuickView.imgs.length > 0 ? pinQuickView.imgs : (pinQuickView.img ? [pinQuickView.img] : []); setPinQuickView(null); if (qImgs.length > 0) setViewPhoto({ imgs: qImgs, idx: 0 }); }}>
-                <img src={pinQuickView.img} className="w-full h-full object-cover" alt="" />
-                <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center">
-                  <span className="opacity-0 hover:opacity-100 text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full transition-opacity">🔍 크게 보기</span>
-                </div>
-              </div>
-            )}
-            <div className="p-4 flex flex-col space-y-3">
-              <h3 className={`text-base font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{S(pinQuickView.name)}</h3>
-              {pinQuickView.localName && (
-                <button onClick={(e) => handleCopyLocalName(e, pinQuickView.localName)} className="flex items-center space-x-2 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 px-3 py-2 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-colors text-left">
-                  <span>📋</span>
-                  <span className="truncate">{S(pinQuickView.localName)}</span>
-                  <span className="ml-auto shrink-0 bg-indigo-100 dark:bg-indigo-800 px-2 py-0.5 rounded-full text-[10px]">복사</span>
-                </button>
-              )}
-              {pinQuickView.lat && pinQuickView.lng && (
-                <button onClick={() => { setPinQuickView(null); openGoogleMapsNav(pinQuickView.lat, pinQuickView.lng, 'driving'); }} className="w-full bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1">
-                  <Compass className="w-3.5 h-3.5" /><span>현재 위치에서 길 안내</span>
-                </button>
-              )}
-              <button onClick={() => setPinQuickView(null)} className={`w-full py-2.5 rounded-xl text-xs font-bold transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>닫기</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isNavModalOpen && (() => {
-        const validPins = currentRestaurants.filter(r => r && r.lat && r.lng);
-        // 구글 맵 길 안내 실행
-        const openGoogleNav = (mode) => {
-          const wps = navWaypoints.filter(w => w);
-          const origin = `${navOrigin.lat},${navOrigin.lng}`;
-          const dest = `${navDest.lat},${navDest.lng}`;
-          const waypointStr = wps.map(w => `${w.lat},${w.lng}`).join('|');
-          const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}${waypointStr ? `&waypoints=${waypointStr}` : ''}&travelmode=${mode}`;
-          openExternalUrl(webUrl);
-          setIsNavModalOpen(false);
-        };
-        // 카카오맵 네비게이션 실행 (앱 딥링크 → 웹 폴백)
-        const openKakaoNav = (by) => {
-          const sp = `${navOrigin.lat},${navOrigin.lng}`;
-          const ep = `${navDest.lat},${navDest.lng}`;
-          const appUrl = `kakaomap://route?sp=${sp}&ep=${ep}&by=${by}`;
-          const webUrl = `https://map.kakao.com/link/to/${encodeURIComponent(S(navDest.name))},${navDest.lat},${navDest.lng}/from/${encodeURIComponent(S(navOrigin.name))},${navOrigin.lat},${navOrigin.lng}`;
-          // 앱 딥링크 시도 후 1.5초 내 반응 없으면 웹으로 폴백
-          const fallback = setTimeout(() => openExternalUrl(webUrl), 1500);
-          window.location.href = appUrl;
-          window.addEventListener('blur', () => clearTimeout(fallback), { once: true });
-          setIsNavModalOpen(false);
-        };
-        const selectingLabel = navSelectingFor === 'origin' ? '출발지' : navSelectingFor === 'dest' ? '도착지' : navSelectingFor !== null ? `경유지 ${navSelectingFor + 1}` : null;
-        return (
-        <div className="fixed inset-0 bg-black/60 z-[9500] backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300" onClick={() => setIsNavModalOpen(false)}>
-          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]`} onClick={e => e.stopPropagation()}>
-            <div className={`flex items-center justify-between p-4 border-b shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`text-sm font-black flex items-center gap-1.5 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}><Navigation className="w-4 h-4" />경로 네비게이션</h3>
-              <button onClick={() => setIsNavModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-lg"><X className="w-[1em] h-[1em] inline" /></button>
-            </div>
-            <div className="p-4 space-y-2 overflow-y-auto">
-              {/* 출발지 */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-[10px] font-black text-green-500">🟢 출발지</p>
-                  {!navOrigin && <button onClick={() => {
-                    if (!navigator.geolocation) { showToast("위치 기능을 지원하지 않습니다."); return; }
-                    navigator.geolocation.getCurrentPosition((pos) => {
-                      setNavOrigin({ id: '__my_location__', name: '📍 내 현재 위치', lat: pos.coords.latitude, lng: pos.coords.longitude });
-                      setNavSelectingFor(null);
-                    }, () => showToast("위치 권한이 필요합니다."), { enableHighAccuracy: true, timeout: 10000 });
-                  }} className="text-[10px] font-black text-blue-500 hover:text-blue-700 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-700 transition-colors inline-flex items-center gap-1"><MapPin className="w-3 h-3" /> 현재 위치 사용</button>}
-                </div>
-                <div onClick={() => setNavSelectingFor(navSelectingFor === 'origin' ? null : 'origin')}
-                  className={`flex items-center p-2.5 rounded-xl border-2 cursor-pointer transition-all ${navSelectingFor === 'origin' ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : navOrigin ? 'border-green-400 bg-green-50/50 dark:bg-green-900/10' : 'border-dashed border-slate-300 dark:border-slate-600 hover:border-green-300'}`}>
-                  <span className="text-xs font-black truncate flex-1 ${navOrigin ? 'text-green-700 dark:text-green-300' : 'text-slate-400'}">{navOrigin ? navOrigin.name : '목록에서 선택'}</span>
-                  {navOrigin && <button onClick={e => { e.stopPropagation(); setNavOrigin(null); }} className="ml-2 text-slate-400 hover:text-red-400 shrink-0 text-xs"><X className="w-[1em] h-[1em] inline" /></button>}
-                </div>
-              </div>
-
-              {/* 출발↔도착 스왑 버튼 */}
-              <div className="flex items-center justify-center">
-                <button onClick={() => { const tmp = navOrigin; setNavOrigin(navDest); setNavDest(tmp); }}
-                  className={`p-1.5 rounded-full border transition-all active:scale-90 ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-100 border-slate-200 hover:bg-slate-200'}`} title="출발/도착 바꾸기">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* 경유지 */}
-              {navWaypoints.map((wp, idx) => (
-                <div key={idx}>
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-[10px] font-black text-orange-400">🟠 경유지 {idx + 1}</p>
-                  </div>
-                  <div onClick={() => setNavSelectingFor(navSelectingFor === idx ? null : idx)}
-                    className={`flex items-center p-2.5 rounded-xl border-2 cursor-pointer transition-all ${navSelectingFor === idx ? 'border-orange-400 bg-orange-50 dark:bg-orange-900/20' : wp ? 'border-orange-300 bg-orange-50/50 dark:bg-orange-900/10' : 'border-dashed border-slate-300 dark:border-slate-600 hover:border-orange-300'}`}>
-                    <span className="text-xs font-black truncate flex-1">{wp ? wp.name : '목록에서 선택'}</span>
-                    <button onClick={e => { e.stopPropagation(); setNavWaypoints(prev => prev.filter((_, i) => i !== idx)); }} className="ml-2 text-slate-400 hover:text-red-400 shrink-0 text-xs"><X className="w-[1em] h-[1em] inline" /></button>
-                  </div>
-                </div>
-              ))}
-
-              {/* 도착지 */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-[10px] font-black text-indigo-500">🔵 도착지</p>
-                  <button onClick={() => setNavWaypoints(prev => [...prev, null])}
-                    className="text-[10px] font-black text-orange-500 hover:text-orange-700 bg-orange-50 dark:bg-orange-900/30 px-2 py-0.5 rounded-full border border-orange-200 dark:border-orange-700 transition-colors">+ 경유지 추가</button>
-                </div>
-                <div onClick={() => setNavSelectingFor(navSelectingFor === 'dest' ? null : 'dest')}
-                  className={`flex items-center p-2.5 rounded-xl border-2 cursor-pointer transition-all ${navSelectingFor === 'dest' ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : navDest ? 'border-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/10' : 'border-dashed border-slate-300 dark:border-slate-600 hover:border-indigo-300'}`}>
-                  <span className="text-xs font-black truncate flex-1">{navDest ? navDest.name : '목록에서 선택'}</span>
-                  {navDest && <button onClick={e => { e.stopPropagation(); setNavDest(null); }} className="ml-2 text-slate-400 hover:text-red-400 shrink-0 text-xs"><X className="w-[1em] h-[1em] inline" /></button>}
-                </div>
-              </div>
-
-              {/* 핀 목록 — 선택 중일 때만 표시 */}
-              {navSelectingFor !== null && (() => {
-                // Day별 핀 분류
-                const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-                const linkedPinNames = new Set(safeTimeline.map(p => S(p.place).trim()));
-                const pinsByDay = {};
-                tripDays.forEach(d => { pinsByDay[d] = []; });
-                safeTimeline.forEach(p => {
-                  const pin = validPins.find(r => S(r.name).trim() === S(p.place).trim());
-                  if (pin && p.day) {
-                    const d = parseInt(p.day);
-                    if (!pinsByDay[d]) pinsByDay[d] = [];
-                    if (!pinsByDay[d].find(x => x.id === pin.id)) pinsByDay[d].push(pin);
-                  }
-                });
-                const unlinkedPins = validPins.filter(r => !linkedPinNames.has(S(r.name).trim()));
-
-                // 현재 필터에 따른 표시 핀
-                let shownPins;
-                if (navDayFilter === 'unlinked') shownPins = unlinkedPins;
-                else if (navDayFilter === 'all') shownPins = validPins;
-                else shownPins = pinsByDay[navDayFilter] || [];
-
-                return (
-                  <div className={`border rounded-xl overflow-hidden ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                    <p className={`text-[10px] font-black px-3 py-2 border-b ${isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                      {selectingLabel} 선택 중 — 핀을 눌러주세요
-                    </p>
-                    {/* Day 탭 */}
-                    <div className={`flex overflow-x-auto gap-1 p-2 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-white'}`}>
-                      <button onClick={() => setNavDayFilter('all')}
-                        className={`px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap flex-shrink-0 transition-all ${navDayFilter === 'all' ? 'bg-indigo-600 text-white' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500')}`}>
-                        전체
-                      </button>
-                      {tripDays.map(d => (
-                        <button key={d} onClick={() => setNavDayFilter(d)}
-                          style={navDayFilter === d ? { background: getDayColor(d), color: 'white' } : { borderColor: getDayColor(d), color: getDayColor(d) }}
-                          className={`px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap flex-shrink-0 border transition-all ${navDayFilter === d ? '' : (isDarkMode ? 'bg-slate-800' : 'bg-white')}`}>
-                          D{d}
-                        </button>
-                      ))}
-                      <button onClick={() => setNavDayFilter('unlinked')}
-                        className={`px-2.5 py-1 rounded-full text-[9px] font-black whitespace-nowrap flex-shrink-0 border transition-all ${navDayFilter === 'unlinked' ? 'bg-slate-600 text-white border-slate-600' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}>
-                        미지정
-                      </button>
-                    </div>
-                    {/* 핀 목록 */}
-                    <div className="max-h-40 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
-                      {shownPins.length === 0 ? (
-                        <p className="text-xs text-slate-400 text-center py-4">해당하는 핀이 없습니다.</p>
-                      ) : shownPins.map(pin => (
-                        <button key={pin.id} onClick={() => {
-                          if (navSelectingFor === 'origin') setNavOrigin(pin);
-                          else if (navSelectingFor === 'dest') setNavDest(pin);
-                          else setNavWaypoints(prev => prev.map((w, i) => i === navSelectingFor ? pin : w));
-                          setNavSelectingFor(null);
-                          setNavDayFilter('all');
-                        }} className={`w-full flex items-center space-x-2 px-3 py-2 text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
-                          <span style={{ color: getDayColor(safeTimeline.find(p => S(p.place).trim() === S(pin.name).trim())?.day) || '#94a3b8' }} className="text-xs">📍</span>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-xs font-black truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{S(pin.name)}</p>
-                            {pin.localName && <p className="text-[10px] text-slate-400 truncate">{S(pin.localName)}</p>}
-                          </div>
-                          {(() => {
-                            const linked = safeTimeline.find(p => S(p.place).trim() === S(pin.name).trim());
-                            return linked ? <span style={{ background: getDayColor(linked.day) }} className="text-[8px] font-black text-white px-1.5 py-0.5 rounded-full flex-shrink-0">D{linked.day}</span> : null;
-                          })()}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 이동 수단 → 출발 */}
-              {navOrigin && navDest && (
-                <div className="space-y-2 pt-1">
-                  {/* 구글 네비 */}
-                  <p className={`text-[9px] font-bold px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>구글맵</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[['walking','🚶 도보'],['driving','🚗 자동차'],['transit','🚌 대중교통']].map(([mode, label]) => (
-                      <button key={mode} onClick={() => openGoogleNav(mode)}
-                        className="bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-[11px] font-black transition-all shadow-md">
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  {/* 카카오 네비 */}
-                  <p className={`text-[9px] font-bold px-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>🟡 카카오맵</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[['CAR','🚗 자동차'],['PUBLICTRANSIT','🚌 대중교통'],['WALK','🚶 도보']].map(([by, label]) => (
-                      <button key={by} onClick={() => openKakaoNav(by)}
-                        className="bg-yellow-400 hover:bg-yellow-500 active:scale-95 text-yellow-900 py-2.5 rounded-xl text-[11px] font-black transition-all shadow-md">
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        );
-      })()}
+      <NavModal
+        isOpen={isNavModalOpen} onClose={() => setIsNavModalOpen(false)}
+        isDarkMode={isDarkMode} currentRestaurants={currentRestaurants}
+        navOrigin={navOrigin} setNavOrigin={setNavOrigin} navDest={navDest} setNavDest={setNavDest} navWaypoints={navWaypoints} setNavWaypoints={setNavWaypoints}
+        navSelectingFor={navSelectingFor} setNavSelectingFor={setNavSelectingFor} navDayFilter={navDayFilter} setNavDayFilter={setNavDayFilter}
+        planTimeline={planTimeline} tripDays={tripDays} getDayColor={getDayColor} showToast={showToast}
+      />
 
       {/* --- 메인 컨텐츠 영역 --- */}
       <main 
@@ -5906,7 +3716,7 @@ const planData = {
         }}
       >
         <header className={`min-h-[48px] sm:min-h-[56px] ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-b flex items-center justify-between px-3 sm:px-5 flex-shrink-0 z-20 transition-colors duration-300 overflow-hidden`} style={{maxWidth:'100vw'}}>
-          <div className="flex items-center flex-1 space-x-2 sm:space-x-4">
+          <div className="flex items-center flex-1 min-w-0 space-x-2 sm:space-x-4">
             <button className={`p-1.5 rounded-lg ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'} transition-all duration-300 active:scale-95`} onClick={() => setIsMobileMenuOpen(true)}>
               <Menu className="w-5 h-5" />
             </button>
@@ -5973,7 +3783,25 @@ const planData = {
               const lbl = `absolute top-0.5 left-0.5 text-[6px] font-black leading-none ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`;
 
               return (
-                <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-hidden">
+                <div
+                  className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto custom-scrollbar select-none cursor-grab active:cursor-grabbing"
+                  onMouseDown={(e) => {
+                    const el = e.currentTarget;
+                    const d = weatherDragRef.current;
+                    d.down = true; d.didDrag = false;
+                    d.startX = e.pageX; d.scrollLeft = el.scrollLeft;
+                  }}
+                  onMouseUp={() => { weatherDragRef.current.down = false; }}
+                  onMouseLeave={() => { weatherDragRef.current.down = false; }}
+                  onMouseMove={(e) => {
+                    const d = weatherDragRef.current;
+                    if (!d.down) return;
+                    e.preventDefault();
+                    const dx = e.pageX - d.startX;
+                    if (Math.abs(dx) > 4) d.didDrag = true;
+                    e.currentTarget.scrollLeft = d.scrollLeft - dx;
+                  }}
+                >
                   {/* Day 요약 카드들 */}
                   {tripDays.map(d => {
                     const dateStr = getDateStringForDay(d);
@@ -5982,7 +3810,7 @@ const planData = {
                     const isExpanded = expandedWeatherDay === d;
                     return (
                       <div key={d}
-                        onClick={() => { setExpandedWeatherDay(isExpanded ? null : d); if (!hourlyWeatherCache[fallbackCityKey]) handleWeatherDayClick(d); }}
+                        onClick={() => { if (weatherDragRef.current.didDrag) return; setExpandedWeatherDay(isExpanded ? null : d); if (!hourlyWeatherCache[fallbackCityKey]) handleWeatherDayClick(d); }}
                         style={cardStyle}
                         className={`${cardCls} ${baseCard} ${isExpanded ? (isDarkMode ? 'border-indigo-500 bg-indigo-900/40' : 'border-indigo-400 bg-indigo-50') : ''}`}>
                         <span className={`${lbl} ${isExpanded ? 'text-indigo-400' : ''}`}>D{d}</span>
@@ -5995,7 +3823,7 @@ const planData = {
                   {expandedSlots.length > 0 && <div className={`w-px h-6 flex-shrink-0 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`} />}
                   {/* 펼쳐진 시간대 카드들 */}
                   {expandedSlots.map(slot => (
-                    <div key={slot.key} onClick={() => setIsWeatherModalOpen(true)}
+                    <div key={slot.key} onClick={() => { if (weatherDragRef.current.didDrag) return; setIsWeatherModalOpen(true); }}
                       style={cardStyle}
                       className={`${cardCls} ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700' : 'bg-indigo-50 border-indigo-200'}`}>
                       <span className={`${lbl} text-indigo-400`}>{slot.label}</span>
@@ -6008,7 +3836,7 @@ const planData = {
             })()}
           </div>
           
-          <div className="flex items-center space-x-1 sm:space-x-2">
+          <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
             {isSharedTripActive && (
               <button onClick={handleCloneSharedTrip} className={`hidden md:flex px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 bg-orange-500 text-white shadow-sm hover:bg-orange-600 active:scale-95 items-center mr-1`}>
                 <span className="mr-1">💾</span> 내 일정으로 복사(가져오기)
@@ -6029,264 +3857,18 @@ const planData = {
         <div className="flex-1 w-full flex flex-col relative z-0 min-h-max">
           
           {/* --- Dashboard Tab --- */}
-          <div className={`p-2 sm:p-4 pt-3 sm:pt-4 pb-4 flex flex-col gap-3 transition-opacity duration-300 ${activeTab === 'dashboard' ? 'block opacity-100 z-10 flex-1' : 'hidden opacity-0 -z-10 pointer-events-none'}`}>
-            <div className="flex items-end justify-between px-1 flex-shrink-0">
-              <h2 className={`text-xs sm:text-sm font-bold flex items-center gap-1.5 tracking-tight transition-colors duration-300 ${textMain}`}>
-                <Wallet className="w-3.5 h-3.5" /> 실시간 동시 환율
-                <button onClick={() => fetchRealTimeRates(true)} className={`ml-2 px-2 py-0.5 rounded-md flex items-center space-x-1 border shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-700 text-indigo-400 hover:bg-slate-700' : 'bg-white border-slate-200 text-indigo-500 hover:bg-indigo-50'}`}>
-                  <RefreshCw className={`w-3 h-3 ${loadingRates ? 'animate-spin' : ''}`} />
-                  <span className="text-[9px] font-bold">업데이트</span>
-                </button>
-              </h2>
-              {errorRates && <span className="text-rose-500 text-[10px] font-bold ml-2 animate-in fade-in">{errorRates}</span>}
-              {!errorRates && ratesUpdatedAt && (
-                <span className={`text-[9px] font-bold ml-2 ${textMuted}`}>
-                  {(() => {
-                    const mins = Math.floor((Date.now() - ratesUpdatedAt) / 60000);
-                    if (mins < 1) return '방금 업데이트';
-                    if (mins < 60) return `${mins}분 전 업데이트`;
-                    return `${Math.floor(mins / 60)}시간 전 업데이트`;
-                  })()}
-                </span>
-              )}
-              <div className="flex items-center space-x-1.5 ml-auto">
-<button onClick={handleOpenGoogleTranslate} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-800 text-indigo-300 border border-slate-700 hover:bg-slate-700' : 'bg-white text-indigo-600 border border-slate-200 hover:bg-indigo-50'}`}>
-                  <Globe className="w-3.5 h-3.5" />
-                  <span>AI 번역기</span>
-                </button>
-                <button onClick={() => setIsExpenseModalOpen(true)} className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1.5 shadow-sm transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-rose-900/50 text-rose-400 border border-rose-700 hover:bg-rose-900/70' : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'}`}>
-                  <Wallet className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">여행정산</span>
-              <span className="sm:hidden">정산</span>
-              {totalExpenseKrw > 0 && <span className="font-black">₩{totalExpenseKrw.toLocaleString()}</span>}
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-5 w-full gap-1 sm:gap-3 flex-shrink-0 pb-1">
-              {CURRENCIES.map(cur => {
-                const isFocused = focusedCurrency === cur.code;
-                return (
-                  <div key={cur.code} className={`flex flex-col items-center justify-center p-1 sm:p-3 rounded-lg sm:rounded-xl border transition-all duration-300 relative ${isFocused ? (isDarkMode ? 'border-indigo-400 bg-slate-800 shadow-md' : 'border-indigo-400 bg-indigo-50 shadow-md') : `${cardBg} shadow-sm hover:shadow`}`}>
-                    <span className={`text-[8px] sm:text-[10px] font-bold mb-0.5 sm:mb-1 uppercase truncate w-full text-center transition-colors duration-300 ${isFocused ? 'text-indigo-500' : textMuted}`}>{cur.label}</span>
-                    <input 
-                      type="text" inputMode="decimal" value={getInputValue(cur.code)} onChange={(e) => handleInputChange(cur.code, e.target.value)} onFocus={() => setFocusedCurrency(cur.code)} onBlur={() => setFocusedCurrency(null)} placeholder={getPlaceholder(cur.code)} 
-                      className={`w-full bg-transparent border-none outline-none text-center text-[10px] sm:text-base font-black p-0 focus:ring-0 transition-colors duration-300 placeholder:font-medium placeholder:text-slate-400 ${isFocused ? 'text-indigo-600' : textMain}`} 
-                    />
-                    <span className={`text-[7px] sm:text-[9px] font-bold mt-0.5 sm:mt-1 transition-all duration-300 ${isFocused ? 'text-indigo-400' : (amount ? textMuted : 'opacity-30')}`}>{amount ? cur.sym : '₩'}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* 모바일에서만 렌더링되는 항공권 */}
-            {renderFlightCards()}
-
-            <div className="flex-1 flex flex-row gap-1 sm:gap-4 overflow-hidden min-h-0 h-full w-full relative" style={{"--mob-left": `${panelRatio}%`}}>
-              
-              {/* Left Panel */}
-              <div className={`max-md:w-[var(--mob-left)] md:w-[40%] ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full relative rounded-2xl sm:rounded-3xl shrink-0 transition-colors duration-300`}>
-                <div className={`flex flex-col mb-1.5 sm:mb-3 flex-shrink-0 border-b pb-1.5 relative z-10 transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                  <div className={`flex items-center justify-between space-x-1.5 mb-1 sm:mb-2 transition-colors duration-300 ${textMuted}`}>
-                    <div className="flex items-center space-x-1.5">
-                      <Calendar className="w-3 h-3 flex-shrink-0" />
-                      <span className="text-[8px] sm:text-[10px] font-bold tracking-tight truncate">{getDayDateString(dashboardDay)}</span>
-                    </div>
-                    {activeRegionForDay && (
-                      <span className={`text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>
-                        📍 {activeRegionForDay}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-1.5">
-<div className="flex items-center justify-between w-full">
-                      <h3 className={`flex items-center gap-1 text-[10px] sm:text-xs font-bold tracking-tight leading-tight truncate mr-1 transition-colors duration-300 ${textMain}`}><ListChecks className="w-3 h-3 flex-shrink-0" /> 오늘의 계획</h3>
-                      <div className="flex space-x-1 flex-shrink-0">
-                        <button onClick={() => setIsDashboardPackingOpen(true)} className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}><Backpack className="w-3 h-3" /> 준비물</button>
-                        <button onClick={() => setIsDashboardShoppingOpen(true)} className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[8px] sm:text-[9px] font-bold transition-all duration-300 active:scale-95 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}><ShoppingBag className="w-3 h-3" /> 쇼핑</button>
-                      </div>
-                    </div>
-                    <div className={`grid gap-0.5 p-0.5 rounded-md w-full xl:w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
-
-                      {tripDays.map(d => {
-                         const wInfo = getWeatherForDay(d);
-                         return (
-                           <button key={d} onClick={() => { setDashboardDay(d); }} className={`h-8 sm:h-10 flex flex-col items-center justify-center rounded flex-shrink-0 transition-all duration-300 border ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border-slate-200/50' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
-                             <span className="text-[7px] sm:text-[8px] font-bold">D{d}</span>
-                             {wInfo ? <span className="text-[7px] sm:text-[8px] leading-none mt-0.5">{wInfo[1]}</span> : <div className="h-1 sm:h-2"></div>}
-                           </button>
-                         );
-                      })}
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col space-y-1 sm:space-y-2 pr-1 relative z-10 scroll-smooth">
-                  {todayPlans.length === 0 ? (
-                     <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`flex-1 flex flex-col items-center justify-center text-[8px] sm:text-[10px] ${textMuted} font-bold text-center rounded-lg border border-dashed cursor-pointer transition-all duration-300 active:scale-[0.99] ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 hover:border-indigo-400 hover:bg-slate-100'}`}>
-                       <span>일정이 없습니다.<br/>클릭하여 추가!</span>
-                     </div>
-                  ) : (
-                    todayPlans.map((plan) => {
-                      const isActive = activeMobileCard === plan.id;
-                      const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-600 md:hover:border-indigo-400' : 'border-slate-100 md:hover:border-indigo-400');
-                      
-                      // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명 포함 시 무조건 전용 카드 적용)
-                      const isTransportTheme = plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword));
-// [버그 수정 1] 교통편 렌더링 조건 완화 (테마명에 교통수단 포함 시 전용 카드 적용)
-                      if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
-                        const isRentalDep = plan.id === 'trans_rental_dep' || S(plan.place).includes('렌터카 대여');
-                        const isRentalArr = plan.id === 'trans_rental_arr' || S(plan.place).includes('렌터카 반납');
-                        const isRentalCard = isRentalDep || isRentalArr;
-                        const rentalMeta = plan.rentalMeta || {};
-                        const rentalPlace = isRentalDep ? rentalMeta.depPlace : isRentalArr ? rentalMeta.arrPlace : '';
-                        const rentalCompany = rentalMeta.company || S(plan.localName);
-                        const rentalCarType = rentalMeta.carType || '';
-                        return (
-                          <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group`}
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
-                                 else setActiveMobileCard(plan.id);
-                               }}>
-                            {plan.time !== '99:99' && <div className="bg-indigo-500 text-white font-black text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">{S(plan.time)}</div>}
-                            <div className="flex-1 min-w-0 flex flex-col px-0.5">
-                              <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
-                                {S(plan.place)}
-                              </span>
-                              <div className="flex flex-col sm:flex-row sm:items-center mt-0.5 gap-0.5 sm:gap-2">
-                                {isRentalCard ? (
-                                  <>
-                                    {rentalPlace && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">📍 {rentalPlace}</span>}
-                                    {(rentalCompany || rentalCarType) && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{[rentalCompany, rentalCarType].filter(Boolean).join(' · ')}</span>}
-                                  </>
-                                ) : (
-                                  <>
-                                    {plan.localName && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">🏢 {S(plan.localName)}</span>}
-                                    {plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>}
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                               <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
-                               <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
-                            </div>
-                          </div>
-                        )
-                      }
-
-                      return (
-                      <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1 sm:p-2 rounded-lg border cursor-pointer shadow-sm transition-all duration-300 group relative ${cardBorder} ${isDarkMode ? 'bg-slate-700 hover:bg-slate-600' : 'bg-white hover:bg-slate-50'}`} onClick={(e) => { 
-                         e.stopPropagation(); 
-                         if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); }
-                         else setActiveMobileCard(plan.id);
-                      }}>
-                        {(plan.isAccommodation || plan.time !== '99:99') && <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-[7px] sm:text-[9px] px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 transition-colors">
-                          {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
-                        </div>}
-                        <div className="flex-1 min-w-0 flex flex-col px-0.5">
-                          <span className={`text-[8px] sm:text-[11px] font-bold truncate transition-colors duration-300 ${textMain}`}>
-                            {S(plan.place)} {plan.isAccommodation && '🏠'}
-                          </span>
-                          {plan.features && <span className={`text-[6px] sm:text-[9px] truncate mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</span>}
-                        </div>
-                        
-{/* 오늘의 계획 전용: 카드 내부 우측 가로 배치 메뉴 */}
-                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-row space-x-1.5 p-1 rounded-lg border shadow-md bg-white/95 dark:bg-slate-800/95 border-slate-200 dark:border-slate-600 z-10 transition-all duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none'}`}>
-                            <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1.5 transition-colors active:scale-90"><span className="text-[10px]">✏️</span></button>
-                            <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1.5 transition-colors active:scale-90"><span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
-                        </div>
-                      </div>
-                    )})
-                  )}
-                </div>
-{/* 대시보드 하단 요약 뷰는 상단 탭 모달로 깔끔하게 통합되었습니다. */}
-              </div>
-
-              {/* Drag Handle */}
-              <div 
-                 className="w-1.5 bg-slate-200/60 dark:bg-slate-700 hover:bg-indigo-400 rounded-full flex-shrink-0 md:hidden flex items-center justify-center cursor-col-resize active:bg-indigo-500 transition-colors duration-300"
-                 onMouseDown={handleDragStart}
-                 onTouchStart={handleDragStart}
-              >
-                <div className="w-0.5 h-8 bg-slate-400/50 dark:bg-slate-500 rounded-full pointer-events-none"></div>
-              </div>
-
-              {/* Right Panel */}
-              <div className={`flex-1 ${cardBg} p-1.5 sm:p-3 flex flex-col min-h-0 h-full relative rounded-2xl sm:rounded-3xl transition-colors duration-300`}>
-                <div className="flex items-center justify-between mb-1.5 sm:mb-3 flex-shrink-0 relative z-30">
-                  <h3 className={`text-[10px] sm:text-sm font-bold tracking-tight flex items-center transition-colors duration-300 ${textMain}`}>
-                    <span className="truncate max-w-[100px] sm:max-w-none flex items-center gap-1"><Plane className="w-3.5 h-3.5 flex-shrink-0" /> 여행 리스트({S(displayCityName)})</span>
-                  </h3>
-                  <div className="flex items-center space-x-1 sm:space-x-2">
-                    <div className={`grid gap-0.5 p-0.5 rounded-md min-w-[70px] sm:min-w-[100px] w-full max-w-[120px] overflow-y-auto custom-scrollbar max-h-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
-                      {tripDays.map(d => (
-                         <button key={d} onClick={() => { setDashboardDay(d); }} className={`px-1 py-0.5 text-[7px] sm:text-[8px] font-bold rounded flex-shrink-0 transition-all duration-300 border ${dashboardDay === d ? 'bg-white text-indigo-600 shadow-sm border-slate-200/50' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
-                           D{d}
-                         </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col min-h-0 scroll-smooth">
-                 {/* 여행 리스트 카드: 컴팩트한 3열 배치 (교통편은 숨기고 오늘의 계획에만 표출) */}
-                  <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-1.5 content-start">
-                    {(() => {
-                      // [버그 수정] 여행 리스트 갤러리에서는 교통/항공편 관련 카드를 완전히 필터링하여 레이아웃을 깔끔하게 유지합니다.
-                      const travelListPlans = todayPlans.filter(plan => !(plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))));
-                      
-                      if (travelListPlans.length === 0) {
-                        return (
-                           <div onClick={(e) => { e.stopPropagation(); changeTab('plan'); }} className={`col-span-full flex flex-col items-center justify-center rounded-xl border border-dashed h-20 sm:h-24 cursor-pointer transition-all duration-300 active:scale-[0.99] ${textMuted} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-indigo-500 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 hover:border-indigo-400 hover:bg-white'}`}>
-                             <span className="text-[9px] sm:text-[11px] font-bold">일정이 없습니다. 추가해 보세요!</span>
-                           </div>
-                        );
-                      }
-
-                      return travelListPlans.map((plan) => {
-                        const isActive = activeMobileCard === plan.id;
-                        const cardBorder = isActive ? 'border-indigo-400' : (isDarkMode ? 'border-slate-700 md:hover:border-indigo-500' : 'border-slate-200 md:hover:border-indigo-400');
-                        
-                        return (
-                        <div 
-                          key={plan.id} 
-                          className={`rounded-lg border shadow-sm overflow-hidden flex flex-col transition-all duration-300 group relative hover:shadow-md ${cardBorder} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-white'}`}
-                        >
-                          {/* 교통편이 이미 필터링되었으므로 조건부 렌더링을 제거하고 항상 예쁜 사진 영역을 띄웁니다. */}
-                          <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} 
-                               onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                            <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" onClick={plan.photo ? (e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); } : undefined} />
-                            {plan.photos && plan.photos.length > 1 && <div className="absolute top-1 right-1 bg-black/60 text-white text-[7px] font-bold px-1 py-0.5 rounded shadow-sm">📸 {plan.photos.length}</div>}
-                            {(plan.isAccommodation || plan.time !== '99:99') && <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">
-                              {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
-                            </div>}
-                            <div className={`absolute inset-0 bg-black/30 flex items-center justify-center transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0'}`}><span className="text-white text-[8px] sm:text-[10px] font-bold">터치하여 상세 보기</span></div>
-                          </div>
-                          
-                          <div className={`flex flex-col p-1.5 flex-1 cursor-pointer justify-start min-w-0 transition-colors duration-300 ${isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50/50'}`} 
-                               onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                            <h4 className={`font-black text-[9px] sm:text-[11px] truncate tracking-tight mb-0.5 transition-colors duration-300 ${textMain}`}>
-                              {S(plan.place)} {plan.isAccommodation && '🏠'}
-                            </h4>
-                            {plan.localName && <p className="text-[7px] sm:text-[9px] text-indigo-500 font-bold truncate mb-0.5 sm:mb-1">{S(plan.localName)}</p>}
-                            {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-auto transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
-                          </div>
-                          
-                          {/* 모바일 탭 & PC 호버 수정/삭제 메뉴 */}
-                          <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-col space-y-1 rounded-lg border shadow-md p-0.5 z-10 transition-all duration-300 ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                             <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-1 transition-colors"><span className="text-xs">✏️</span></button>
-                             <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-1 transition-colors"><span className="text-xs"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
-                          </div>
-                        </div>
-                      )})
-                    })()}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <DashboardTab
+            activeTab={activeTab} textMain={textMain} textMuted={textMuted} isDarkMode={isDarkMode} cardBg={cardBg}
+            fetchRealTimeRates={fetchRealTimeRates} loadingRates={loadingRates} errorRates={errorRates} ratesUpdatedAt={ratesUpdatedAt}
+            handleOpenGoogleTranslate={handleOpenGoogleTranslate} setIsExpenseModalOpen={setIsExpenseModalOpen} totalExpenseKrw={totalExpenseKrw}
+            amount={amount} focusedCurrency={focusedCurrency} setFocusedCurrency={setFocusedCurrency} handleInputChange={handleInputChange} getInputValue={getInputValue} getPlaceholder={getPlaceholder}
+            renderFlightCards={renderFlightCards} panelRatio={panelRatio} handleDragStart={handleDragStart}
+            dashboardDay={dashboardDay} setDashboardDay={setDashboardDay} getDayDateString={getDayDateString} activeRegionForDay={activeRegionForDay}
+            setIsDashboardPackingOpen={setIsDashboardPackingOpen} setIsDashboardShoppingOpen={setIsDashboardShoppingOpen}
+            tripDays={tripDays} getWeatherForDay={getWeatherForDay} todayPlans={todayPlans}
+            activeMobileCard={activeMobileCard} setActiveMobileCard={setActiveMobileCard} setSelectedPlanInfo={setSelectedPlanInfo}
+            handleEditPlanClick={handleEditPlanClick} handleDeletePlan={handleDeletePlan} changeTab={changeTab} displayCityName={displayCityName} openPhotoViewer={openPhotoViewer}
+          />
 
           {/* --- Plan Tab --- */}
           <div className={`p-2 sm:p-4 pt-3 pb-4 flex flex-col transition-opacity duration-300 ${activeTab === 'plan' ? 'block opacity-100 z-10 flex-1' : 'hidden opacity-0 -z-10 pointer-events-none'}`}>
@@ -6368,777 +3950,63 @@ const planData = {
             </div>
             
             <div className={`flex-1 flex flex-col md:flex-row overflow-hidden h-full rounded-2xl sm:rounded-3xl custom-scrollbar transition-colors duration-300 ${cardBg}`}>
-              <div ref={planAddFormRef} className={`w-full md:w-[22rem] lg:w-96 p-3 sm:p-4 border-b md:border-b-0 md:border-r flex flex-col flex-shrink-0 md:overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50/50'}`}>
-                <div className="space-y-2 mt-1">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>일차 선택</label>
-                    <div className="flex space-x-1">
-                      <button onClick={addDay} className="bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-indigo-100 transition-colors duration-300">+ Day 추가</button>
-                      {maxDay > 1 && <button onClick={removeDay} className="bg-rose-50 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm hover:bg-rose-100 transition-colors duration-300">- Day 삭제</button>}
-                    </div>
-                  </div>
-                  
-                  {/* [NEW] 4칸씩 줄바꿈(접힘) 처리되는 그리드 */}
-                  <div className={`grid gap-1 border rounded-lg p-1 shadow-sm mb-2 max-h-24 overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200/80'}`} style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
-                    {tripDays.map(d => (
-                      <button key={d} onClick={() => setNewDay(d)} className={`flex-1 text-[10px] font-black py-1.5 rounded transition-all duration-300 is-tag ${newDay === d ? 'bg-indigo-600 text-white shadow-md scale-110 z-10' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 hover:bg-indigo-100'}`}>D{d}</button>
-                    ))}
-                  </div>
+              <PlanFormPanel
+                planAddFormRef={planAddFormRef} textMuted={textMuted} isDarkMode={isDarkMode} inputBg={inputBg} appTheme={appTheme}
+                maxDay={maxDay} addDay={addDay} removeDay={removeDay} tripDays={tripDays}
+                newDay={newDay} setNewDay={setNewDay}
+                planCountry={planCountry} setPlanCountry={setPlanCountry} manualCountry={manualCountry} setManualCountry={setManualCountry}
+                planRegion={planRegion} setPlanRegion={setPlanRegion} manualRegion={manualRegion} setManualRegion={setManualRegion}
+                newTheme={newTheme} setNewTheme={setNewTheme}
+                newTime={newTime} setNewTime={setNewTime} handleTimeInput={handleTimeInput}
+                newPlace={newPlace} setNewPlace={setNewPlace}
+                currentRestaurants={currentRestaurants} kakaoCategoryResults={kakaoCategoryResults}
+                pinSelectOpen={pinSelectOpen} setPinSelectOpen={setPinSelectOpen}
+                newLocalName={newLocalName} setNewLocalName={setNewLocalName}
+                newFeatures={newFeatures} setNewFeatures={setNewFeatures} handleSavePlan={handleSavePlan}
+                newPlanPhotos={newPlanPhotos} setNewPlanPhotos={setNewPlanPhotos}
+                planFileInputRef={planFileInputRef} handlePlanPhotoUpload={handlePlanPhotoUpload}
+                supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId}
+                newIsAccommodation={newIsAccommodation} setNewIsAccommodation={setNewIsAccommodation}
+                newAccommodationDays={newAccommodationDays} setNewAccommodationDays={setNewAccommodationDays}
+                editingPlanId={editingPlanId} resetPlanForm={resetPlanForm}
+                setIsPackingModalOpen={setIsPackingModalOpen} setIsShoppingModalOpen={setIsShoppingModalOpen}
+                globalPlanCountry={globalPlanCountry} globalManualCountry={globalManualCountry} globalPlanRegion={globalPlanRegion} globalManualRegion={globalManualRegion}
+              />
 
-                  <div className="flex space-x-2">
-                    <div className="flex flex-col space-y-1 w-1/2">
-                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>국가 <Globe className="w-3 h-3 inline" /></label>
-                      <div className={`w-full border px-2 py-1.5 h-8 flex items-center rounded transition-colors duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}>
-                        <SelectOrInput 
-                          inputId="form-country-input"
-                          value={planCountry} manualValue={manualCountry} isDarkMode={isDarkMode} appTheme={appTheme}
-                          options={Object.keys(REGIONS_BY_COUNTRY)}
-                          onChangeSelect={e => {setPlanCountry(e.target.value); setPlanRegion(""); setManualCountry(""); setManualRegion("");}}
-                          onChangeManual={val => setManualCountry(val)}
-                          onCancelManual={() => { setPlanCountry(""); setManualCountry(""); }}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex flex-col space-y-1 w-1/2">
-                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>지역 <MapPin className="w-3 h-3 inline" /></label>
-                      <div className={`w-full border px-2 py-1.5 h-8 flex items-center rounded transition-colors duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}>
-                        <SelectOrInput 
-                          inputId="form-region-input"
-                          value={planRegion} manualValue={manualRegion} isDarkMode={isDarkMode} appTheme={appTheme}
-                          options={(!planCountry || planCountry === '수동입력') ? null : REGIONS_BY_COUNTRY[planCountry]}
-                          onChangeSelect={e => {setPlanRegion(e.target.value); setManualRegion("");}}
-                          onChangeManual={val => setManualRegion(val)}
-                          onCancelManual={() => { setPlanRegion(""); setManualRegion(""); }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-               <div className="flex space-x-2 items-end">
-                <div className="flex flex-col space-y-1 w-1/4">
-                  <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>테마 <Tag className="w-3 h-3 inline" /></label>
-                  <select value={newTheme} onChange={e => setNewTheme(e.target.value)} className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}>
-                    <option value="교통편">교통편</option>
-                    <option value="식당">식당</option>
-                    <option value="디저트">디저트</option>
-                    <option value="관광지">관광지</option>
-                    <option value="쇼핑">쇼핑</option>
-                    <option value="숙소">숙소</option>
-                    <option value="기타">기타</option>
-                  </select>
-                </div>
-                <div className="flex flex-col space-y-1 w-1/4">
-                  <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>시간 <Clock className="w-3 h-3 inline" /></label>
-                  <input 
-                    type="text" 
-                    maxLength="5"
-
-                        value={newTime} 
-                        onChange={(e) => handleTimeInput(e, setNewTime)} 
-                        placeholder="09:00" 
-                        className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`} 
-                      />
-                    </div>
-                    <div className="flex flex-col space-y-1 flex-1 relative">
-                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>장소 <MapPin className="w-3 h-3 inline" /></label>
-                      <input
-                        type="text"
-                        placeholder="장소 이름 입력"
-                        value={newPlace}
-                        onChange={(e) => setNewPlace(e.target.value)}
-                        className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm pr-6 rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
-                      />
-                    </div>
-                  </div>
-
-                  {/* 내 핀 + 카테고리 검색 결과에서 선택 - 커스텀 드롭다운 */}
-                  {(currentRestaurants.filter(r => r && r.name).length > 0 || kakaoCategoryResults.length > 0) && (
-                    <div className="flex flex-col space-y-1">
-                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>
-                        {kakaoCategoryResults.length > 0 ? '내 핀 / 지도 검색 결과에서 선택 📌' : '내 핀에서 선택 📌'}
-                      </label>
-                      <div className="relative" onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}>
-                        <button
-                          type="button"
-                          onClick={() => setPinSelectOpen(v => !v)}
-                          className={`w-full border p-1.5 text-[10px] font-bold text-left rounded shadow-sm flex items-center justify-between transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600 text-slate-200' : 'border-slate-200/80 text-slate-700'}`}
-                        >
-                          <span className={textMuted}>— 목록에서 불러오기 —</span>
-                          <span className="ml-1">{pinSelectOpen ? '▲' : '▼'}</span>
-                        </button>
-                        {pinSelectOpen && (
-                          <div className={`absolute left-0 right-0 top-full mt-1 z-50 border rounded-lg shadow-xl overflow-y-auto max-h-44 custom-scrollbar ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
-                            {/* 내 핀 목록 */}
-                            {currentRestaurants.filter(r => r && r.name).map(pin => (
-                              <button
-                                key={pin.id}
-                                type="button"
-                                onClick={() => {
-                                  setNewPlace(S(pin.name));
-                                  if (pin.localName) setNewLocalName(S(pin.localName));
-                                  if (pin.signature && S(pin.signature) !== "직접 추가한 장소") setNewFeatures(S(pin.signature));
-                                  if (pin.imgs && pin.imgs.length > 0) { setNewPlanPhotos(pin.imgs); } else if (pin.img) { setNewPlanPhotos([S(pin.img)]); }
-                                  setNewIsAccommodation(Boolean(pin.isAccommodation));
-                                  setNewTheme(S(pin.theme) || "기타");
-                                  {
-                                    const globalC = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : globalManualCountry;
-                                    const globalR = globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : globalManualRegion;
-                                    if (globalC && Object.keys(REGIONS_BY_COUNTRY).includes(globalC)) {
-                                      setPlanCountry(globalC);
-                                      const inList = REGIONS_BY_COUNTRY[globalC]?.includes(globalR) ? globalR : '수동입력';
-                                      setPlanRegion(inList);
-                                      setManualRegion(inList === '수동입력' ? globalR : '');
-                                      setManualCountry('');
-                                    } else if (globalC) {
-                                      setPlanCountry('수동입력'); setManualCountry(globalC);
-                                      setPlanRegion('수동입력'); setManualRegion(globalR);
-                                    }
-                                  }
-                                  setPinSelectOpen(false);
-                                }}
-                                className={`w-full text-left px-3 py-2 text-[10px] font-bold flex items-center gap-1 transition-colors ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-indigo-50'}`}
-                              >
-                                <span>{pin.isAccommodation ? '🏠' : pin.isLandmark ? '⭐' : '📍'}</span>
-                                <span className="truncate">{S(pin.name)}{pin.localName ? ` (${S(pin.localName)})` : ''}</span>
-                              </button>
-                            ))}
-                            {/* 카테고리 검색 결과 */}
-                            {kakaoCategoryResults.length > 0 && (
-                              <>
-                                {currentRestaurants.filter(r => r && r.name).length > 0 && (
-                                  <div className={`px-3 py-1 text-[9px] font-bold border-t ${isDarkMode ? 'text-slate-400 border-slate-600' : 'text-slate-400 border-slate-100'}`}>지도 검색 결과</div>
-                                )}
-                                {kakaoCategoryResults.map((place, idx) => (
-                                  <button
-                                    key={`cat-${idx}`}
-                                    type="button"
-                                    onClick={() => {
-                                      setNewPlace(place.place_name);
-                                      setPinSelectOpen(false);
-                                    }}
-                                    className={`w-full text-left px-3 py-2 text-[10px] font-bold flex items-center gap-1 transition-colors ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-rose-50'}`}
-                                  >
-                                    <span>🔍</span>
-                                    <span className="truncate">{place.place_name}</span>
-                                    {place.road_address_name && <span className={`text-[9px] ml-auto flex-shrink-0 ${textMuted}`}>{place.road_address_name.split(' ').slice(-2).join(' ')}</span>}
-                                  </button>
-                                ))}
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex space-x-2 items-end">
-                    <div className="flex flex-col space-y-1 flex-1">
-                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>현지어(복사용)</label>
-                      <input type="text" placeholder="현지어 입력" value={newLocalName} onChange={e => setNewLocalName(e.target.value)} className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`} />
-                    </div>
-                    <div className="flex flex-col space-y-1 flex-1">
-                      <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>메모</label>
-                      <input type="text" placeholder="간단 메모" value={newFeatures} onChange={(e) => setNewFeatures(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSavePlan()} className={`w-full border p-1.5 text-[10px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none shadow-sm rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`} />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col space-y-1 w-full pt-1">
-                    <label className={`text-[9px] font-bold px-1 transition-colors duration-300 ${textMuted}`}>사진 추가 (최대 3장)</label>
-                    <input type="file" accept="image/*" multiple ref={planFileInputRef} onChange={(e) => handlePlanPhotoUpload(e, false)} className="hidden" />
-                    <div className="flex gap-1.5">
-                      {newPlanPhotos.map((img, i) => (
-                        <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border flex-shrink-0 shadow-sm cursor-pointer" style={{borderColor: i === 0 ? '#6366f1' : undefined}} onClick={e => { e.stopPropagation(); if (i !== 0) setNewPlanPhotos(prev => { const arr = [...prev]; arr.splice(i, 1); arr.unshift(img); return arr; }); }}>
-                          <img src={img} className="w-full h-full object-cover" alt="" />
-                          <button type="button" onClick={e => { e.stopPropagation(); setNewPlanPhotos(prev => prev.filter((_, idx) => idx !== i)); }} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] leading-none hover:bg-black/90"><X className="w-[1em] h-[1em] inline" /></button>
-                          <div className={`absolute bottom-0 left-0 right-0 text-white text-[7px] text-center font-bold py-0.5 ${i === 0 ? 'bg-indigo-600/80' : 'bg-black/40'}`}>{i === 0 ? '대표' : '탭=대표'}</div>
-                        </div>
-                      ))}
-                      {newPlanPhotos.length < 3 && (
-                        <button type="button" onClick={() => planFileInputRef.current?.click()} className={`w-16 h-16 rounded-lg border-dashed border-2 flex flex-col items-center justify-center gap-0.5 flex-shrink-0 transition-colors ${isDarkMode ? 'border-slate-500 text-slate-400 hover:bg-slate-700' : 'border-slate-300 text-slate-400 hover:bg-slate-50'}`}>
-                          <span className="text-lg leading-none">+</span>
-                          <span className="text-[8px] font-bold">사진 추가</span>
-                        </button>
-                      )}
-                    </div>
-                    {newPlanPhotos.length < 3 && (
-                      <input
-                        type="text"
-                        placeholder="URL 붙여넣기 후 Enter (웹 사진 복사 후 Ctrl+V)"
-                        className={`w-full border p-1.5 text-[9px] font-bold focus:ring-1 focus:ring-indigo-500 outline-none rounded transition-all duration-300 ${inputBg} ${isDarkMode ? 'border-slate-600' : 'border-slate-200/80'}`}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            const url = e.target.value.trim();
-                            if (!url) return;
-                            setNewPlanPhotos(prev => prev.length < 3 ? [...prev, url] : prev);
-                            e.target.value = '';
-                          }
-                        }}
-                        onPaste={e => {
-                          const items = e.clipboardData?.items;
-                          if (!items) return;
-                          for (let i = 0; i < items.length; i++) {
-                            if (items[i].type.indexOf('image') !== -1) {
-                              e.preventDefault();
-                              const file = items[i].getAsFile();
-                              compressAndStoreImage(supabaseClient, appUserId, activeTripId, file, compressed => {
-                                setNewPlanPhotos(prev => prev.length < 3 ? [...prev, compressed] : prev);
-                              });
-                              e.target.value = '';
-                              return;
-                            }
-                          }
-                        }}
-                      />
-                    )}
-                  </div>
-
-                  <div className="my-1.5 px-1 pb-1">
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" id="planIsAcc" checked={newIsAccommodation} onChange={e => { setNewIsAccommodation(e.target.checked); if (e.target.checked) { setNewTheme("숙소"); } else { setNewAccommodationDays([]); } }} className="accent-indigo-600 w-3.5 h-3.5 cursor-pointer" />
-                      <label htmlFor="planIsAcc" className={`text-[10px] font-bold cursor-pointer transition-colors duration-300 flex items-center gap-1 ${textMuted}`}>이 장소를 숙소로 설정 <Home className="w-3 h-3" /></label>
-                    </div>
-                    {newIsAccommodation && (
-                      <div className="mt-2 ml-5">
-                        <p className={`text-[9px] font-bold mb-1.5 ${textMuted}`}>숙박 Day 선택 (복수 선택 가능)</p>
-                        <div className="flex flex-wrap gap-1">
-                          {tripDays.map(d => (
-                            <button
-                              key={d}
-                              type="button"
-                              onClick={() => setNewAccommodationDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])}
-                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${newAccommodationDays.includes(d) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : (isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}
-                            >D{d}</button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-1 flex space-x-2">
-                    {editingPlanId && (
-                      <button onClick={resetPlanForm} className={`px-3 py-2.5 rounded text-[11px] font-bold border transition-all duration-300 active:scale-95 ${isDarkMode ? 'border-slate-600 text-slate-400 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>초기화</button>
-                    )}
-                    <button onClick={handleSavePlan} className={`flex-1 text-white rounded py-2.5 text-[11px] font-bold shadow-md active:scale-95 transition-all duration-300 ${editingPlanId ? 'bg-orange-500 hover:bg-orange-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-                      <span>{editingPlanId ? '✅ 수정 완료' : '스케줄에 등록! ✨'}</span>
-                    </button>
-                  </div>
-                    <div className="flex space-x-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
-                     <button onClick={() => setIsPackingModalOpen(true)} className={`flex-1 rounded-lg py-2.5 text-[11px] font-bold shadow-sm transition-colors duration-300 flex justify-center items-center gap-1.5 border ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
-                      <Backpack className="w-3.5 h-3.5" /> 준비물 입력
-                    </button>
-                     <button onClick={() => setIsShoppingModalOpen(true)} className={`flex-1 rounded-lg py-2.5 text-[11px] font-bold shadow-sm transition-colors duration-300 flex justify-center items-center gap-1.5 border ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
-                      <ShoppingBag className="w-3.5 h-3.5" /> 쇼핑리스트
-                     </button>
-                  </div>
-
-                </div>
-              </div>
-
-              <div className={`flex-1 min-h-0 p-2 sm:p-4 w-full overflow-y-auto custom-scrollbar transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100/50'}`}>
-                <div className="grid gap-2 sm:gap-3 pb-2 auto-rows-fr" style={{gridTemplateColumns: `repeat(${Math.min(tripDays.length, 4)}, minmax(0, 1fr))`}}>
-                  {tripDays.map(day => (
-                    <div key={day} className={`flex flex-col rounded-xl border overflow-hidden shadow-sm transition-colors duration-300 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200'}`}>
-                      <div className={`py-1.5 flex flex-col items-center border-b flex-shrink-0 transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}>
-                        <span className={`text-[10px] sm:text-[11px] font-bold leading-tight transition-colors duration-300 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-                          Day {day}
-                        </span>
-                        <span className={`text-[7px] sm:text-[8px] mt-0.5 transition-colors duration-300 ${textMuted}`}>{getDayDateString(day)}</span>
-                      </div>
-                      <div className={`flex-1 overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-                        
-                        {/* 숙소(isAccommodation) 아이템 상단 고정 렌더링 — Day별 필터 */}
-                        {planTimeline.filter(p => {
-                          if (!p || !p.isAccommodation) return false;
-                          const _days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
-                          return _days.length === 0 || _days.includes(day);
-                        }).map(plan => {
-                          const isActive = activeMobileCard === plan.id;
-                          return (
-                            <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border shadow-sm bg-yellow-50/50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 relative group cursor-pointer transition-all duration-300 hover:shadow-md ${isActive ? 'border-indigo-400' : ''}`}
-                                 onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
-                               <div className="flex justify-between items-start mb-1">
-                                 <span className="text-[8px] font-bold text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/50 px-1 py-0.5 rounded shadow-sm leading-none">🏠 숙소{Array.isArray(plan.accommodationDays) && plan.accommodationDays.length > 0 ? ` (D${plan.accommodationDays.join(',D')})` : ''}</span>
-                                  <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex flex-col space-y-1 p-0.5 rounded-lg border shadow-md bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 z-10 transition-all duration-300 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
-                                   <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
-                                 </div>
-                               </div>
-                               <div className="flex gap-1.5 items-start mt-1">
-                                 <div className="flex-1 min-w-0 flex flex-col cursor-pointer" >
-                                   <p className={`text-[9px] sm:text-[10px] font-bold leading-tight line-clamp-2 transition-colors duration-300 ${textMain}`}>{S(plan.place)}</p>
-                                   {plan.localName && (
-                                     <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70 transition-opacity" onClick={(e) => handleCopyLocalName(e, plan.localName)}>
-                                       📋 {S(plan.localName)}
-                                     </p>
-                                   )}
-                                   {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
-                                 </div>
-                                 {plan.photo && (
-                                   <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500" onClick={(e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); }}>
-                                     <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
-                                     {plan.photos && plan.photos.length > 1 && <div className="absolute bottom-0 right-0 bg-black/60 text-white text-[7px] font-bold px-1 leading-tight rounded-tl">{plan.photos.length}</div>}
-                                   </div>
-                                 )}
-                               </div>
-                            </div>
-                          );
-                        })}
-
-                        {/* 일반 일정 렌더링 로직 */}
-                        {(() => {
-                          const _safePT = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-                          const _hasRental = _safePT.some(p => p.id === 'trans_rental_dep' || p.id === 'trans_rental_arr');
-                          const _dayPlans = _safePT.filter(p => {
-                            if (!p || p.isAccommodation) return false;
-                            if (parseInt(p.day || 1) !== day) return false;
-                            if (_hasRental && !String(p.id).startsWith('trans_rental_') && S(p.place).includes('렌터카')) return false;
-                            return true;
-                          });
-                          const _hasAccomm = _safePT.some(p => {
-                            if (!p || !p.isAccommodation) return false;
-                            const _days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
-                            return _days.length === 0 || _days.includes(day);
-                          });
-                          return _dayPlans.length === 0 && !_hasAccomm ? (
-                           <div className={`flex flex-col items-center justify-center h-full min-h-[100px] text-[8px] sm:text-[9px] transition-colors duration-300 ${textMuted}`}>
-                             <span>일정 없음</span>
-                           </div>
-                          ) : _dayPlans.map((plan) => {
-                            const isActive = activeMobileCard === plan.id;
-
-                            // [버그 수정 1] 교통편 렌더링 조건 완화 (테마명 포함 시 무조건 전용 카드 적용)
-                            const isTransportTheme = plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword));
-                            // [버그 수정 1] 교통/항공권 렌더링 조건 완화 (테마명에 교통수단 포함 시 전용 카드)
-                            if (plan.isTransport || ['교통', '항공', '비행기', '기차', '버스', '배'].some(keyword => S(plan.theme).includes(keyword))) {
-                              return (
-                                <div key={plan.id} className={`flex items-center space-x-1 sm:space-x-2 p-1.5 sm:p-2.5 rounded-lg border shadow-sm transition-all duration-300 bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 relative group cursor-pointer ${isActive ? 'border-indigo-400' : ''}`}
-                                     onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
-                                  {plan.time !== '99:99' && <div className="bg-indigo-600 text-white font-black text-[7px] sm:text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 shadow-sm is-tag">{S(plan.time)}</div>}
-                                  <div className="flex-1 min-w-0 flex flex-col px-0.5">
-                                    <span className={`text-[9px] sm:text-[12px] font-black truncate text-indigo-700 dark:text-indigo-300 leading-tight`}>
-                                      {S(plan.place)}
-                                    </span>
-                                    <div className="flex flex-col sm:flex-row sm:items-center mt-0.5 gap-0.5 sm:gap-2">
-                                       {plan.localName && <span className="text-[7px] sm:text-[9px] text-slate-500 dark:text-slate-400 font-bold truncate">🏢 {S(plan.localName)}</span>}
-                                       {plan.features && <span className="text-[7px] sm:text-[9px] text-slate-400 dark:text-slate-500 font-medium truncate bg-white dark:bg-slate-800 px-1 rounded shadow-sm inline-block">{S(plan.features)}</span>}
-                                    </div>
-                                  </div>
-                                  <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex space-x-1 rounded border shadow-sm transition-all duration-300 bg-white/90 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                                     <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs">✏️</span></button>
-                                     <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 sm:p-1 transition-colors"><span className="text-[10px] sm:text-xs"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
-                                  </div>
-                                </div>
-                              )
-                            }
-
-                            return (
-                            <div key={plan.id} className={`p-1.5 sm:p-2 rounded-lg border relative group transition-all duration-300 hover:shadow-md cursor-pointer ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white'} ${isActive ? 'border-indigo-400' : 'md:hover:border-indigo-300'}`} onClick={(e) => { e.stopPropagation(); guardPlanForm(() => { loadPlanToForm(plan); setActiveMobileCard(plan.id); }); }}>
-                              <div className="flex justify-between items-start mb-1">
-                                {plan.time !== '99:99' && <span className="text-[8px] font-bold text-white bg-indigo-500 px-1 py-0.5 rounded shadow-sm leading-none transition-transform duration-300 hover:scale-105">{S(plan.time)}</span>}
-                                <div className={`transition-all duration-300 flex space-x-1 rounded border absolute top-1 right-1 z-10 shadow-sm ${isDarkMode ? 'bg-slate-700/90 border-slate-600' : 'bg-white/90 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 md:group-hover:opacity-100 pointer-events-none md:group-hover:pointer-events-auto'}`}>
-                                  <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="text-slate-500 hover:text-indigo-600 p-0.5 transition-colors"><span className="text-[10px]">✏️</span></button>
-                                  <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"><span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span></button>
-                                </div>
-                              </div>
-                              <div className="flex gap-1.5 items-start mt-1">
-                                <div className="flex-1 min-w-0 flex flex-col cursor-pointer" >
-                                  <p className={`text-[9px] sm:text-[10px] font-bold leading-tight line-clamp-2 transition-colors duration-300 ${textMain}`}>{S(plan.place)}</p>
-                                  {plan.localName && (
-                                    <p className="text-[7px] text-indigo-500 font-bold mt-0.5 truncate hover:opacity-70 transition-opacity" onClick={(e) => handleCopyLocalName(e, plan.localName)}>
-                                      📋 {S(plan.localName)}
-                                    </p>
-                                  )}
-                                  {plan.features && <p className={`text-[7px] sm:text-[8px] line-clamp-2 leading-tight mt-0.5 transition-colors duration-300 ${textMuted}`}>{S(plan.features)}</p>}
-                                </div>
-                                {plan.photo && !plan.isTransport && (
-                                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded border border-slate-200 overflow-hidden cursor-pointer relative flex-shrink-0 group-hover:scale-105 transition-transform duration-500" onClick={(e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); }}>
-                                    <img src={plan.photo} className="w-full h-full object-cover transition-opacity" alt="" />
-                                    {plan.photos && plan.photos.length > 1 && <div className="absolute bottom-0 right-0 bg-black/60 text-white text-[7px] font-bold px-1 leading-tight rounded-tl">{plan.photos.length}</div>}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}); })()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <PlanTimelinePanel
+                isDarkMode={isDarkMode} textMuted={textMuted} textMain={textMain} tripDays={tripDays} getDayDateString={getDayDateString} planTimeline={planTimeline}
+                activeMobileCard={activeMobileCard} setActiveMobileCard={setActiveMobileCard} guardPlanForm={guardPlanForm} loadPlanToForm={loadPlanToForm}
+                handleEditPlanClick={handleEditPlanClick} handleDeletePlan={handleDeletePlan} handleCopyLocalName={handleCopyLocalName} openPhotoViewer={openPhotoViewer}
+              />
             </div>
           </div>
 
           {/* --- Map Tab --- */}
           {/* --- Archive (Travel History) Tab --- */}
-          <div className={`absolute inset-0 flex flex-col p-2 sm:p-5 overflow-hidden transition-opacity duration-300 ${activeTab === 'archive' ? 'visible opacity-100 z-10' : 'invisible opacity-0 -z-10 pointer-events-none'}`}>
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3 flex-shrink-0">
-              <div>
-                <h2 className={`text-lg font-black flex items-center gap-1.5 ${textMain}`}><Camera className="w-4 h-4" /> 소중한 여행기록 <span className="ml-2 text-xs font-bold text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">{trips.filter(t => t.archived).length}개의 추억</span></h2>
-                <p className={`text-[10px] font-bold ${textMuted} mt-0.5`}>완료된 여행들을 이곳에서 다시 꺼내보세요.</p>
-              </div>
-              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shadow-inner">
-                {['전체', '국내', '해외'].map(cat => (
-                  <button key={cat} onClick={() => setArchiveFilterLocation(cat)} className={`px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${archiveFilterLocation === cat ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>{cat}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 scroll-smooth">
-              {(() => {
-                const archived = trips.filter(t => t.archived);
-                if (archived.length === 0) return (
-                  <div className="h-full flex flex-col items-center justify-center py-20 text-center opacity-40">
-                    <span className="text-6xl mb-4">🏜️</span>
-                    <p className="text-sm font-black">아직 완료된 여행이 없습니다.</p>
-                    <p className="text-xs font-bold mt-1">지금 여행중인 일정을 완료하면 이곳에 나타납니다!</p>
-                  </div>
-                );
-
-                // 연도별 그룹화 로직
-                const years = [...new Set(archived.map(t => new Date(t.finishDate || Date.now()).getFullYear()))].sort((a,b) => b - a);
-
-                return years.map(year => {
-                  const yearTrips = archived.filter(t => new Date(t.finishDate || Date.now()).getFullYear() === year);
-                  return (
-                    <div key={year} className="mb-10 last:mb-0">
-                      <div className="flex items-center mb-4 space-x-3">
-                        <span className="text-lg font-black text-indigo-500">{year}년</span>
-                        <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800"></div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-{yearTrips.map(trip => (
-                          <div 
-                            key={trip.id} 
-                            onClick={() => {
-                              handleSwitchTrip(trip.id);
-                              setActiveTab('dashboard'); // 클릭 시 대시보드로 복귀
-                            }} 
-                            className={`group relative flex flex-col p-4 rounded-3xl border-2 transition-all duration-500 cursor-pointer hover:shadow-2xl hover:-translate-y-1 ${
-                              activeTripId === trip.id 
-                                ? 'border-indigo-500 bg-indigo-50/20 ring-4 ring-indigo-500/10' 
-                                : `${cardBg} border-transparent hover:border-indigo-200`
-                            }`}
-                          >
-                            <div className="flex justify-between items-start mb-3">
-                              <div className="w-10 h-10 rounded-2xl bg-indigo-100 flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform">🛫</div>
-                              <div className="text-right">
-                                <span className="text-[9px] font-black text-slate-400 block mb-0.5">FINISH DATE</span>
-                                <span className="text-[10px] font-bold text-slate-500">{new Date(trip.finishDate).toLocaleDateString()}</span>
-                              </div>
-                            </div>
-                            <h3 className={`text-sm font-black mb-1.5 ${textMain} line-clamp-1`}>{S(trip.name)}</h3>
-                            <div className="flex flex-wrap gap-1.5 mt-auto">
-                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-500 rounded text-[9px] font-bold"># {year}년 추억</span>
-                              {activeTripId === trip.id && <span className="px-2 py-0.5 bg-indigo-600 text-white rounded text-[9px] font-black animate-pulse">현재 선택됨</span>}
-                            </div>
-                            <div className={`absolute inset-0 bg-indigo-600/5 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity`}></div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </div>
-          <div className={`absolute inset-0 flex flex-col p-2 sm:p-4 pt-3 pb-4 overflow-hidden transition-opacity duration-300 ${activeTab === 'map' ? 'visible opacity-100 z-10' : 'invisible opacity-0 -z-10 pointer-events-none'}`}>
-            <div className="flex flex-col gap-2 mb-2 flex-shrink-0 relative z-20">
-              
-              {/* 필터 및 색상 동기화 패널 */}
-<div className="flex flex-col space-y-2 pb-1">
-                {/* [지도 타입 전환 + Day 필터] */}
-                <div className="flex items-center space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth px-0.5">
-                  <button onClick={() => toggleMapDay('all')} className={`px-4 py-1.5 rounded-full text-[10px] font-black whitespace-nowrap transition-all duration-300 is-tag ${mapActiveDays.includes('all') ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'}`}>전체 Day</button>                   {tripDays.map(d => {
-                     const color = getDayColor(d);
-                     const isActive = mapActiveDays.includes(d);
-return (
-                       <button key={d} onClick={() => toggleMapDay(d)} style={{ backgroundColor: isActive ? color : (isDarkMode ? '#1e293b' : 'white'), color: isActive ? 'white' : color, borderColor: color }} className={`px-3 py-1.5 rounded-full text-[10px] font-bold border whitespace-nowrap transition-all duration-300 ${isActive ? 'shadow-md scale-105' : 'hover:opacity-80'}`}>Day {d}</button>
-                     )
-                   })}
-                   
-                   {/* [추가됨] 미지정 핀 필터 버튼 복구 및 가로 정렬 유지 */}
-                   <button onClick={() => toggleMapDay('unlinked')} className={`px-3 py-1.5 rounded-full text-[10px] font-bold whitespace-nowrap border transition-all duration-300 ${mapActiveDays.includes('unlinked') ? 'bg-slate-500 text-white border-slate-500 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}`}>
-                     미지정 핀
-                   </button>
-                </div>
-                {/* [테마 필터 - 신설] */}
-                <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
-                   {['all', '교통편', '식당', '디저트', '관광지', '쇼핑', '숙소', '기타'].map(t => (
-                     <button key={t} onClick={() => {
-                        setMyPinsThemeFilter(prev => {
-                           let arr = Array.isArray(prev) ? prev : [prev];
-                           if (t === 'all') return ['all'];
-                           let newThemes = arr.filter(x => x !== 'all');
-                           if (newThemes.includes(t)) newThemes = newThemes.filter(x => x !== t);
-                           else newThemes.push(t);
-                           return newThemes.length === 0 ? ['all'] : newThemes;
-                        });
-                     }} className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${myPinsThemeFilter.includes(t) ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}`}>
-                       {t === 'all' ? '테마 전체' : t}
-                     </button>
-                   ))}
-                </div>
-                {/* 카카오맵 장소 카테고리 검색 필터 (복수 선택) */}
-                {isKakaoMap && (
-                  <div className="flex space-x-1.5 overflow-x-auto custom-scrollbar pb-1 scroll-smooth">
-                    {/* 전체 해제 버튼 */}
-                    <button
-                      onClick={() => setKakaoCategory([])}
-                      className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${kakaoCategory.length === 0 ? 'bg-slate-500 text-white border-slate-500 shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200')}`}
-                    >장소 전체</button>
-                    {[
-                      { code: 'FD6', label: '🍽️ 식당' },
-                      { code: 'CE7', label: '☕ 카페' },
-                      { code: 'AT4', label: '🏛️ 관광지' },
-                      { code: 'CS2', label: '🏪 편의점' },
-                      { code: 'AD5', label: '🏨 숙박' },
-                      { code: 'MT1', label: '🛒 마트' },
-                    ].map(({ code, label }) => {
-                      const isActive = kakaoCategory.includes(code);
-                      const hex = KAKAO_CAT_COLORS[code] || '#6366f1';
-                      return (
-                        <button key={code}
-                          onClick={() => setKakaoCategory(prev => {
-                            const arr = Array.isArray(prev) ? prev : [];
-                            return arr.includes(code) ? arr.filter(c => c !== code) : [...arr, code];
-                          })}
-                          style={isActive ? { background: hex, borderColor: hex, color: 'white' } : {}}
-                          className={`px-3 py-1 rounded-full text-[9px] font-bold whitespace-nowrap border transition-all ${isActive ? 'shadow-md' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200')}`}
-                        >{label}</button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                <div className="relative w-full sm:w-64">
-                   <div className={`flex items-center shadow-sm rounded-lg overflow-hidden border transition-colors duration-300 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-300 bg-white'}`}>
-                      <span className={`ml-3 flex items-center transition-colors duration-300 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}><Search className="w-3.5 h-3.5" /></span>
-                      <input
-                        type="text"
-                        value={S(markerSearchQuery)}
-                        onChange={e => setMarkerSearchQuery(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter' && isKakaoMap && kakaoMapInstanceRef.current && window.kakao) {
-                            try {
-                              // 이전 검색 마커 제거
-                              kakaoSearchMarkersRef.current.forEach(m => { try { m.setMap(null); } catch(_) {} });
-                              kakaoSearchMarkersRef.current = [];
-                              const kakao = window.kakao;
-                              const ps = new kakao.maps.services.Places();
-                              ps.keywordSearch(markerSearchQuery, (data, status) => {
-                                if (status === kakao.maps.services.Status.OK && data.length > 0) {
-                                  // 첫 번째 결과로 지도 이동
-                                  kakaoMapInstanceRef.current.setCenter(new kakao.maps.LatLng(parseFloat(data[0].y), parseFloat(data[0].x)));
-                                  kakaoMapInstanceRef.current.setLevel(4);
-                                  // 검색 결과 마커 표시 (최대 5개)
-                                  data.slice(0, 5).forEach((place, idx) => {
-                                    const el = document.createElement('div');
-                                    el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
-                                    el.innerHTML = `
-                                      <div style="background:#4f46e5;color:white;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35);">${idx + 1}</div>
-                                      <div style="background:white;border:1px solid #e2e8f0;border-radius:6px;padding:2px 6px;font-size:10px;font-weight:700;color:#1e293b;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.12);margin-top:2px;max-width:100px;overflow:hidden;text-overflow:ellipsis;">${place.place_name}</div>
-                                    `;
-                                    const overlay = new kakao.maps.CustomOverlay({
-                                      position: new kakao.maps.LatLng(parseFloat(place.y), parseFloat(place.x)),
-                                      content: el,
-                                      yAnchor: 1.1,
-                                      zIndex: 15,
-                                    });
-                                    overlay.setMap(kakaoMapInstanceRef.current);
-                                    kakaoSearchMarkersRef.current.push(overlay);
-                                  });
-                                  showToast(`🔍 "${markerSearchQuery}" 검색 결과 ${Math.min(data.length, 5)}개`);
-                                } else {
-                                  showToast("검색 결과가 없습니다.");
-                                }
-                              });
-                            } catch(e) {}
-                          }
-                        }}
-                        placeholder={isKakaoMap ? "장소 검색 (한국어·영어·주소)..." : "내 지도 핀 검색..."}
-                        className={`w-full pl-2 pr-8 py-2 bg-transparent text-[11px] font-bold focus:outline-none transition-colors duration-300 ${isDarkMode ? 'text-white placeholder-slate-400' : 'text-slate-800'}`}
-                      />
-                      {markerSearchQuery && (
-                        <button onClick={() => {
-                          setMarkerSearchQuery("");
-                          kakaoSearchMarkersRef.current.forEach(m => { try { m.setMap(null); } catch(_) {} });
-                          kakaoSearchMarkersRef.current = [];
-                        }} className="absolute right-3 text-slate-400 hover:text-slate-600 transition-colors"><X className="w-[1em] h-[1em] inline" /></button>
-                      )}
-                   </div>
-                   {markerSearchQuery && filteredMarkers.length > 0 && (
-                     <div className={`absolute top-full left-0 right-0 mt-1 border rounded-lg shadow-xl overflow-hidden max-h-40 overflow-y-auto custom-scrollbar animate-in fade-in duration-200 transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
-                        {filteredMarkers.map(marker => (
-                          <button
-                            key={marker.id}
-                            onClick={() => handleMarkerSearchSelect(marker)}
-                            className={`w-full text-left px-3 py-2.5 text-[11px] font-bold border-b last:border-0 flex items-center transition-colors duration-300 ${isDarkMode ? 'text-slate-200 border-slate-700 hover:bg-slate-700' : 'text-slate-700 border-slate-100 hover:bg-indigo-50'}`}
-                          >
-                            <div className={`w-2 h-2 rounded-full mr-2.5 ${planTimeline.some(p=>S(p.place)===S(marker.name))?'bg-orange-500':'bg-blue-500'}`}></div>
-                            <span className="truncate flex-1">{S(marker.name)}</span>
-                            <span className={`text-[9px] ml-2 ${textMuted}`}>{S(marker.city)}</span>
-                          </button>
-                        ))}
-                     </div>
-                   )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5">
-                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
-                      <input type="checkbox" checked={showMapRoute} onChange={e => setShowMapRoute(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
-                      <Map className="w-3 h-3" /><span>루트표기</span>
-                   </label>
-                   <button onClick={() => setIsMyPinsModalOpen(true)} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-all duration-300 shadow-sm active:scale-95 ${isDarkMode ? 'bg-indigo-900/50 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}>
-                      <MapPin className="w-3 h-3" /><span>내 핀 목록</span>
-                   </button>
-                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
-                      <input type="checkbox" checked={isPinMode} onChange={e => setIsPinMode(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
-                      <MapPin className="w-3 h-3" /><span>핀 설정</span>
-                   </label>
-                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
-                      <input type="checkbox" checked={showMapPhotos} onChange={e => setShowMapPhotos(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
-                      <span>사진</span>
-                   </label>
-                   <label className={`flex items-center space-x-1 border px-2 py-1.5 rounded-md text-[10px] font-bold shadow-sm cursor-pointer transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
-                      <input type="checkbox" checked={showMapLabels} onChange={e => setShowMapLabels(e.target.checked)} className="accent-indigo-600 w-3 h-3 cursor-pointer" />
-                      <span>이름</span>
-                   </label>
-                   <button onClick={handleFindMyLocation} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-all duration-300 shadow-sm active:scale-95 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
-                      <Compass className="w-3 h-3" /><span>현재 위치</span>
-                   </button>
-                   <button onClick={() => { setNavOrigin(null); setNavDest(null); setIsNavModalOpen(true); }} className={`border px-2 py-1.5 rounded-md text-[10px] font-bold flex items-center space-x-1 transition-all duration-300 shadow-sm active:scale-95 ${isDarkMode ? 'bg-green-900/50 border-green-600 text-green-300 hover:bg-green-900/70' : 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'}`}>
-                      <Navigation className="w-3 h-3" /><span>네비게이션</span>
-                   </button>
-                </div>
-              </div>
-            </div>
-            
-            <div className={`flex-1 relative overflow-hidden min-h-0 flex flex-col items-center justify-center p-0.5 rounded-3xl transition-colors duration-300 ${cardBg}`} style={{touchAction:'none'}}>
-              <div className="w-full h-full rounded-3xl overflow-hidden relative">
-                {/* 로딩 표시 */}
-                {((isKakaoMap && !isKakaoMapLoaded) || (!isKakaoMap && !isLeafletLoaded)) && (
-                  <div className={`absolute inset-0 z-20 flex flex-col items-center justify-center transition-colors duration-300 ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-400'}`}>
-                    <span className="text-xl animate-spin inline-block mb-2">🔄</span>
-                    <span className="text-[10px] font-bold">{isKakaoMap ? '카카오맵' : '구글맵'} 로딩 중...</span>
-                  </div>
-                )}
-                {/* 우측 상단 지도 타입 토글 */}
-                <div className="absolute top-2 right-2 z-30 flex rounded-xl overflow-hidden shadow-md" style={{backdropFilter:'blur(4px)'}}>
-                  <button
-                    onClick={() => setMapTypeOverride('kakao')}
-                    className={`px-2.5 py-1.5 text-[9px] font-black transition-all duration-200 ${isKakaoMap ? 'bg-yellow-400 text-yellow-900' : (isDarkMode ? 'bg-slate-700/90 text-slate-400' : 'bg-white/90 text-slate-400')}`}
-                  >카카오</button>
-                  <button
-                    onClick={() => setMapTypeOverride('leaflet')}
-                    className={`px-2.5 py-1.5 text-[9px] font-black transition-all duration-200 ${!isKakaoMap ? 'bg-blue-500 text-white' : (isDarkMode ? 'bg-slate-700/90 text-slate-400' : 'bg-white/90 text-slate-400')}`}
-                  >구글</button>
-                </div>
-                {/* Leaflet(구글) 지도 — 항상 DOM에 존재, visibility로 전환 */}
-                <div id="leaflet-map" ref={mapContainerRef} className="absolute inset-0 z-10 bg-transparent w-full h-full cursor-crosshair outline-none" style={{visibility: isKakaoMap ? 'hidden' : 'visible', touchAction:'pan-x pan-y'}}></div>
-                {/* 카카오맵 — 항상 DOM에 존재, visibility로 전환 */}
-                <div ref={kakaoMapContainerRef} className="absolute inset-0 z-10 w-full h-full cursor-crosshair" style={{visibility: isKakaoMap ? 'visible' : 'hidden', touchAction:'pan-x pan-y'}}></div>
-              </div>
-            </div>
-          </div>
+          <ArchiveTab
+            activeTab={activeTab} trips={trips} archiveFilterLocation={archiveFilterLocation} setArchiveFilterLocation={setArchiveFilterLocation}
+            textMain={textMain} textMuted={textMuted} cardBg={cardBg} isDarkMode={isDarkMode} activeTripId={activeTripId} handleSwitchTrip={handleSwitchTrip} setActiveTab={setActiveTab}
+            setTripToDelete={setTripToDelete}
+          />
+          <MapTab
+            activeTab={activeTab} mapActiveDays={mapActiveDays} toggleMapDay={toggleMapDay} tripDays={tripDays} getDayColor={getDayColor} isDarkMode={isDarkMode}
+            myPinsThemeFilter={myPinsThemeFilter} setMyPinsThemeFilter={setMyPinsThemeFilter}
+            isKakaoMap={isKakaoMap} kakaoCategory={kakaoCategory} setKakaoCategory={setKakaoCategory}
+            markerSearchQuery={markerSearchQuery} setMarkerSearchQuery={setMarkerSearchQuery} kakaoMapInstanceRef={kakaoMapInstanceRef} kakaoSearchMarkersRef={kakaoSearchMarkersRef} showToast={showToast}
+            filteredMarkers={filteredMarkers} handleMarkerSearchSelect={handleMarkerSearchSelect} planTimeline={planTimeline} textMuted={textMuted}
+            showMapRoute={showMapRoute} setShowMapRoute={setShowMapRoute} setIsMyPinsModalOpen={setIsMyPinsModalOpen}
+            isPinMode={isPinMode} setIsPinMode={setIsPinMode}
+            showMapPhotos={showMapPhotos} setShowMapPhotos={setShowMapPhotos}
+            showMapLabels={showMapLabels} setShowMapLabels={setShowMapLabels}
+            handleFindMyLocation={handleFindMyLocation}
+            setNavOrigin={setNavOrigin} setNavDest={setNavDest} setIsNavModalOpen={setIsNavModalOpen}
+            cardBg={cardBg} isKakaoMapLoaded={isKakaoMapLoaded} isLeafletLoaded={isLeafletLoaded} setMapTypeOverride={setMapTypeOverride}
+            mapContainerRef={mapContainerRef} kakaoMapContainerRef={kakaoMapContainerRef}
+          />
         </div>
       </main>
 
-      {/* 폰트 및 요소 개별 스케일 동적 적용 CSS */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-        
-        :root {
-          --font-scale: ${fontScale};
-          /* [NEW] 글자 색상 동적 변수 할당 */
-          --main-text-color: ${(() => {
-            if (appTextColor === 'original') return isDarkMode ? '#f1f5f9' : '#0f172a'; // 초기 테마는 기본 시스템 색상 따름
-            if (appTextColor === 'high-contrast') return isDarkMode ? '#ffffff' : '#000000'; // 고대비: 완전 흰색/검정
-            if (appTextColor === 'monochrome') return isDarkMode ? '#94a3b8' : '#64748b'; // 단색: 뚜렷하게 옅은 회색
-            return isDarkMode ? '#e2e8f0' : '#1e293b'; // 기본값: 고대비보다 한 톤 옅은 짙은 회색
-          })()};
-        }
-
-        /* [수정 완료] 전역 글자색 로직 최적화 및 가독성 보호 */
-        body { color: var(--main-text-color); }
-        
-        /* 유색 배경의 태그/버튼들은 전역 글자색 변경에서 제외하여 가독성 확보 */
-        .is-tag, .is-tag *, .text-white, .text-white *, 
-        .bg-indigo-600 *, .bg-indigo-500 *, .bg-rose-500 *, .bg-orange-500 *, .bg-emerald-500 *, .bg-pink-500 * { 
-          color: white !important; 
-          text-shadow: 0 1px 1px rgba(0,0,0,0.1);
-        }
-
-        ${appTextColor !== 'original' && appTextColor !== 'default' ? `
-          /* 일반 텍스트들만 선택된 글자색으로 변경 */
-          p, span:not(.is-tag), div:not(.is-tag), h1, h2, h3, h4, h5, h6, label {
-            color: var(--main-text-color) !important;
-          }
-        ` : ''}
-
-        /* 아이콘 및 특수 컴포넌트 보호 */
-        .no-recolor, .no-recolor *, .leaflet-container *, .leaflet-popup-content * { color: inherit !important; }
-
-        /* Tailwind 텍스트 클래스들 동적 오버라이드 (폰트 스케일 적용) */
-        .text-\\[6px\\] { font-size: calc(6px * var(--font-scale)) !important; }
-        .text-\\[7px\\] { font-size: calc(7px * var(--font-scale)) !important; }
-        .text-\\[8px\\] { font-size: calc(8px * var(--font-scale)) !important; }
-        .text-\\[9px\\] { font-size: calc(9px * var(--font-scale)) !important; }
-        .text-\\[10px\\] { font-size: calc(10px * var(--font-scale)) !important; }
-        .text-\\[11px\\] { font-size: calc(11px * var(--font-scale)) !important; }
-        .text-xs { font-size: calc(0.75rem * var(--font-scale)) !important; line-height: calc(1rem * var(--font-scale)) !important; }
-        .text-sm { font-size: calc(0.875rem * var(--font-scale)) !important; line-height: calc(1.25rem * var(--font-scale)) !important; }
-        .text-base { font-size: calc(1rem * var(--font-scale)) !important; line-height: calc(1.5rem * var(--font-scale)) !important; }
-        .text-lg { font-size: calc(1.125rem * var(--font-scale)) !important; line-height: calc(1.75rem * var(--font-scale)) !important; }
-        .text-xl { font-size: calc(1.25rem * var(--font-scale)) !important; line-height: calc(1.75rem * var(--font-scale)) !important; }
-        .text-2xl { font-size: calc(1.5rem * var(--font-scale)) !important; line-height: calc(2rem * var(--font-scale)) !important; }
-        
-        body {
-          font-family: inherit;
-          -webkit-font-smoothing: antialiased;
-          -moz-osx-font-smoothing: grayscale;
-          overflow: hidden;
-          scrollbar-width: none;
-        }
-        body::-webkit-scrollbar { display: none; }
-        html { overflow: hidden; scrollbar-width: none; }
-        html::-webkit-scrollbar { display: none; }
-
-        /* 스크롤바 공간 완전 제거 - 레이아웃에 영향 없이 콘텐츠 위에 오버레이로만 표시 */
-        * {
-          scrollbar-width: none;
-        }
-        *::-webkit-scrollbar {
-          width: 0px;
-          height: 0px;
-          background: transparent;
-        }
-        /* 스크롤 가능 영역은 overflow:overlay로 레이아웃 공간 미차지 */
-        .overflow-y-auto, .overflow-x-auto, .custom-scrollbar {
-          overflow: overlay !important;
-        }
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.4); border-radius: 10px; }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71,85,105,0.5); }
-        input[type="text"], input[type="password"], input[type="date"], select { font-variant-numeric: tabular-nums; }
-        .leaflet-container { z-index: 10; font-family: inherit; background: transparent; border-radius: 1rem; transition: filter 0.3s; }
-        .dark .leaflet-container { filter: brightness(0.8) contrast(1.2); }
-        .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); border: 1px solid #e2e8f0; transition: all 0.3s; }
-        .dark .leaflet-popup-content-wrapper { background: #1e293b; border-color: #334155; color: white; }
-        .leaflet-popup-content { margin: 12px; font-family: inherit; line-height: 1.4; }
-        .leaflet-popup-tip { background: #fff; border-top: 1px solid #e2e8f0; border-left: 1px solid #e2e8f0; transition: all 0.3s; }
-        .dark .leaflet-popup-tip { background: #1e293b; border-top-color: #334155; border-left-color: #334155; }
-
-        /* [NEW] 배달의민족 스타일 통통 튀는 모션 및 그림자 애니메이션 */
-        @keyframes baemin-bounce {
-          0% { transform: translateY(0px) scaleY(0.95); }
-          100% { transform: translateY(-12px) scaleY(1.05); }
-        }
-        @keyframes baemin-shadow {
-          0% { transform: translateX(-50%) scale(1); opacity: 0.4; }
-          100% { transform: translateX(-50%) scale(0.5); opacity: 0.1; }
-        }
-      `}} />
+      <DynamicStyles fontScale={fontScale} appTextColor={appTextColor} isDarkMode={isDarkMode} />
     </div>
   );
 };
