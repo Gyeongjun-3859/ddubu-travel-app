@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -2294,67 +2295,58 @@ function deletePackingItem(id) {
 
 
   useEffect(() => {
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
-    script.async = true;
-    
-    script.onload = async () => {
+    (async () => {
       try {
-        if (window.supabase) {
-          const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-          setSupabaseClient(client);
+        const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        setSupabaseClient(client);
 
-          const savedAuthStr = localStorage.getItem('my_travel_auth');
-          if (savedAuthStr) {
-            const savedAuth = JSON.parse(savedAuthStr);
-            const { id, pw, autoLogin, saveIdPw } = savedAuth;
-            
-            if (saveIdPw) { setIdInput(S(id)); setPwInput(S(pw)); setSaveCredentials(true); }
-            if (autoLogin) {
-              try {
-                // 1) 이미 전환된 계정이면 Supabase가 들고 있는 세션으로 바로 복원
-                const { data: sessionData } = await client.auth.getSession();
-                let profile = null;
-                if (sessionData?.session) {
-                  const { data: profileRow } = await client.from('profiles').select('trips, activeTripId').eq('app_user_id', S(id)).single();
-                  if (profileRow) profile = profileRow;
-                }
+        const savedAuthStr = localStorage.getItem('my_travel_auth');
+        if (savedAuthStr) {
+          const savedAuth = JSON.parse(savedAuthStr);
+          const { id, pw, autoLogin, saveIdPw } = savedAuth;
 
-                // 2) 세션이 없으면(아직 전환 전) 레거시 방식으로 확인 후 조용히 전환
-                if (!profile) {
-                  const { data } = await client.rpc('verify_login', { p_app_user_id: S(id), p_password: S(pw) });
-                  profile = Array.isArray(data) && data.length > 0 ? data[0] : null;
-                  if (profile) {
-                    const { data: migrateAuthData, error: migrateAuthError } = await client.auth.signUp({
-                      email: toAuthEmail(S(id)),
-                      password: S(pw),
-                    });
-                    if (!migrateAuthError && migrateAuthData?.user) {
-                      await client.rpc('link_auth_account', { p_app_user_id: S(id), p_password: S(pw) });
-                    }
+          if (saveIdPw) { setIdInput(S(id)); setPwInput(S(pw)); setSaveCredentials(true); }
+          if (autoLogin) {
+            try {
+              // 1) 이미 전환된 계정이면 Supabase가 들고 있는 세션으로 바로 복원
+              const { data: sessionData } = await client.auth.getSession();
+              let profile = null;
+              if (sessionData?.session) {
+                const { data: profileRow } = await client.from('profiles').select('trips, activeTripId').eq('app_user_id', S(id)).single();
+                if (profileRow) profile = profileRow;
+              }
+
+              // 2) 세션이 없으면(아직 전환 전) 레거시 방식으로 확인 후 조용히 전환
+              if (!profile) {
+                const { data } = await client.rpc('verify_login', { p_app_user_id: S(id), p_password: S(pw) });
+                profile = Array.isArray(data) && data.length > 0 ? data[0] : null;
+                if (profile) {
+                  const { data: migrateAuthData, error: migrateAuthError } = await client.auth.signUp({
+                    email: toAuthEmail(S(id)),
+                    password: S(pw),
+                  });
+                  if (!migrateAuthError && migrateAuthData?.user) {
+                    await client.rpc('link_auth_account', { p_app_user_id: S(id), p_password: S(pw) });
                   }
                 }
+              }
 
-                if (profile) {
-                  setAppUserId(S(id));
-                  if (profile.trips && Array.isArray(profile.trips)) setTrips(profile.trips);
-                  if (profile.activeTripId) setActiveTripId(S(profile.activeTripId));
-                  setAutoLogin(true);
-                  setShowIdSetup(false);
-                }
-              } catch(e) { console.error("Auto login check failed", e); }
-            }
+              if (profile) {
+                setAppUserId(S(id));
+                if (profile.trips && Array.isArray(profile.trips)) setTrips(profile.trips);
+                if (profile.activeTripId) setActiveTripId(S(profile.activeTripId));
+                setAutoLogin(true);
+                setShowIdSetup(false);
+              }
+            } catch(e) { console.error("Auto login check failed", e); }
           }
-          setIsDbLoaded(true);
         }
       } catch (err) {
         console.error("Supabase init error:", err);
+      } finally {
         setIsDbLoaded(true);
       }
-    };
-    
-    script.onerror = () => setIsDbLoaded(true);
-    document.head.appendChild(script);
+    })();
 
     try {
       const savedGlobalCountry = localStorage.getItem('my_travel_global_country');
@@ -4015,33 +4007,46 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
 class GlobalErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, error: null, errorInfo: null };
   }
   static getDerivedStateFromError(error) {
-    return { hasError: true };
+    return { hasError: true, error };
   }
   componentDidCatch(error, errorInfo) {
     console.error("Global Error Caught:", error, errorInfo);
+    this.setState({ errorInfo });
   }
   render() {
     if (this.state.hasError) {
       return (
         <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-50 p-5 text-center font-sans">
           <div className="text-5xl mb-4">🚨</div>
-          <h1 className="text-xl font-black text-slate-900 mb-2">데이터 복구 필요</h1>
-          <p className="text-xs text-slate-500 mb-6 max-w-sm leading-relaxed">
-            과거에 저장된 데이터 형식이 손상되어 화면을 띄울 수 없습니다.<br/>
-            아래 <strong>초기화 버튼</strong>을 누르면 즉시 고쳐집니다.
+          <h1 className="text-xl font-black text-slate-900 mb-2">문제가 발생했어요</h1>
+          <p className="text-xs text-slate-500 mb-4 max-w-sm leading-relaxed">
+            일시적인 오류일 수 있어요. 먼저 <strong>새로고침</strong>을 눌러보세요.<br/>
+            계속 반복되면 아래 에러 내용을 캡처해서 알려주세요.
           </p>
-          <button 
-            onClick={() => { 
-              localStorage.clear(); 
-              window.location.reload(); 
-            }} 
-            className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300"
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300 mb-3"
           >
-            데이터 강제 초기화 및 복구하기
+            새로고침
           </button>
+          <button
+            onClick={() => {
+              localStorage.clear();
+              window.location.reload();
+            }}
+            className="text-slate-400 text-[10px] font-bold underline mb-4"
+          >
+            그래도 안 되면: 데이터 강제 초기화 및 복구하기
+          </button>
+          {this.state.error && (
+            <pre className="text-[9px] text-left text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-3 max-w-sm w-full overflow-auto max-h-40 whitespace-pre-wrap break-words">
+              {String(this.state.error?.message || this.state.error)}
+              {this.state.errorInfo?.componentStack ? `\n${this.state.errorInfo.componentStack}` : ''}
+            </pre>
+          )}
         </div>
       );
     }
