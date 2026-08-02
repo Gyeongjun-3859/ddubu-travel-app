@@ -8,8 +8,9 @@ const SettingsModal = ({
   appFont, setAppFont,
   appTextColor, setAppTextColor,
   fontScale, handleFontScaleChange, elementScale, handleElementScaleChange,
-  appUserId, isMigratingPhotos, handleMigratePhotosToStorage,
+  appUserId,
   inviteIdInput, setInviteIdInput, handleSendInvite,
+  sentInvites, handleRevokeInvite,
   sharedUsers, isTripOwner,
   kickUserTarget, setKickUserTarget,
   supabaseClient, activeTripId, setSharedUsers, showToast,
@@ -86,16 +87,6 @@ const SettingsModal = ({
                     <input type="range" min="0.5" max="1.5" step="0.1" value={elementScale} onChange={handleElementScaleChange} className="w-full accent-indigo-600 mt-2 transition-all duration-300" />
                  </div>
 
-                 {appUserId !== 'Guest' && (
-                   <div className={`flex flex-col space-y-2 border-t pt-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                      <label className={`text-xs font-bold ${textMuted}`}>사진 최적화</label>
-                      <p className={`text-[10px] ${textMuted}`}>예전에 등록한 사진들을 저장소로 옮겨서 여행 불러오는 속도를 빠르게 합니다. 한 번만 눌러주세요.</p>
-                      <button onClick={handleMigratePhotosToStorage} disabled={isMigratingPhotos} className={`w-full py-2 rounded-lg text-xs font-bold shadow-sm transition-all duration-300 ${isMigratingPhotos ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'}`}>
-                        {isMigratingPhotos ? '정리 중...' : '사진 최적화 실행'}
-                      </button>
-                   </div>
-                 )}
-
                  <div className={`flex flex-col space-y-3 border-t pt-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                     <label className={`text-xs font-bold ${textMuted}`}>🤝 일정 공유 및 관리</label>
                     <div className="space-y-3 animate-in fade-in duration-300">
@@ -117,6 +108,19 @@ const SettingsModal = ({
                                </div>
                              ))}
                              {sharedUsers.filter(u => u !== appUserId).length === 0 && <span className="text-[9px] text-slate-400 py-1 pl-1">아직 참여 중인 친구가 없습니다.</span>}
+                          </div>
+                       </div>
+
+                       <div className={`p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
+                          <p className={`text-[10px] font-bold ${textMuted} mb-2`}>내가 보낸 초대장 (아직 수락 안 됨)</p>
+                          <div className="space-y-1.5">
+                             {(sentInvites || []).map((invite, idx) => (
+                               <div key={idx} className="flex items-center justify-between bg-white text-slate-600 dark:bg-slate-700 dark:text-slate-300 border dark:border-slate-600 px-2 py-1.5 rounded shadow-sm">
+                                 <span className="text-[9px] font-bold">👤 {invite.target_id} <span className="text-slate-400 font-normal">— {invite.trip_name || '여행'}</span></span>
+                                 <button onClick={() => handleRevokeInvite(invite)} className="ml-1.5 pl-1.5 border-l border-slate-200 dark:border-slate-500 text-rose-500 hover:text-rose-600 text-[9px] font-black transition-colors whitespace-nowrap">회수</button>
+                               </div>
+                             ))}
+                             {(!sentInvites || sentInvites.length === 0) && <span className="text-[9px] text-slate-400 py-1 pl-1">보낸 초대장이 없습니다.</span>}
                           </div>
                        </div>
                     </div>

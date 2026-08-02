@@ -6,6 +6,14 @@ export function toAuthEmail(appUserId) {
   return `${appUserId}${AUTH_EMAIL_DOMAIN}`;
 }
 
+// Supabase Auth는 비밀번호 최소 6자를 요구하지만, 이 앱 자체는 예전부터 4자 이상만 허용해왔다.
+// 사용자가 기억하는 원래 비밀번호는 그대로 두고, Supabase Auth로 보낼 때만 내부적으로 6자 이상이 되도록
+// 채워서 보낸다(항상 같은 값으로 채우므로 매번 동일하게 재현됨). 레거시 비밀번호 확인(bcrypt)에는 영향 없음.
+export function toAuthPassword(pw) {
+  const p = String(pw || '');
+  return p.length >= 6 ? p : (p + '000000').slice(0, 6);
+}
+
 export function S(val) {
   try {
     if (val === null || val === undefined) return "";

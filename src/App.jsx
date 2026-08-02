@@ -5,7 +5,7 @@ import { Browser } from '@capacitor/browser';
 import { App as CapacitorApp } from '@capacitor/app';
 import { X, Menu, LayoutDashboard, Calendar, Map as MapIcon, Wallet, Plane, Backpack, ShoppingBag, Mail, Settings, ClipboardList, CloudSun, MapPin, Navigation, LogOut, Home, Compass, ListChecks, PenLine, Globe, Clock, Tag, Search, Camera, Pencil, FolderOpen, Trash2, Handshake, Undo2, Redo2, RefreshCw } from 'lucide-react';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTRY_FLAG, KAKAO_CAT_COLORS, CITY_NAME_TO_EN } from './utils/constants';
-import { toAuthEmail, S, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
+import { toAuthEmail, toAuthPassword, S, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
 import PackingDashboardModal from './components/PackingDashboardModal';
@@ -42,6 +42,25 @@ import { useUndoRedo } from './hooks/useUndoRedo';
 import { useAppSettings } from './hooks/useAppSettings';
 import { usePhotoViewer } from './hooks/usePhotoViewer';
 import { usePanelResize } from './hooks/usePanelResize';
+
+// activeTripId가 trips 목록에 없는(예: 계정 전환 세션이 꼬였을 때 남의 여행 id가 잘못 저장된) 경우를 대비해
+// 항상 trips 안에 실제로 존재하는 id로 보정한다. 값이 바뀐 경우에만 true를 반환해서 DB에도 고쳐 쓸 수 있게 한다.
+function resolveValidActiveTripId(tripsArr, candidateId) {
+  const list = Array.isArray(tripsArr) ? tripsArr : [];
+  const valid = candidateId && list.some(t => t?.id === candidateId);
+  return { id: valid ? candidateId : (list[0]?.id || 'default'), changed: !valid };
+}
+
+// 모듈 스코프 싱글턴: React 18 StrictMode(개발 모드)에서 마운트 useEffect가 두 번 실행되면서
+// createClient()가 두 번 호출되어 "Multiple GoTrueClient instances" 경고와 함께 같은 localStorage
+// 세션 키를 두 클라이언트가 동시에 건드리는 문제가 있었음 — 앱 전체에서 인스턴스가 하나만 만들어지도록 고정.
+let supabaseSingleton = null;
+function getSupabaseSingleton() {
+  if (!supabaseSingleton) {
+    supabaseSingleton = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+  return supabaseSingleton;
+}
 
 /*
   =============================================================================
@@ -96,6 +115,7 @@ const MainApp = () => {
   const [pendingInvite, setPendingInvite] = useState(null);
   const [inviteIdInput, setInviteIdInput] = useState("");
   const [sharedUsers, setSharedUsers] = useState([]);
+  const [sentInvites, setSentInvites] = useState([]);
   const [isSubmittingTrip, setIsSubmittingTrip] = useState(false); 
   const [kickUserTarget, setKickUserTarget] = useState(null); 
 
@@ -111,7 +131,6 @@ const MainApp = () => {
     appTextColor, setAppTextColor,
     myLocationIcon, setMyLocationIcon,
   } = useAppSettings();
-  const [isMigratingPhotos, setIsMigratingPhotos] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tripModal, setTripModal] = useState({ isOpen: false, mode: 'add', name: '' });
   const [tripToDelete, setTripToDelete] = useState(null);
@@ -305,6 +324,7 @@ const MainApp = () => {
   const planAddFormRef = useRef(null);
   const manualRegionSaveTimer = useRef(null);
   const dbVersionRef = useRef(1); // 현재 DB version 추적 (Optimistic Locking용)
+  const loadedTripIdRef = useRef(null); // 현재 planTimeline/currentRestaurants state가 어느 tripId 것인지 추적 (여행 전환 시 다른 여행 데이터가 섞여 들어가는 것 방지용)
 
 const [activeMobileCard, setActiveMobileCard] = useState(null);
   const [previewTransportDay, setPreviewTransportDay] = useState(null); // 대표편 카드 자리에 임시로 미리보기 중인 배지 날짜
@@ -568,8 +588,17 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
 
 
 const saveToDb = useCallback(async (updates, explicitTripId) => {
-    console.log("💾 [DB 저장] Supabase로 전송되는 최종 Payload 데이터:", updates);
     const targetId = explicitTripId || activeTripId;
+
+    // 여행 전환 직후, 아직 새 여행 데이터가 다 로드되지 않은 찰나에는 state가 이전 여행 것일 수 있음.
+    // 이 상태로 저장하면 이전 여행 데이터가 새 여행 row로 새어 들어갈 수 있으므로 로딩 완료까지 저장을 건너뜀.
+    // (explicitTripId로 특정 여행을 콕 집어 저장하는 호출은 의도된 것이므로 예외)
+    if (!explicitTripId && loadedTripIdRef.current !== null && loadedTripIdRef.current !== targetId) {
+      console.warn("⚠️ [DB 저장 스킵] 여행 전환 중이라 저장을 건너뜁니다.", { targetId, loaded: loadedTripIdRef.current });
+      return;
+    }
+
+    console.log("💾 [DB 저장] Supabase로 전송되는 최종 Payload 데이터:", updates);
 
     // plan_timeline 항목에 updatedAt 타임스탬프 추가 (항목별 최신성 판별용)
     const now = Date.now();
@@ -961,7 +990,7 @@ async function confirmDeleteTrip() {
 
       const { data: authData, error: authError } = await supabaseClient.auth.signUp({
         email: toAuthEmail(cleanId),
-        password: S(pwInput),
+        password: toAuthPassword(S(pwInput)),
       });
       if (authError || !authData?.user) {
         setIdError("계정 생성에 실패했습니다: " + S(authError?.message));
@@ -1017,13 +1046,19 @@ async function confirmDeleteTrip() {
       // 1) 이미 Supabase Auth로 전환된 계정이면 정식 세션으로 바로 로그인
       const { data: signInData, error: signInError } = await supabaseClient.auth.signInWithPassword({
         email: toAuthEmail(currentId),
-        password: currentPw,
+        password: toAuthPassword(currentPw),
       });
 
       if (!signInError && signInData?.user) {
-        const { data: profileRow } = await supabaseClient.from('profiles').select('trips, activeTripId').eq('app_user_id', currentId).single();
+        const { data: profileRows, error: profileErr } = await supabaseClient.from('profiles').select('trips, activeTripId').eq('app_user_id', currentId);
+        if (profileErr) { console.error('프로필 조회 실패', profileErr); setIdError("서버 오류가 발생했습니다."); setIsLoggingIn(false); return; }
+        const profileRow = Array.isArray(profileRows) && profileRows.length > 0 ? profileRows[0] : null;
         if (profileRow?.trips && Array.isArray(profileRow.trips)) setTrips(profileRow.trips);
-        if (profileRow?.activeTripId) setActiveTripId(S(profileRow.activeTripId));
+        if (profileRow?.activeTripId) {
+          const { id: fixedId, changed } = resolveValidActiveTripId(profileRow.trips, S(profileRow.activeTripId));
+          setActiveTripId(fixedId);
+          if (changed) supabaseClient.from('profiles').update({ activeTripId: fixedId }).eq('app_user_id', currentId).then();
+        }
         handleLoginSuccess(currentId, currentPw);
         return;
       }
@@ -1044,14 +1079,18 @@ async function confirmDeleteTrip() {
       if (profile) {
         const { data: migrateAuthData, error: migrateAuthError } = await supabaseClient.auth.signUp({
           email: toAuthEmail(currentId),
-          password: currentPw,
+          password: toAuthPassword(currentPw),
         });
         if (!migrateAuthError && migrateAuthData?.user) {
           await supabaseClient.rpc('link_auth_account', { p_app_user_id: currentId, p_password: currentPw });
         }
 
         if (profile.trips && Array.isArray(profile.trips)) setTrips(profile.trips);
-        if (profile.activeTripId) setActiveTripId(S(profile.activeTripId));
+        if (profile.activeTripId) {
+          const { id: fixedId, changed } = resolveValidActiveTripId(profile.trips, S(profile.activeTripId));
+          setActiveTripId(fixedId);
+          if (changed) supabaseClient.from('profiles').update({ activeTripId: fixedId }).eq('app_user_id', currentId).then();
+        }
         handleLoginSuccess(currentId, currentPw);
       } else {
         setIdError("아이디 또는 비밀번호가 일치하지 않습니다.");
@@ -1074,8 +1113,42 @@ async function confirmDeleteTrip() {
     setShowIdSetup(true);
     setIsSettingsOpen(false);
     setAutoLogin(false);
+    // 같은 브라우저에서 다른 계정으로 바로 로그인할 때 이전 계정의 초대/공유 상태가 잠깐이라도 섞여
+    // 보이지 않도록 완전히 초기화한다 (계정 전환 세션 꼬임 방지).
+    setPendingInvite(null);
+    setSharedUsers([]);
+    setSentInvites([]);
+    loadedTripIdRef.current = null;
     try { localStorage.removeItem('my_travel_auth'); } catch(e){}
     showToast("로그아웃 되었습니다.");
+  }
+
+  async function fetchSentInvites() {
+    if (!supabaseClient || !appUserId || appUserId === 'Guest') return;
+    const { data, error } = await supabaseClient
+      .from('invites').select('*').eq('from_id', appUserId).order('timestamp', { ascending: false });
+    if (error) { console.error('보낸 초대장 조회 실패', error); return; }
+    setSentInvites(Array.isArray(data) ? data : []);
+  }
+
+  async function handleRevokeInvite(invite) {
+    if (!supabaseClient || !invite) return;
+    const { error } = await supabaseClient
+      .from('invites').delete().eq('target_id', invite.target_id).eq('from_id', appUserId).eq('trip_id', invite.trip_id);
+    if (error) { console.error(error); showToast('초대장 회수에 실패했습니다.'); return; }
+    setSentInvites(prev => prev.filter(i => !(S(i.target_id) === S(invite.target_id) && S(i.trip_id) === S(invite.trip_id))));
+    showToast(`${invite.target_id}님에게 보낸 초대장을 회수했습니다.`);
+  }
+
+  async function sendInviteNow(targetId, currentTrip) {
+    const { error } = await supabaseClient.rpc('send_invite', {
+      p_target_id: targetId,
+      p_trip_id: activeTripId,
+      p_trip_name: S(currentTrip?.name) || "여행",
+    });
+    if (error) { showToast("초대장 전송에 실패했습니다."); return; }
+    showToast(`초대장을 보냈습니다.`); setInviteIdInput("");
+    fetchSentInvites();
   }
 
   async function handleSendInvite() {
@@ -1087,13 +1160,21 @@ async function confirmDeleteTrip() {
     if (!exists) { showToast("존재하지 않는 사용자입니다."); return; }
 
     const currentTrip = trips.find(t => S(t.id) === S(activeTripId));
-    const { error } = await supabaseClient.rpc('send_invite', {
-      p_target_id: targetId,
-      p_trip_id: activeTripId,
-      p_trip_name: S(currentTrip?.name) || "여행",
-    });
-    if (error) { showToast("초대장 전송에 실패했습니다."); return; }
-    showToast(`초대장을 보냈습니다.`); setInviteIdInput(""); setIsSettingsOpen(false);
+
+    // 한 사람은 대기 중인 초대장을 1개만 가질 수 있어서(새 초대가 이전 초대를 지움), 내가 그 사람에게
+    // 이미 보내놓고 아직 수락 안 된 "다른 여행" 초대장이 있으면 그게 사라진다는 걸 미리 경고한다.
+    const { data: existingInvite } = await supabaseClient
+      .from('invites').select('trip_id, trip_name').eq('target_id', targetId).eq('from_id', appUserId).maybeSingle();
+
+    if (existingInvite && S(existingInvite.trip_id) !== S(activeTripId)) {
+      showConfirm(
+        `⚠️ 이 사람에게 이미 "${S(existingInvite.trip_name) || '다른 여행'}" 초대장을 보내둔 상태예요. 아직 수락 전이라면 그 초대장은 사라지고 지금 여행 초대장으로 덮어써집니다. 계속할까요?`,
+        () => sendInviteNow(targetId, currentTrip)
+      );
+      return;
+    }
+
+    await sendInviteNow(targetId, currentTrip);
   }
 
   async function handleAcceptInvite() {
@@ -1120,86 +1201,6 @@ async function confirmDeleteTrip() {
   async function handleRejectInvite() {
     await supabaseClient.from('invites').delete().eq('target_id', appUserId);
     setPendingInvite(null);
-  }
-
-  async function handleMigratePhotosToStorage() {
-    if (!supabaseClient || appUserId === 'Guest') { showToast("로그인 후 이용 가능합니다."); return; }
-    if (isMigratingPhotos) return;
-    setIsMigratingPhotos(true);
-
-    let migratedCount = 0;
-
-    const uploadIfBase64 = async (tripId, val) => {
-      if (typeof val !== 'string' || !val.startsWith('data:image')) return val;
-      try {
-        const [header, base64Data] = val.split(',');
-        const mimeMatch = header.match(/:(.*?);/);
-        const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-        const binary = atob(base64Data);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const blob = new Blob([bytes], { type: mime });
-        const path = `${tripId}/migrated_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.jpg`;
-        const { error } = await supabaseClient.storage.from('trip-photos').upload(path, blob, { contentType: 'image/jpeg' });
-        if (error) throw error;
-        const { data } = supabaseClient.storage.from('trip-photos').getPublicUrl(path);
-        migratedCount++;
-        return data?.publicUrl || val;
-      } catch (e) {
-        console.error('사진 마이그레이션 실패', e);
-        return val;
-      }
-    };
-
-    try {
-      const myTripIds = (Array.isArray(trips) ? trips : []).map(t => t?.id).filter(Boolean);
-
-      for (const tripId of myTripIds) {
-        const { data: row } = await supabaseClient.from('travel_state').select('*').eq('id', tripId).single();
-        if (!row) continue;
-
-        let changed = false;
-
-        const newPlanTimeline = await Promise.all((Array.isArray(row.plan_timeline) ? row.plan_timeline : []).map(async (p) => {
-          if (!p || typeof p !== 'object') return p;
-          const newPhoto = await uploadIfBase64(tripId, p.photo);
-          const newPhotos = Array.isArray(p.photos) ? await Promise.all(p.photos.map(ph => uploadIfBase64(tripId, ph))) : p.photos;
-          if (newPhoto !== p.photo) changed = true;
-          return { ...p, photo: newPhoto, photos: newPhotos };
-        }));
-
-        const newRestaurants = await Promise.all((Array.isArray(row.current_restaurants) ? row.current_restaurants : []).map(async (r) => {
-          if (!r || typeof r !== 'object') return r;
-          const newImg = await uploadIfBase64(tripId, r.img);
-          const newImgs = Array.isArray(r.imgs) ? await Promise.all(r.imgs.map(im => uploadIfBase64(tripId, im))) : r.imgs;
-          if (newImg !== r.img) changed = true;
-          return { ...r, img: newImg, imgs: newImgs };
-        }));
-
-        const newShoppingList = await Promise.all((Array.isArray(row.shopping_list) ? row.shopping_list : []).map(async (s) => {
-          if (!s || typeof s !== 'object') return s;
-          const newImg = await uploadIfBase64(tripId, s.img);
-          if (newImg !== s.img) changed = true;
-          return { ...s, img: newImg };
-        }));
-
-        if (changed) {
-          await supabaseClient.from('travel_state').update({
-            plan_timeline: newPlanTimeline,
-            current_restaurants: newRestaurants,
-            shopping_list: newShoppingList,
-          }).eq('id', tripId);
-        }
-      }
-
-      showToast(migratedCount > 0 ? `✅ 사진 ${migratedCount}장을 정리했습니다!` : "정리할 사진이 없습니다.");
-      setRefreshTrigger(prev => prev + 1);
-    } catch (e) {
-      console.error(e);
-      showToast("사진 정리 중 오류가 발생했습니다.");
-    } finally {
-      setIsMigratingPhotos(false);
-    }
   }
 
   function handleOpenGoogleTranslate() {
@@ -2359,6 +2360,11 @@ function deletePackingItem(id) {
     setDiaryReview(selectedPlanInfo?.review || "");
   }, [selectedPlanInfo?.id]);
 
+  // 설정 창을 열 때마다 내가 보낸 초대장 목록을 최신 상태로 불러온다
+  useEffect(() => {
+    if (isSettingsOpen) fetchSentInvites();
+  }, [isSettingsOpen, appUserId, supabaseClient]);
+
   // 날씨 로드 후 현재 Day를 자동으로 펼침 (앱 재진입 시에도 초기화)
   useEffect(() => {
     if (!Array.isArray(forecast) || forecast.length === 0 || !travelStartDate) return;
@@ -2374,7 +2380,7 @@ function deletePackingItem(id) {
   useEffect(() => {
     (async () => {
       try {
-        const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const client = getSupabaseSingleton();
         setSupabaseClient(client);
 
         const savedAuthStr = localStorage.getItem('my_travel_auth');
@@ -2389,8 +2395,8 @@ function deletePackingItem(id) {
               const { data: sessionData } = await client.auth.getSession();
               let profile = null;
               if (sessionData?.session) {
-                const { data: profileRow } = await client.from('profiles').select('trips, activeTripId').eq('app_user_id', S(id)).single();
-                if (profileRow) profile = profileRow;
+                const { data: profileRows } = await client.from('profiles').select('trips, activeTripId').eq('app_user_id', S(id));
+                if (Array.isArray(profileRows) && profileRows.length > 0) profile = profileRows[0];
               }
 
               // 2) 세션이 없으면(아직 전환 전) 레거시 방식으로 확인 후 조용히 전환
@@ -2400,7 +2406,7 @@ function deletePackingItem(id) {
                 if (profile) {
                   const { data: migrateAuthData, error: migrateAuthError } = await client.auth.signUp({
                     email: toAuthEmail(S(id)),
-                    password: S(pw),
+                    password: toAuthPassword(S(pw)),
                   });
                   if (!migrateAuthError && migrateAuthData?.user) {
                     await client.rpc('link_auth_account', { p_app_user_id: S(id), p_password: S(pw) });
@@ -2411,7 +2417,11 @@ function deletePackingItem(id) {
               if (profile) {
                 setAppUserId(S(id));
                 if (profile.trips && Array.isArray(profile.trips)) setTrips(profile.trips);
-                if (profile.activeTripId) setActiveTripId(S(profile.activeTripId));
+                if (profile.activeTripId) {
+                  const { id: fixedId, changed } = resolveValidActiveTripId(profile.trips, S(profile.activeTripId));
+                  setActiveTripId(fixedId);
+                  if (changed) client.from('profiles').update({ activeTripId: fixedId }).eq('app_user_id', S(id)).then();
+                }
                 setAutoLogin(true);
                 setShowIdSetup(false);
               }
@@ -2444,7 +2454,11 @@ function deletePackingItem(id) {
       }).subscribe();
 
     const targetId = activeTripId;
-    
+    // 다른 여행에서 전환되어 들어온 경우, 지금 state(prev)는 "이전 여행"의 데이터이므로
+    // 아래 병합 로직에서 절대 섞여 들어가면 안 됨. 같은 여행을 재조회(재접속/PTR)하는
+    // 경우에만 "아직 저장 안 된 로컬 항목 보존" 병합을 적용한다.
+    const isTripSwitch = loadedTripIdRef.current !== null && loadedTripIdRef.current !== targetId;
+
     let ignore = false;
     const fetchTrip = async () => {
       try {
@@ -2469,18 +2483,25 @@ function deletePackingItem(id) {
           // 로컬 항목을 서버의 오래된 스냅샷으로 덮어써서 지워버리지 않도록 병합(realtime 핸들러와 동일한 방식)
           if (Array.isArray(data.current_restaurants)) {
           const cleanRests2 = data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" }));
+          if (isTripSwitch) {
+            setCurrentRestaurants(cleanRests2);
+          } else {
           setCurrentRestaurants(prev => {
             const dbIds = new Set(cleanRests2.map(r => S(r.id)));
             const localOnly = (Array.isArray(prev) ? prev : []).filter(r => r && !dbIds.has(S(r.id)));
             return [...cleanRests2, ...localOnly];
           });
-          } else { setCurrentRestaurants(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []); }
+          }
+          } else { setCurrentRestaurants(isTripSwitch ? [] : (prev => (Array.isArray(prev) && prev.length > 0) ? prev : [])); }
 
           if (Array.isArray(data.plan_timeline)) {
           const fallbackCityName2 = data.display_city_name ? S(data.display_city_name) : "";
           let fallbackCountry2 = ""; let fallbackRegion2 = fallbackCityName2;
           if (fallbackCityName2) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName2)) { fallbackCountry2 = cn; break; } } }
           const cleanPlans2 = data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) }));
+          if (isTripSwitch) {
+            setPlanTimeline(cleanPlans2);
+          } else {
           setPlanTimeline(prev => {
             const localMap2 = new Map((Array.isArray(prev) ? prev : []).map(p => [S(p.id), p]));
             const merged2 = cleanPlans2.map(dbP => {
@@ -2492,11 +2513,14 @@ function deletePackingItem(id) {
             (Array.isArray(prev) ? prev : []).forEach(p => { if (p && !dbIds2.has(S(p.id))) merged2.push(p); });
             return merged2;
           });
-          } else { setPlanTimeline(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []); }
+          }
+          } else { setPlanTimeline(isTripSwitch ? [] : (prev => (Array.isArray(prev) && prev.length > 0) ? prev : [])); }
+          loadedTripIdRef.current = targetId;
         } else {
-           // DB에 row가 없어도 로컬 state가 이미 있으면 유지 (새 여행 insert 타이밍 경쟁 방지)
-           setPlanTimeline(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
-           setCurrentRestaurants(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
+           // DB에 row가 없어도 로컬 state가 이미 있으면 유지 (새 여행 insert 타이밍 경쟁 방지) — 단, 다른 여행에서 막 전환해온 경우는 예외(전 여행 데이터가 새 여행으로 새어 들어가면 안 됨)
+           setPlanTimeline(isTripSwitch ? [] : (prev => (Array.isArray(prev) && prev.length > 0) ? prev : []));
+           setCurrentRestaurants(isTripSwitch ? [] : (prev => (Array.isArray(prev) && prev.length > 0) ? prev : []));
+           loadedTripIdRef.current = targetId;
            setDisplayCityName(prev => (prev && prev !== "선택된 지역 없음") ? prev : "선택된 지역 없음");
            setFlights(prev => prev || { outbound: null, inbound: null });
            setPackingList(prev => (Array.isArray(prev) && prev.length > 0) ? prev : []);
@@ -2574,9 +2598,13 @@ function deletePackingItem(id) {
 
     const fetchInvites = async () => {
       try {
-        const { data } = await supabaseClient.from('invites').select('*').eq('target_id', appUserId).single();
-        if (data) setPendingInvite(data);
-      } catch(e) { console.error(e); }
+        // .single()은 결과가 정확히 1개가 아니면(0개든 여러 개든) 조용히 실패해서 초대장이 있어도
+        // 화면에 안 뜨는 문제가 있었음 — 여러 개 중 가장 최근 것 1개만 안전하게 가져오도록 변경.
+        const { data, error } = await supabaseClient
+          .from('invites').select('*').eq('target_id', appUserId).order('timestamp', { ascending: false }).limit(1);
+        if (error) { console.error('초대장 조회 실패', error); showToast('⚠️ 초대장 확인 중 오류가 발생했습니다.'); return; }
+        if (Array.isArray(data) && data.length > 0) setPendingInvite(data[0]);
+      } catch(e) { console.error(e); showToast('⚠️ 초대장 확인 중 오류가 발생했습니다.'); }
     };
     fetchInvites();
     
@@ -3591,8 +3619,9 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
         appFont={appFont} setAppFont={setAppFont}
         appTextColor={appTextColor} setAppTextColor={setAppTextColor}
         fontScale={fontScale} handleFontScaleChange={handleFontScaleChange} elementScale={elementScale} handleElementScaleChange={handleElementScaleChange}
-        appUserId={appUserId} isMigratingPhotos={isMigratingPhotos} handleMigratePhotosToStorage={handleMigratePhotosToStorage}
+        appUserId={appUserId}
         inviteIdInput={inviteIdInput} setInviteIdInput={setInviteIdInput} handleSendInvite={handleSendInvite}
+        sentInvites={sentInvites} handleRevokeInvite={handleRevokeInvite}
         sharedUsers={sharedUsers} isTripOwner={isTripOwner}
         kickUserTarget={kickUserTarget} setKickUserTarget={setKickUserTarget}
         supabaseClient={supabaseClient} activeTripId={activeTripId} setSharedUsers={setSharedUsers} showToast={showToast}
