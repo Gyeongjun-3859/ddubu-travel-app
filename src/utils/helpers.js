@@ -61,12 +61,12 @@ export function compressImage(file, callback) {
     img.src = e.target.result;
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const scaleSize = 500 / img.width;
-      canvas.width = 500;
+      const scaleSize = Math.min(1600, img.width) / img.width;
+      canvas.width = Math.min(1600, img.width);
       canvas.height = img.height * scaleSize;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      callback(canvas.toDataURL('image/jpeg', 0.6));
+      callback(canvas.toDataURL('image/jpeg', 0.85));
     }
   };
 }
@@ -85,8 +85,8 @@ export function compressAndStoreImage(supabaseClient, appUserId, folderId, file,
     img.src = e.target.result;
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const scaleSize = 900 / img.width;
-      canvas.width = Math.min(900, img.width);
+      const scaleSize = Math.min(1600, img.width) / img.width;
+      canvas.width = Math.min(1600, img.width);
       canvas.height = img.height * scaleSize;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -102,7 +102,7 @@ export function compressAndStoreImage(supabaseClient, appUserId, folderId, file,
           console.error('사진 업로드 실패', err);
           callback('');
         }
-      }, 'image/jpeg', 0.75);
+      }, 'image/jpeg', 0.85);
     };
   };
 }

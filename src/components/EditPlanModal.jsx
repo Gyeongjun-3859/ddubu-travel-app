@@ -147,6 +147,7 @@ const EditPlanModal = ({
                       const file = items[i].getAsFile();
                       compressAndStoreImage(supabaseClient, appUserId, activeTripId, file, compressed => {
                         setEditingPlan(prev => {
+                          if (!prev) return prev; // 압축 완료 전에 모달이 닫힌 경우
                           const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []);
                           if (imgs.length >= 3) return prev;
                           const newImgs = [...imgs, compressed];

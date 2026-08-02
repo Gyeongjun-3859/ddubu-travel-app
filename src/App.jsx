@@ -1488,8 +1488,9 @@ console.log("🚀 Supabase로 저장 요청하는 핀 데이터:", updatedRests)
     if (files.length === 0) return;
     files.forEach(file => {
       compressAndStoreImage(supabaseClient, appUserId, activeTripId, file, (compressedBase64) => {
-        if (isEdit && editingPlan) {
+        if (isEdit) {
           setEditingPlan(prev => {
+            if (!prev) return prev; // 압축 완료 전에 모달이 닫힌 경우
             const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []);
             if (imgs.length >= 3) { showToast("사진은 최대 3장까지 추가할 수 있어요."); return prev; }
             const newImgs = [...imgs, S(compressedBase64)];

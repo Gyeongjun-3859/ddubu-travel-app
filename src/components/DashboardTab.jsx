@@ -3,6 +3,16 @@ import { Wallet, RefreshCw, Globe, Calendar, ListChecks, Backpack, ShoppingBag, 
 import { CURRENCIES } from '../utils/constants';
 import { S } from '../utils/helpers';
 
+const THEME_DEFAULT_PHOTO = {
+  '식당': 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80',
+  '디저트': 'https://images.unsplash.com/photo-1551024506-0bccd828d307?auto=format&fit=crop&w=400&q=80',
+  '관광지': 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=400&q=80',
+  '쇼핑': 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=400&q=80',
+  '숙소': 'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=400&q=80',
+  '기타': 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=400&q=80',
+};
+const getThemeDefaultPhoto = (theme) => THEME_DEFAULT_PHOTO[theme] || THEME_DEFAULT_PHOTO['기타'];
+
 const DashboardTab = ({
   activeTab, textMain, textMuted, isDarkMode, cardBg,
   fetchRealTimeRates, loadingRates, errorRates, ratesUpdatedAt,
@@ -244,7 +254,7 @@ const DashboardTab = ({
                     {/* 교통편이 이미 필터링되었으므로 조건부 렌더링을 제거하고 항상 예쁜 사진 영역을 띄웁니다. */}
                     <div className={`w-full h-16 sm:h-20 relative shrink-0 cursor-pointer border-b transition-colors duration-300 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}
                          onClick={(e) => { e.stopPropagation(); if(isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}>
-                      <img src={plan.photo || "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80"} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" onClick={plan.photo ? (e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); } : undefined} />
+                      <img src={plan.photo || (plan.isAccommodation ? THEME_DEFAULT_PHOTO['숙소'] : getThemeDefaultPhoto(plan.theme))} className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-500" alt="" onClick={plan.photo ? (e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); } : undefined} />
                       {plan.photos && plan.photos.length > 1 && <div className="absolute top-1 right-1 bg-black/60 text-white text-[7px] font-bold px-1 py-0.5 rounded shadow-sm">📸 {plan.photos.length}</div>}
                       {(plan.isAccommodation || plan.time !== '99:99') && <div className="absolute top-1 left-1 bg-indigo-500/90 backdrop-blur text-white text-[7px] sm:text-[8px] font-bold px-1 py-0.5 rounded shadow-sm">
                         {plan.isAccommodation ? '🏠 숙소' : S(plan.time)}
