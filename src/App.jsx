@@ -51,6 +51,15 @@ function resolveValidActiveTripId(tripsArr, candidateId) {
   return { id: valid ? candidateId : (list[0]?.id || 'default'), changed: !valid };
 }
 
+// [저장 병합용] 두 일정 항목의 실질 내용이 같은지 비교하기 위한 키 정렬 직렬화.
+// updatedAt은 비교 대상에서 제외한다(내용이 안 바뀌었으면 시각도 갱신할 필요가 없으므로).
+function stableStringify(obj) {
+  if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) return `[${obj.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(obj).filter(k => k !== 'updatedAt').sort();
+  return `{${keys.map(k => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+}
+
 // 모듈 스코프 싱글턴: React 18 StrictMode(개발 모드)에서 마운트 useEffect가 두 번 실행되면서
 // createClient()가 두 번 호출되어 "Multiple GoTrueClient instances" 경고와 함께 같은 localStorage
 // 세션 키를 두 클라이언트가 동시에 건드리는 문제가 있었음 — 앱 전체에서 인스턴스가 하나만 만들어지도록 고정.
@@ -692,8 +701,13 @@ const saveToDb = useCallback(async (updates, explicitTripId) => {
         stamped.plan_timeline.forEach(localP => {
           if (!localP) return;
           const dbP = dbMap.get(S(localP.id));
+          // [updatedAt 갱신] 수정 화면들이 매번 updatedAt을 새로 찍어주지 않기 때문에,
+          // 여기서 "DB에 저장된 내용과 실제로 달라졌는지"를 직접 비교해서 달라졌을 때만 지금 시각으로 갱신한다.
+          // (그렇지 않으면 최초 저장 이후의 모든 수정이 "안 바뀐 것"처럼 취급되어, 병합 시 오래된 데이터에 덮어써질 수 있음)
+          const changed = !dbP || stableStringify(localP) !== stableStringify(dbP);
+          const effectiveP = changed ? { ...localP, updatedAt: now } : localP;
           // 새 항목이거나, 로컬이 DB보다 최신이면 로컬 값 사용. 그 외엔 DB 값을 유지(삭제되지 않음)
-          if (!dbP || (localP.updatedAt || 0) >= (dbP.updatedAt || 0)) dbMap.set(S(localP.id), localP);
+          if (!dbP || (effectiveP.updatedAt || 0) >= (dbP.updatedAt || 0)) dbMap.set(S(localP.id), effectiveP);
         });
         // 이번 저장 직전까지 로컬에 있었는데 이번에 넘어온 배열엔 없는 항목 = 방금 사용자가 삭제한 항목
         // → 병합 과정에서 되살아나지 않도록 DB 쪽에서도 제거한다
@@ -735,9 +749,16 @@ const saveToDb = useCallback(async (updates, explicitTripId) => {
         console.error("🚫 [DB 저장 실패] 병합 저장이 0건 반영됨 — 에러는 없었지만 실제로 저장 안 됨. RLS 권한 문제 가능성 높음", { targetId, mergedVersion });
       } else {
         console.log("✅ [DB 저장] 병합 저장 성공", { newVersion: mergedVersion, rowsAffected });
-        dbVersionRef.current = mergedVersion;
-        if (Array.isArray(stamped.plan_timeline)) setPlanTimeline(mergedTimeline);
-        if (Array.isArray(stamped.current_restaurants)) setCurrentRestaurants(mergedRests);
+        // [화면 오염 방지] 이 저장이 진행되는 동안 사용자가 이미 다른 여행으로 전환했을 수 있다
+        // (예: 여행 전환 시 이전 여행을 백그라운드로 저장하는 경우). 그 사이 화면은 이미 새 여행 데이터로
+        // 채워졌는데, 뒤늦게 도착한 이 저장 결과로 dbVersionRef나 화면 상태를 덮어쓰면 안 된다.
+        // loadedTripIdRef.current가 여전히 이 저장의 대상(targetId)과 같을 때만 반영한다.
+        const stillOnThisTrip = loadedTripIdRef.current === targetId;
+        if (stillOnThisTrip) dbVersionRef.current = mergedVersion;
+        // mergedTimeline엔 삭제 표식(tombstone)이 그대로 남아있을 수 있으므로, DB 저장용 데이터와 달리
+        // 화면(local state)에는 tombstone을 제외한 배열만 반영한다.
+        if (stillOnThisTrip && Array.isArray(stamped.plan_timeline)) setPlanTimeline(mergedTimeline.filter(p => p && !p.deleted));
+        if (stillOnThisTrip && Array.isArray(stamped.current_restaurants)) setCurrentRestaurants(mergedRests.filter(r => r && !r.deleted));
         try {
           const allStr2 = localStorage.getItem('my_travel_states') || '{}';
           const all2 = JSON.parse(allStr2);
@@ -898,9 +919,12 @@ const saveToDb = useCallback(async (updates, explicitTripId) => {
 
     if (activeTripId === tripId) return;
 
-    // 전환 전 현재 여행 데이터를 현재 tripId로 명시 저장 (stale closure 방지)
+    // 전환 전 현재 여행 데이터를 현재 tripId로 명시 저장 (stale closure 방지).
+    // [속도 개선] 예전엔 이 저장이 끝날 때까지 화면 전환을 기다렸는데(2번의 네트워크 왕복),
+    // saveToDb는 어차피 prevTripId를 명시해서 저장하므로 화면 전환과 순서가 엮일 이유가 없다.
+    // 저장은 백그라운드로 흘려보내고, 화면은 바로 새 여행으로 전환한다.
     const prevTripId = activeTripId;
-    await saveToDb({ plan_timeline: planTimelineRef.current || planTimeline }, prevTripId);
+    saveToDb({ plan_timeline: planTimelineRef.current || planTimeline }, prevTripId);
 
     mapInitFlyDoneRef.current = false;
     setActiveTripId(S(tripId));
@@ -1719,22 +1743,33 @@ function handleDeletePlan(id) {
     const linkedPin = targetPlan ? safeRests.find(r => r && S(r.name).trim() === S(targetPlan.place).trim()) : null;
 
     const doDeletePlanOnly = () => {
+      const now = Date.now();
       const updated = safePlanTimeline.filter(p => p && S(p.id) !== S(id));
+      // [삭제 표식] 배열에서 그냥 빼기만 하면, 공유 여행에서 아직 이 삭제를 모르는
+      // 다른 기기/세션이 나중에 저장할 때 "DB에 없는 로컬 항목 = 새 항목"으로 오인해 되살릴 수 있다.
+      // 그래서 DB로 보내는 데이터에는 tombstone({id, deleted:true, updatedAt})을 남겨 "삭제됨"을 명시한다.
+      // 화면(local state)에는 tombstone 없이 항목이 빠진 배열만 반영한다.
       setPlanTimeline(updated);
       syncCountryRegionFromCityName(displayCityName, updated);
-      saveToDb({ plan_timeline: updated });
+      saveToDb({ plan_timeline: [...updated, { id: S(id), deleted: true, updatedAt: now }] });
       showToast("일정이 삭제되었습니다.");
       // 삭제된 일정이 현재 수정 중인 항목이면 폼 초기화
       if (S(editingPlanId) === S(id)) resetPlanForm();
     };
 
     const doDeleteBoth = () => {
+      const now = Date.now();
       const updatedTimeline = safePlanTimeline.filter(p => p && S(p.id) !== S(id));
       const updatedRests = safeRests.filter(r => r && S(r.name).trim() !== S(targetPlan?.place).trim());
+      const removedRestIds = safeRests.filter(r => r && S(r.name).trim() === S(targetPlan?.place).trim()).map(r => S(r.id));
       setPlanTimeline(updatedTimeline);
       setCurrentRestaurants(updatedRests);
       syncCountryRegionFromCityName(displayCityName, updatedTimeline);
-      saveToDb({ plan_timeline: updatedTimeline, current_restaurants: updatedRests });
+      // [삭제 표식] 배열에서 그냥 빼기만 하면 공유 여행에서 되살아날 수 있어, DB에는 tombstone을 남긴다.
+      saveToDb({
+        plan_timeline: [...updatedTimeline, { id: S(id), deleted: true, updatedAt: now }],
+        current_restaurants: [...updatedRests, ...removedRestIds.map(rid => ({ id: rid, deleted: true, updatedAt: now }))],
+      });
       showToast("일정과 지도 핀이 함께 삭제되었습니다.");
       if (S(editingPlanId) === S(id)) resetPlanForm();
     };
@@ -2093,13 +2128,13 @@ function deletePackingItem(id) {
               setSharedUsers(Array.isArray(data.shared_users) ? data.shared_users : []);
               
               if (Array.isArray(data.current_restaurants)) {
-              setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));              } else { setCurrentRestaurants([]); }
+              setCurrentRestaurants(data.current_restaurants.filter(r => r && typeof r === 'object' && !r.deleted).map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" })));              } else { setCurrentRestaurants([]); }
               
               if (Array.isArray(data.plan_timeline)) {
                const fallbackCityName = data.display_city_name ? S(data.display_city_name) : "";
                let fallbackCountry = ""; let fallbackRegion = fallbackCityName;
                if (fallbackCityName) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName)) { fallbackCountry = cn; break; } } }
-               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) })));              } else { setPlanTimeline([]); }
+               setPlanTimeline(data.plan_timeline.filter(p => p && typeof p === 'object' && !p.deleted).map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry) { rc = fallbackCountry; rr = fallbackRegion; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) })));              } else { setPlanTimeline([]); }
 
               loaded = true;
             }
@@ -2459,6 +2494,19 @@ function deletePackingItem(id) {
     // 경우에만 "아직 저장 안 된 로컬 항목 보존" 병합을 적용한다.
     const isTripSwitch = loadedTripIdRef.current !== null && loadedTripIdRef.current !== targetId;
 
+    // [데이터 섞임 방지] 실제로 다른 여행으로 전환하는 경우, 새 여행 데이터를 서버에서
+    // 받아오기 전까지 화면에 이전 여행의 항공편/일정이 잠깐이라도 남아있지 않도록 즉시 비운다.
+    // (fetchTrip은 네트워크 왕복이 필요해 시간이 걸리는데, 그 사이 이전 여행 데이터가
+    //  새 여행 이름표를 달고 잘못 보이는 문제가 있었음)
+    if (isTripSwitch) {
+      setDisplayCityName("선택된 지역 없음");
+      setFlights({ outbound: null, inbound: null });
+      setPlanTimeline([]);
+      setCurrentRestaurants([]);
+      setPackingList([]);
+      setShoppingList([]);
+    }
+
     let ignore = false;
     const fetchTrip = async () => {
       try {
@@ -2482,13 +2530,15 @@ function deletePackingItem(id) {
           // [버그 수정 3] PTR/재접속으로 이 fetch가 다시 실행될 때, 방금 추가했지만 아직 DB 저장이 끝나지 않은
           // 로컬 항목을 서버의 오래된 스냅샷으로 덮어써서 지워버리지 않도록 병합(realtime 핸들러와 동일한 방식)
           if (Array.isArray(data.current_restaurants)) {
-          const cleanRests2 = data.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" }));
+          // [삭제 표식] DB 배열에 deleted:true로 남아있는 tombstone은 화면용 목록에서 제외한다.
+          const restTombstoneIds2 = new Set(data.current_restaurants.filter(r => r && r.deleted).map(r => S(r.id)));
+          const cleanRests2 = data.current_restaurants.filter(r => r && typeof r === 'object' && !r.deleted).map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "" }));
           if (isTripSwitch) {
             setCurrentRestaurants(cleanRests2);
           } else {
           setCurrentRestaurants(prev => {
             const dbIds = new Set(cleanRests2.map(r => S(r.id)));
-            const localOnly = (Array.isArray(prev) ? prev : []).filter(r => r && !dbIds.has(S(r.id)));
+            const localOnly = (Array.isArray(prev) ? prev : []).filter(r => r && !dbIds.has(S(r.id)) && !restTombstoneIds2.has(S(r.id)));
             return [...cleanRests2, ...localOnly];
           });
           }
@@ -2498,7 +2548,9 @@ function deletePackingItem(id) {
           const fallbackCityName2 = data.display_city_name ? S(data.display_city_name) : "";
           let fallbackCountry2 = ""; let fallbackRegion2 = fallbackCityName2;
           if (fallbackCityName2) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName2)) { fallbackCountry2 = cn; break; } } }
-          const cleanPlans2 = data.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) }));
+          // [삭제 표식] DB 배열에 deleted:true로 남아있는 tombstone은 화면용 목록에서 제외한다.
+          const tombstoneIds2 = new Set(data.plan_timeline.filter(p => p && p.deleted).map(p => S(p.id)));
+          const cleanPlans2 = data.plan_timeline.filter(p => p && typeof p === 'object' && !p.deleted).map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry2) { rc = fallbackCountry2; rr = fallbackRegion2; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) }));
           if (isTripSwitch) {
             setPlanTimeline(cleanPlans2);
           } else {
@@ -2509,8 +2561,9 @@ function deletePackingItem(id) {
               if (!localP) return dbP;
               return (localP.updatedAt || 0) > (dbP.updatedAt || 0) ? localP : dbP;
             });
+            // 로컬에만 있는 미저장 신규 항목 보존 (단, DB가 삭제 표식을 남긴 항목은 되살리지 않는다)
             const dbIds2 = new Set(cleanPlans2.map(p => S(p.id)));
-            (Array.isArray(prev) ? prev : []).forEach(p => { if (p && !dbIds2.has(S(p.id))) merged2.push(p); });
+            (Array.isArray(prev) ? prev : []).forEach(p => { if (p && !dbIds2.has(S(p.id)) && !tombstoneIds2.has(S(p.id))) merged2.push(p); });
             return merged2;
           });
           }
@@ -2565,11 +2618,13 @@ function deletePackingItem(id) {
           }
 
           if (Array.isArray(payload.new.current_restaurants)) {
-            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object').map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || '기타', rating: r.rating || 0, review: r.review || "" }));
-            // updatedAt 기준 병합: 로컬에만 있는 미저장 항목 보존
+            // [삭제 표식] DB 배열에 deleted:true로 남아있는 tombstone은 화면용 목록에서 제외한다.
+            const restTombstoneIds3 = new Set(payload.new.current_restaurants.filter(r => r && r.deleted).map(r => S(r.id)));
+            const cleanRests = payload.new.current_restaurants.filter(r => r && typeof r === 'object' && !r.deleted).map(r => ({ id: S(r.id), name: S(r.name), localName: S(r.localName), signature: S(r.signature), img: S(r.img), imgs: Array.isArray(r.imgs) ? r.imgs : (r.img && !S(r.img).includes('unsplash') ? [S(r.img)] : []), country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng, isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark), theme: S(r.theme) || '기타', rating: r.rating || 0, review: r.review || "" }));
+            // updatedAt 기준 병합: 로컬에만 있는 미저장 항목 보존 (단, DB가 삭제 표식을 남긴 항목은 되살리지 않는다)
             setCurrentRestaurants(prev => {
               const dbIds = new Set(cleanRests.map(r => S(r.id)));
-              const localOnly = (Array.isArray(prev) ? prev : []).filter(r => r && !dbIds.has(S(r.id)));
+              const localOnly = (Array.isArray(prev) ? prev : []).filter(r => r && !dbIds.has(S(r.id)) && !restTombstoneIds3.has(S(r.id)));
               return [...cleanRests, ...localOnly];
             });
           }
@@ -2577,7 +2632,9 @@ function deletePackingItem(id) {
             const fallbackCityName3 = payload.new.display_city_name ? S(payload.new.display_city_name) : "";
             let fallbackCountry3 = ""; let fallbackRegion3 = fallbackCityName3;
             if (fallbackCityName3) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(fallbackCityName3)) { fallbackCountry3 = cn; break; } } }
-            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object').map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) }));
+            // [삭제 표식] DB 배열에 deleted:true로 남아있는 tombstone은 화면용 목록에서 제외한다.
+            const tombstoneIds3 = new Set(payload.new.plan_timeline.filter(p => p && p.deleted).map(p => S(p.id)));
+            const cleanPlans = payload.new.plan_timeline.filter(p => p && typeof p === 'object' && !p.deleted).map(p => ({ id: S(p.id), day: p.day, time: S(p.time), place: S(p.place), localName: S(p.localName), features: S(p.features), photo: S(p.photo), photos: Array.isArray(p.photos) ? p.photos : (p.photo ? [S(p.photo)] : []), ...(p.rentalMeta ? { rentalMeta: p.rentalMeta } : {}), ...(() => { let rc = S(p.country), rr = S(p.region); if (rc && !Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(rr)) { rc = cn; break; } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc)) { for (const [cn, rs] of Object.entries(REGIONS_BY_COUNTRY)) { if (rs.includes(p.country)) { rc = cn; rr = S(p.country); break; } } } if (!Object.keys(REGIONS_BY_COUNTRY).includes(rc) && fallbackCountry3) { rc = fallbackCountry3; rr = fallbackRegion3; } } return { country: rc, region: rr }; })(), isAccommodation: Boolean(p.isAccommodation), accommodationDays: Array.isArray(p.accommodationDays) ? p.accommodationDays : [], isTransport: Boolean(p.isTransport), theme: S(p.theme) || "기타", expenseLocal: p.expenseLocal || "", expenseKrw: p.expenseKrw || "", rating: p.rating || 0, review: p.review || "", updatedAt: p.updatedAt || 0, transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''), transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation), ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}) }));
             // updatedAt 기준 병합: 로컬 항목과 DB 항목 중 더 최신 것 우선, 로컬 미저장 항목 보존
             setPlanTimeline(prev => {
               const localMap = new Map((Array.isArray(prev) ? prev : []).map(p => [S(p.id), p]));
@@ -2587,9 +2644,9 @@ function deletePackingItem(id) {
                 // updatedAt 비교: 로컬이 더 최신이면 로컬 우선
                 return (localP.updatedAt || 0) > (dbP.updatedAt || 0) ? localP : dbP;
               });
-              // 로컬에만 있는 미저장 신규 항목 추가
+              // 로컬에만 있는 미저장 신규 항목 추가 (단, DB가 삭제 표식을 남긴 항목은 되살리지 않는다)
               const dbIds = new Set(cleanPlans.map(p => S(p.id)));
-              (Array.isArray(prev) ? prev : []).forEach(p => { if (p && !dbIds.has(S(p.id))) merged.push(p); });
+              (Array.isArray(prev) ? prev : []).forEach(p => { if (p && !dbIds.has(S(p.id)) && !tombstoneIds3.has(S(p.id))) merged.push(p); });
               return merged;
             });
           }
