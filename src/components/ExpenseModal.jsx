@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Wallet, ClipboardList } from 'lucide-react';
 import { REGIONS_BY_COUNTRY, COUNTRY_FLAG } from '../utils/constants';
 import { S, getFlagForCity } from '../utils/helpers';
+import { tombstone } from '../sync/tripDataModel';
 
 const ExpenseModal = ({
   isExpenseModalOpen, setIsExpenseModalOpen,
@@ -205,7 +206,9 @@ const ExpenseModal = ({
                           e.stopPropagation();
                           if (item.category === '기타' && item.isFromTimeline) {
                             const updated = planTimeline.filter(p => String(p.id) !== String(item.planId));
-                            setPlanTimeline(updated); saveToDb({ plan_timeline: updated });
+                            setPlanTimeline(updated);
+                            // [삭제 표식] 배열에서 빼기만 하면 공유 여행에서 되살아날 수 있어, DB에는 tombstone을 남긴다.
+                            saveToDb({ plan_timeline: [...updated, tombstone(item.planId)] });
                           } else if (!item.isFromTimeline) {
                             setBasicExpenses(prev => prev.filter(b => b.id !== item.id));
                           }

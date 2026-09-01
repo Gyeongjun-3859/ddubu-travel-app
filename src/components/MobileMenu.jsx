@@ -101,6 +101,12 @@ return (
                                 await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
                                 await supabaseClient.from('travel_state').update({ archived: true, finish_date: finishDate, shared_users: [] }).eq('id', t.id);
                               }
+                              // [보관함 자동 전환] 방금 완료 처리한 여행이 활성 여행이었다면, 보관함(완료된) 여행이
+                              // 계속 활성 상태로 남아있지 않도록 다른 진행 중인 여행으로 자동 전환한다.
+                              if (t.id === activeTripId) {
+                                const nextActive = newTrips.find(item => item && !item.archived);
+                                if (nextActive) handleSwitchTrip(nextActive.id);
+                              }
                               showToast("축하합니다! 성공적으로 여행을 마쳤습니다. 🏁");
                               setActiveTab('archive');
                             });

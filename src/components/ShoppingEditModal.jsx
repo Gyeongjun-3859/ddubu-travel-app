@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, ShoppingBag } from 'lucide-react';
 import { S, compressAndStoreImage } from '../utils/helpers';
+import { tombstone } from '../sync/tripDataModel';
 
 const ShoppingEditModal = ({
   isOpen, onClose, isDarkMode, textMuted, inputBg,
@@ -177,7 +178,7 @@ const ShoppingEditModal = ({
                        <>
                          <div className="flex items-center justify-between w-full">
                            <span className="text-[11px] font-bold truncate max-w-[200px]">{item.text}</span>
-                           <button onClick={(e) => { e.stopPropagation(); const newList = shoppingList.filter(s => s.id !== item.id); setShoppingList(newList); saveToDb({ shopping_list: newList }); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-pink-400 hover:text-pink-600'}`}><X className="w-[1em] h-[1em] inline" /></button>
+                           <button onClick={(e) => { e.stopPropagation(); const newList = shoppingList.filter(s => s.id !== item.id); setShoppingList(newList); saveToDb({ shopping_list: [...newList, tombstone(item.id)] }); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-pink-400 hover:text-pink-600'}`}><X className="w-[1em] h-[1em] inline" /></button>
                          </div>
                          <div className="flex items-center space-x-1 mt-0.5 opacity-60">
                            <span className="text-[8px] font-bold bg-black/5 px-1 rounded">{item.linkedPlace ? `📍 ${item.linkedPlace}` : (item.day ? `Day ${item.day}` : '미지정')}</span>

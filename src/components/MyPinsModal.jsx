@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, MapPin, Compass, Trash2 } from 'lucide-react';
 import { S, openGoogleMapsNav } from '../utils/helpers';
+import { tombstone } from '../sync/tripDataModel';
 
 const MyPinsModal = ({
   isOpen, onClose, cardBg, isDarkMode,
@@ -145,7 +146,7 @@ const MyPinsModal = ({
                            const updated = safeCurrentRestaurants.filter(r => r && S(r.id) !== S(pin.id));
                            setCurrentRestaurants(updated);
                            // [삭제 표식] 배열에서 그냥 빼기만 하면 공유 여행에서 되살아날 수 있어, DB에는 tombstone을 남긴다.
-                           saveToDb({ current_restaurants: [...updated, { id: S(pin.id), deleted: true, updatedAt: Date.now() }] });
+                           saveToDb({ current_restaurants: [...updated, tombstone(pin.id)] });
                            showToast("핀이 삭제되었습니다.");
                         }} className="w-6 flex items-center justify-center bg-rose-50 text-rose-500 dark:bg-rose-900/30 dark:text-rose-400 py-1 rounded hover:bg-rose-100 transition-colors duration-300">
                            <span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span>
