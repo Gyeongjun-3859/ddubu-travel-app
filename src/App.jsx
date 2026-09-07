@@ -3998,6 +3998,10 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
 
               {/* Day 칩 + Day 관리 + 준비물/쇼핑 */}
               <div className="flex items-center justify-between gap-2 px-1">
+                <div className="flex gap-1.5 shrink-0">
+                  <button onClick={() => setIsPackingModalOpen(true)} className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition-colors ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-200 hover:bg-slate-600' : 'bg-[#f4f3f8] border-slate-200/60 text-slate-700 hover:bg-slate-200'}`}><Backpack className="w-3 h-3" /> 준비물</button>
+                  <button onClick={() => setIsShoppingModalOpen(true)} className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition-colors ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-200 hover:bg-slate-600' : 'bg-[#f4f3f8] border-slate-200/60 text-slate-700 hover:bg-slate-200'}`}><ShoppingBag className="w-3 h-3" /> 쇼핑</button>
+                </div>
                 <div className="flex items-center gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
                   {tripDays.map(d => {
                     const wInfo = getWeatherForDay(d);
@@ -4015,10 +4019,6 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
                   })}
                   <button onClick={addDay} className={`rounded-lg px-2 py-1.5 text-[11px] font-bold shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-[#f4f3f8] text-slate-500 hover:bg-slate-200'}`}>+ Day</button>
                   {maxDay > 1 && <button onClick={removeDay} className={`rounded-lg px-2 py-1.5 text-[11px] font-bold shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-[#f4f3f8] text-slate-500 hover:bg-slate-200'}`}>- Day</button>}
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button onClick={() => setIsPackingModalOpen(true)} className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition-colors ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-200 hover:bg-slate-600' : 'bg-[#f4f3f8] border-slate-200/60 text-slate-700 hover:bg-slate-200'}`}><Backpack className="w-3 h-3" /> 준비물</button>
-                  <button onClick={() => setIsShoppingModalOpen(true)} className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition-colors ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-200 hover:bg-slate-600' : 'bg-[#f4f3f8] border-slate-200/60 text-slate-700 hover:bg-slate-200'}`}><ShoppingBag className="w-3 h-3" /> 쇼핑</button>
                 </div>
               </div>
 
