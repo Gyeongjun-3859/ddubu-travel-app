@@ -4,7 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
 import { App as CapacitorApp } from '@capacitor/app';
 import { X, Menu, LayoutDashboard, Calendar, Map as MapIcon, Wallet, Plane, Backpack, ShoppingBag, Mail, Settings, ClipboardList, CloudSun, MapPin, Navigation, LogOut, Home, Compass, ListChecks, PenLine, Globe, Clock, Tag, Search, Camera, Pencil, FolderOpen, Trash2, Handshake, Undo2, Redo2, RefreshCw, Plus } from 'lucide-react';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTRY_FLAG, KAKAO_CAT_COLORS, CITY_NAME_TO_EN } from './utils/constants';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTRY_FLAG, KAKAO_CAT_COLORS, CITY_NAME_TO_EN, COUNTRY_TIPS, COUNTRY_PACKING_SUGGESTIONS } from './utils/constants';
 import { toAuthEmail, toAuthPassword, S, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
@@ -164,6 +164,9 @@ const MainApp = () => {
   const [globalPlanRegion, setGlobalPlanRegion] = useState("");
   const [globalManualCountry, setGlobalManualCountry] = useState("");
   const [globalManualRegion, setGlobalManualRegion] = useState("");
+  // 국가별 특화 UI(꿀팁 버튼, 준비물 추천, 국내 전용 기능 숨김 등)에서 쓸 확정 국가명
+  const resolvedGlobalCountry = globalPlanCountry === '수동입력' ? globalManualCountry : globalPlanCountry;
+  const isDomesticTrip = resolvedGlobalCountry === '한국';
 
   const {
     weather, forecast, hourlyWeatherCache, expandedWeatherDay, setExpandedWeatherDay,
@@ -489,8 +492,13 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
             setGlobalPlanCountry(plan.country);
             setGlobalManualCountry("");
             try { localStorage.setItem('my_travel_global_country', plan.country); } catch(e){}
+        } else if (plan && plan.country) {
+            // [버그 수정] 내장 목록에 없는 수동 입력 국가(예: 카자흐스탄)는 그대로 보존.
+            // 예전엔 여기서 다른 트립을 보다 저장된 localStorage 값으로 덮어써서, 트립을 왔다갔다 하면 국가가 뒤바뀌는 문제가 있었음.
+            setGlobalPlanCountry("수동입력");
+            setGlobalManualCountry(plan.country);
         } else {
-            // timeline에 없으면 localStorage에 마지막으로 저장된 국가 복원
+            // 이 트립에 국가 정보 자체가 없을 때만(완전히 새 트립) 마지막으로 썼던 국가로 폴백
             try {
               const savedCountry = localStorage.getItem('my_travel_global_country');
               if (savedCountry && Object.keys(REGIONS_BY_COUNTRY).includes(savedCountry)) {
@@ -510,7 +518,8 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
       }
     }
     const tl = Array.isArray(timeline) ? timeline : [];
-    const withCountry = tl.find(p => p && p.country && Object.keys(REGIONS_BY_COUNTRY).includes(p.country));
+    // [버그 수정] 내장 목록에 없는 수동 입력 국가도 보관함 국내/해외 분류를 위해 그대로 보존
+    const withCountry = tl.find(p => p && p.country);
     return withCountry ? withCountry.country : '';
   }
 
@@ -2036,6 +2045,15 @@ function handleAddPackingItem(e) {
       saveToDb({ packing_list: newList });
       e.target.value = '';
     }
+  }
+  // 국가별 추천 준비물 칩을 눌렀을 때 바로 짐 목록에 추가 (이미 담겨있으면 무시)
+  function handleAddPackingItemSuggestion(text) {
+    const already = packingList.some(item => !item.isPersonal && item.text === text);
+    if (already) return;
+    const newItem = { id: Date.now().toString(), text, isChecked: false, isPersonal: false, userId: appUserId };
+    const newList = [...packingList, newItem];
+    setPackingList(newList);
+    saveToDb({ packing_list: newList });
   }
   function togglePackingItem(id) {
     const newList = packingList.map(item => item.id === id ? { ...item, isChecked: !item.isChecked } : item);
@@ -3618,6 +3636,8 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
         onStartLongPress={startLongPress} onCancelLongPress={cancelLongPress} onToggleItem={togglePackingItem}
         setPackingList={setPackingList} setEditingItemId={setEditingItemId}
         saveToDb={saveToDb} onDeleteItem={deletePackingItem}
+        countryPackingSuggestions={COUNTRY_PACKING_SUGGESTIONS[resolvedGlobalCountry] || []}
+        onAddSuggestedItem={handleAddPackingItemSuggestion}
       />
 
       <PlanDetailModal
@@ -3630,6 +3650,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
 
       <PinDetailModal
         selectedPinInfo={selectedPinInfo} setSelectedPinInfo={setSelectedPinInfo} cardBg={cardBg} setViewPhoto={setViewPhoto} handleCopyLocalName={handleCopyLocalName} openEditPinModal={openEditPinModal}
+        isDomesticTrip={isDomesticTrip}
       />
 
       <TripModal
@@ -3673,7 +3694,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
 
       <MyPinsModal
         isOpen={isMyPinsModalOpen} onClose={() => setIsMyPinsModalOpen(false)}
-        cardBg={cardBg} isDarkMode={isDarkMode}
+        cardBg={cardBg} isDarkMode={isDarkMode} isDomesticTrip={isDomesticTrip}
         myPinsFilter={myPinsFilter} setMyPinsFilter={setMyPinsFilter} tripDays={tripDays}
         myPinsThemeFilter={myPinsThemeFilter} setMyPinsThemeFilter={setMyPinsThemeFilter}
         filteredMyPins={filteredMyPins} planTimeline={planTimeline}
@@ -3696,7 +3717,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
 
       {/* --- 메인 컨텐츠 영역 --- */}
       <main 
-        className={`flex-1 flex flex-col min-w-0 h-full overflow-y-auto overflow-x-hidden relative z-10 transition-transform ${isRefreshing || pullDistance === 0 ? 'duration-300 ease-out' : 'duration-0'} ${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}
+        className={`flex-1 flex flex-col min-w-0 h-full overflow-y-auto overflow-x-hidden relative z-10 transition-transform pb-16 sm:pb-0 ${isRefreshing || pullDistance === 0 ? 'duration-300 ease-out' : 'duration-0'} ${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`}
         style={{ transform: `translateY(${isRefreshing ? 80 : pullDistance}px)`, overscrollBehaviorY: 'contain' }}
         onTouchStart={(e) => {
           // 지도 탭이면 pull-to-refresh 완전 비활성화
@@ -3871,15 +3892,18 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
                 <span className="mr-1">💾</span> 내 일정으로 복사(가져오기)
               </button>
             )}
-            <button onClick={() => changeTab('dashboard')} className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
-              <LayoutDashboard className="w-3.5 h-3.5" /><span className="hidden sm:inline">대쉬보드</span>
-            </button>
-            <button onClick={() => changeTab('plan')} className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'plan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
-              <Calendar className="w-3.5 h-3.5" /><span className="hidden sm:inline">일정</span>
-            </button>
-            <button onClick={() => changeTab('map')} className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'map' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
-              <MapIcon className="w-3.5 h-3.5" /><span className="hidden sm:inline">지도</span>
-            </button>
+            {/* 모바일 폭에서는 화면 하단 고정 탭바로 이동, PC(sm 이상)에서만 상단 탭 노출 */}
+            <div className="hidden sm:flex items-center space-x-1 sm:space-x-2">
+              <button onClick={() => changeTab('dashboard')} className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+                <LayoutDashboard className="w-3.5 h-3.5" /><span className="hidden sm:inline">대쉬보드</span>
+              </button>
+              <button onClick={() => changeTab('plan')} className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'plan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+                <Calendar className="w-3.5 h-3.5" /><span className="hidden sm:inline">일정</span>
+              </button>
+              <button onClick={() => changeTab('map')} className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all duration-300 ${activeTab === 'map' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+                <MapIcon className="w-3.5 h-3.5" /><span className="hidden sm:inline">지도</span>
+              </button>
+            </div>
           </div>
         </header>
 
@@ -3898,6 +3922,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
             activeMobileCard={activeMobileCard} setActiveMobileCard={setActiveMobileCard} setSelectedPlanInfo={setSelectedPlanInfo}
             handleEditPlanClick={handleEditPlanClick} handleDeletePlan={handleDeletePlan} changeTab={changeTab} displayCityName={displayCityName} openPhotoViewer={openPhotoViewer}
             currentRestaurants={currentRestaurants}
+            isDomesticTrip={isDomesticTrip} countryTips={COUNTRY_TIPS[resolvedGlobalCountry] || []} resolvedGlobalCountry={resolvedGlobalCountry}
           />
 
           {/* --- Plan Tab --- */}
@@ -4031,6 +4056,7 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
                 handleCopyLocalName={handleCopyLocalName} openPhotoViewer={openPhotoViewer}
                 currentRestaurants={currentRestaurants}
                 onAddPlace={openQuickAddPlace}
+                isDomesticTrip={isDomesticTrip}
               />
             </div>
           </div>
@@ -4054,17 +4080,38 @@ console.log("✅ 필터링 완료된 데이터:", filteredMyPins);
             showMapLabels={showMapLabels} setShowMapLabels={setShowMapLabels}
             handleFindMyLocation={handleFindMyLocation}
             setNavOrigin={setNavOrigin} setNavDest={setNavDest} setIsNavModalOpen={setIsNavModalOpen}
-            cardBg={cardBg} isKakaoMapLoaded={isKakaoMapLoaded} isLeafletLoaded={isLeafletLoaded} setMapTypeOverride={setMapTypeOverride}
+            cardBg={cardBg} isKakaoMapLoaded={isKakaoMapLoaded} isLeafletLoaded={isLeafletLoaded} setMapTypeOverride={setMapTypeOverride} mapInstanceRef={mapInstanceRef}
             mapContainerRef={mapContainerRef} kakaoMapContainerRef={kakaoMapContainerRef}
           />
         </div>
       </main>
 
+      {/* 모바일 폭 전용 하단 고정 탭바 (PC에서는 상단 탭 사용) */}
+      <div
+        className={`sm:hidden fixed bottom-0 left-0 right-0 z-30 flex items-stretch border-t ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
+        {[
+          { id: 'dashboard', label: '대쉬보드', Icon: LayoutDashboard },
+          { id: 'plan', label: '일정', Icon: Calendar },
+          { id: 'map', label: '지도', Icon: MapIcon },
+        ].map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            onClick={() => changeTab(id)}
+            className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-bold transition-colors duration-300 ${activeTab === id ? 'text-indigo-600' : (isDarkMode ? 'text-slate-500' : 'text-slate-400')}`}
+          >
+            <Icon className="w-5 h-5" />
+            {label}
+          </button>
+        ))}
+      </div>
+
       {activeTab === 'plan' && (
         <button
           onClick={openQuickAddPlace}
           style={{ fontFamily: "'Be Vietnam Pro', system-ui, -apple-system, sans-serif" }}
-          className="fixed bottom-6 right-5 z-[100] flex items-center gap-1.5 rounded-full bg-[#007AFF] px-4 py-3 text-[13px] font-bold text-white shadow-[0_8px_24px_rgba(0,88,188,0.35)] active:scale-95 transition-transform"
+          className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] sm:bottom-6 right-5 z-[100] flex items-center gap-1.5 rounded-full bg-[#007AFF] px-4 py-3 text-[13px] font-bold text-white shadow-[0_8px_24px_rgba(0,88,188,0.35)] active:scale-95 transition-transform"
         >
           <Plus className="w-4 h-4" /> 일정 추가
         </button>

@@ -6,8 +6,13 @@ const PackingEditModal = ({
   onAddItem, packingList, appUserId, editingItemId,
   onStartLongPress, onCancelLongPress, onToggleItem, setPackingList, setEditingItemId,
   saveToDb, onDeleteItem,
+  countryPackingSuggestions = [], onAddSuggestedItem,
 }) => {
   if (!isOpen) return null;
+
+  const remainingSuggestions = countryPackingSuggestions.filter(
+    text => !packingList.some(item => !item.isPersonal && item.text === text)
+  );
 
   return (
     <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={onClose}>
@@ -25,6 +30,23 @@ const PackingEditModal = ({
               </select>
               <input type="text" placeholder="챙길 물건 입력 후 엔터키" onKeyDown={onAddItem} className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-3 py-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none rounded-lg shadow-sm transition-all duration-300`} />
             </div>
+
+            {remainingSuggestions.length > 0 && (
+              <div className="shrink-0 space-y-1.5">
+                <p className={`text-[10px] font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>✨ 이 여행지 추천 준비물 (눌러서 담기)</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {remainingSuggestions.map(text => (
+                    <button
+                      key={text}
+                      onClick={() => onAddSuggestedItem(text)}
+                      className={`px-2.5 py-1 rounded-full border border-dashed text-[10px] font-bold transition-colors ${isDarkMode ? 'border-indigo-500/60 text-indigo-300 hover:bg-indigo-900/40' : 'border-indigo-300 text-indigo-600 hover:bg-indigo-50'}`}
+                    >
+                      + {text}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {packingList.some(item => item.isChecked) && (
               <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 p-2.5 rounded-lg text-[11px] font-bold text-center animate-in fade-in shrink-0 border border-emerald-100 dark:border-emerald-800/50 duration-300">

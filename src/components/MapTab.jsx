@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Search, Navigation, Compass, Layers, Route, Image, Tag, MapPin, List, Utensils, Bus, Camera, ShoppingBag, BedDouble, MoreHorizontal, Cake } from 'lucide-react';
 import { KAKAO_CAT_COLORS } from '../utils/constants';
 import { S } from '../utils/helpers';
+import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation } from '../utils/googlePlaces';
 
 const CATS = [
   { key: '식당', label: '식당', Icon: Utensils, color: '#f97316' },
@@ -26,9 +27,62 @@ const MapTab = ({
   handleFindMyLocation,
   setNavOrigin, setNavDest, setIsNavModalOpen,
   cardBg, isKakaoMapLoaded, isLeafletLoaded, setMapTypeOverride,
-  mapContainerRef, kakaoMapContainerRef,
+  mapContainerRef, kakaoMapContainerRef, mapInstanceRef,
 }) => {
   const [layersOpen, setLayersOpen] = useState(false);
+
+  // 해외(구글) 지도 장소 검색: 구글 Places 자동완성 후보 → 선택 시 지도 이동 + 임시 마커
+  const [placeResults, setPlaceResults] = useState([]);
+  const placeSessionRef = useRef(newPlacesSessionToken());
+  const placeReqRef = useRef(0);
+  const placeMarkerRef = useRef(null);
+  const useGoogleSearch = !isKakaoMap && hasGooglePlacesKey();
+
+  useEffect(() => {
+    const reqId = ++placeReqRef.current;
+    const q = S(markerSearchQuery).trim();
+    if (!useGoogleSearch || q.length < 2) { setPlaceResults([]); return; }
+    const timer = setTimeout(() => {
+      googleAutocomplete(q, placeSessionRef.current)
+        .then(list => { if (reqId === placeReqRef.current) setPlaceResults(list); })
+        .catch(e => {
+          console.warn('[구글 장소 검색 실패]', e && e.message);
+          if (reqId === placeReqRef.current) setPlaceResults([]);
+        });
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [markerSearchQuery, useGoogleSearch]);
+
+  const clearPlaceMarker = () => {
+    if (placeMarkerRef.current) { try { placeMarkerRef.current.remove(); } catch (_) {} placeMarkerRef.current = null; }
+  };
+
+  const handlePlaceSelect = async (p) => {
+    setPlaceResults([]);
+    placeReqRef.current++;
+    try {
+      const loc = await googlePlaceLocation(p.placeId, placeSessionRef.current);
+      placeSessionRef.current = newPlacesSessionToken();
+      const map = mapInstanceRef && mapInstanceRef.current;
+      if (!map || !window.L) return;
+      clearPlaceMarker();
+      const el = document.createElement('div');
+      el.style.cssText = 'display:flex;flex-direction:column;align-items:center;width:120px;';
+      const pin = document.createElement('div');
+      pin.textContent = '📍';
+      pin.style.cssText = 'font-size:26px;line-height:26px;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.4));';
+      const label = document.createElement('div');
+      label.textContent = p.name;
+      label.style.cssText = 'background:white;border:1px solid #e2e8f0;border-radius:6px;padding:2px 6px;font-size:10px;font-weight:700;color:#1e293b;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.12);margin-top:2px;';
+      el.appendChild(pin); el.appendChild(label);
+      const icon = window.L.divIcon({ className: '', html: el, iconSize: [120, 50], iconAnchor: [60, 26] });
+      placeMarkerRef.current = window.L.marker([loc.lat, loc.lng], { icon, zIndexOffset: 1000 }).addTo(map);
+      map.flyTo([loc.lat, loc.lng], 16);
+    } catch (e) {
+      console.warn('[구글 좌표 조회 실패]', e && e.message);
+      showToast("위치를 가져오지 못했어요. 잠시 후 다시 시도해주세요.");
+    }
+  };
 
   const themeArr = Array.isArray(myPinsThemeFilter) ? myPinsThemeFilter : [myPinsThemeFilter];
   const isAllCats = themeArr.includes('all') || !CATS.some(c => themeArr.includes(c.key));
@@ -160,6 +214,10 @@ const MapTab = ({
               value={S(markerSearchQuery)}
               onChange={e => setMarkerSearchQuery(e.target.value)}
               onKeyDown={e => {
+                if (e.key === 'Enter' && useGoogleSearch && placeResults.length > 0) {
+                  handlePlaceSelect(placeResults[0]);
+                  return;
+                }
                 if (e.key === 'Enter' && isKakaoMap && kakaoMapInstanceRef.current && window.kakao) {
                   try {
                     kakaoSearchMarkersRef.current.forEach(m => { try { m.setMap(null); } catch (_) {} });
@@ -194,7 +252,7 @@ const MapTab = ({
                   } catch (e) {}
                 }
               }}
-              placeholder={isKakaoMap ? "장소 검색 (한국어·영어·주소)..." : "내 지도 핀 검색..."}
+              placeholder={isKakaoMap ? "장소 검색 (한국어·영어·주소)..." : (useGoogleSearch ? "장소 검색 (한국어·영어·러시아어·카자흐어)..." : "내 지도 핀 검색...")}
               className={`w-full bg-transparent text-[13px] font-medium focus:outline-none ${isDarkMode ? 'text-white placeholder-slate-400' : 'text-slate-800 placeholder-slate-400'}`}
             />
             {markerSearchQuery && (
@@ -202,6 +260,8 @@ const MapTab = ({
                 setMarkerSearchQuery("");
                 kakaoSearchMarkersRef.current.forEach(m => { try { m.setMap(null); } catch (_) {} });
                 kakaoSearchMarkersRef.current = [];
+                setPlaceResults([]);
+                clearPlaceMarker();
               }} className="shrink-0 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
             )}
           </div>
@@ -216,6 +276,21 @@ const MapTab = ({
                   <span className={`w-2 h-2 rounded-full mr-2.5 ${planTimeline.some(p => S(p.place) === S(marker.name)) ? 'bg-orange-500' : 'bg-[#007AFF]'}`}></span>
                   <span className="truncate flex-1">{S(marker.name)}</span>
                   <span className={`text-[10px] ml-2 ${textMuted}`}>{S(marker.city)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {useGoogleSearch && placeResults.length > 0 && (
+            <div className={`mt-1 border rounded-xl shadow-xl overflow-hidden max-h-56 overflow-y-auto ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+              <div className={`px-3 pt-2 pb-1 text-[10px] font-bold ${textMuted}`}>📍 장소 검색 결과</div>
+              {placeResults.map(p => (
+                <button
+                  key={p.placeId}
+                  onClick={() => handlePlaceSelect(p)}
+                  className={`w-full text-left px-3 py-2 border-t ${isDarkMode ? 'border-slate-700 hover:bg-slate-700' : 'border-slate-100 hover:bg-[#007AFF]/5'}`}
+                >
+                  <div className={`text-[12px] font-semibold truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{p.name}</div>
+                  <div className={`text-[10px] truncate ${textMuted}`}>{p.address}</div>
                 </button>
               ))}
             </div>

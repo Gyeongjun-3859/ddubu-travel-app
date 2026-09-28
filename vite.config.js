@@ -6,6 +6,11 @@ export default defineConfig({
   build: {
     outDir: 'build',
   },
+  server: {
+    watch: {
+      ignored: ['**/android/**'],
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,

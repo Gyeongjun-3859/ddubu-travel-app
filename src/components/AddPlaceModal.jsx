@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Check, Copy, Calendar, ArrowUpDown, Camera, Image as ImageIcon, Bookmark, MapPinPlus, Link as LinkIcon } from 'lucide-react';
 import { S, compressAndStoreImage } from '../utils/helpers';
+import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation } from '../utils/googlePlaces';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -30,6 +31,8 @@ const AddPlaceModal = ({
   const [placeSuggestions, setPlaceSuggestions] = React.useState([]);
   const [showSuggestions, setShowSuggestions] = React.useState(false);
   const searchTimerRef = React.useRef(null);
+  const searchReqRef = React.useRef(0);
+  const placeSessionRef = React.useRef(newPlacesSessionToken());
 
   if (!isOpen) return null;
 
@@ -38,6 +41,7 @@ const AddPlaceModal = ({
   const inputCls = `w-full ${softBg} border ${border} focus:border-[#007AFF] rounded-2xl px-3.5 py-2.5 text-sm font-medium outline-none focus:ring-4 focus:ring-[#007AFF]/10 transition-all ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`;
 
   const runPlaceSearch = (query) => {
+    const reqId = ++searchReqRef.current; // 늦게 도착한 이전 검색 결과가 덮어쓰지 않게 구분
     if (!query || query.trim().length < 2) { setPlaceSuggestions([]); return; }
     if (isKakaoMap && isKakaoMapLoaded && window.kakao && window.kakao.maps && window.kakao.maps.services) {
       const kakao = window.kakao;
@@ -52,17 +56,32 @@ const AddPlaceModal = ({
         } else { setPlaceSuggestions([]); }
       }, { size: 5 });
     } else {
-      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=ko`)
-        .then(r => r.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            setPlaceSuggestions(data.map(d => ({
-              name: S(d.display_name).split(',')[0], address: S(d.display_name),
-              lat: parseFloat(d.lat), lng: parseFloat(d.lon),
-            })));
-            setShowSuggestions(true);
-          }
-        }).catch(() => setPlaceSuggestions([]));
+      const runNominatim = () => {
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=ko,en,ru`)
+          .then(r => r.json())
+          .then(data => {
+            if (reqId !== searchReqRef.current) return;
+            if (Array.isArray(data)) {
+              setPlaceSuggestions(data.map(d => ({
+                name: S(d.display_name).split(',')[0], address: S(d.display_name),
+                lat: parseFloat(d.lat), lng: parseFloat(d.lon),
+              })));
+              setShowSuggestions(true);
+            }
+          }).catch(() => { if (reqId === searchReqRef.current) setPlaceSuggestions([]); });
+      };
+      // 해외는 구글 Places 우선, 키가 없거나 실패/결과 없음이면 기존 OSM 검색으로 대체
+      if (!hasGooglePlacesKey()) { runNominatim(); return; }
+      googleAutocomplete(query.trim(), placeSessionRef.current)
+        .then(list => {
+          if (reqId !== searchReqRef.current) return;
+          if (list.length > 0) { setPlaceSuggestions(list); setShowSuggestions(true); }
+          else runNominatim();
+        })
+        .catch(e => {
+          console.warn('[구글 장소 검색 실패 → OSM 대체]', e && e.message);
+          if (reqId === searchReqRef.current) runNominatim();
+        });
     }
   };
 
@@ -72,12 +91,25 @@ const AddPlaceModal = ({
     searchTimerRef.current = setTimeout(() => runPlaceSearch(val), 350);
   };
 
-  const handleSelectSuggestion = (s) => {
+  const handleSelectSuggestion = async (s) => {
     setNewManualPlaceName(s.name);
-    if (!isNaN(s.lat) && !isNaN(s.lng) && typeof setClickedLocation === 'function') {
-      setClickedLocation(prev => ({ ...(prev || {}), lat: s.lat, lng: s.lng }));
-    }
     setPlaceSuggestions([]); setShowSuggestions(false);
+    searchReqRef.current++; // 선택 직후 도착하는 검색 결과 무시
+    let { lat, lng } = s;
+    // 구글 후보는 좌표가 없어서 선택 시점에 조회 (세션 종료 → 새 토큰 발급)
+    if (s.placeId && (isNaN(lat) || isNaN(lng))) {
+      try {
+        const loc = await googlePlaceLocation(s.placeId, placeSessionRef.current);
+        lat = loc.lat; lng = loc.lng;
+      } catch (e) {
+        console.warn('[구글 좌표 조회 실패]', e && e.message);
+        showToast("위치를 가져오지 못했어요. 지도를 눌러 직접 지정해주세요.");
+      }
+      placeSessionRef.current = newPlacesSessionToken();
+    }
+    if (!isNaN(lat) && !isNaN(lng) && typeof setClickedLocation === 'function') {
+      setClickedLocation(prev => ({ ...(prev || {}), lat, lng }));
+    }
   };
 
   const photoCount = newManualPhotos.length;

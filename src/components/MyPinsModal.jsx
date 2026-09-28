@@ -14,6 +14,7 @@ const MyPinsModal = ({
   activeTab, setActiveTab, isKakaoMap, kakaoMapInstanceRef, mapInstanceRef, pendingMapFlyRef,
   setMovingPinId, setIsPinMode, showToast, openEditPinModal,
   safeCurrentRestaurants, setCurrentRestaurants, saveToDb, handleCopyLocalName,
+  isDomesticTrip,
 }) => {
   return (
     <>
@@ -181,7 +182,7 @@ const MyPinsModal = ({
                   <span className="ml-auto shrink-0 bg-indigo-100 dark:bg-indigo-800 px-2 py-0.5 rounded-full text-[10px]">복사</span>
                 </button>
               )}
-              {pinQuickView.lat && pinQuickView.lng && (
+              {!isDomesticTrip && pinQuickView.lat && pinQuickView.lng && (
                 <button onClick={() => { setPinQuickView(null); openGoogleMapsNav(pinQuickView.lat, pinQuickView.lng, 'driving'); }} className="w-full bg-green-500 hover:bg-green-600 active:scale-95 text-white py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1">
                   <Compass className="w-3.5 h-3.5" /><span>현재 위치에서 길 안내</span>
                 </button>

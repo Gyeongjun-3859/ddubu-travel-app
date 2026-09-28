@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { RefreshCw, Calendar, Backpack, ShoppingBag, Plane, Trash2, MapPin, Languages, Map as MapIcon, Wallet, ListChecks } from 'lucide-react';
-import { CURRENCIES } from '../utils/constants';
+import { createPortal } from 'react-dom';
+import { RefreshCw, Calendar, Backpack, ShoppingBag, Plane, Trash2, MapPin, Languages, Map as MapIcon, Wallet, ListChecks, Sparkles, X } from 'lucide-react';
+import { COUNTRY_LANGUAGE, COUNTRY_CURRENCY } from '../utils/constants';
 import { S, getAccommodationTransitFrom } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 import TransitRouteViewModal from './TransitRouteViewModal';
+import LanguageModal from './LanguageModal';
 
 const THEME_DEFAULT_PHOTO = {
   '식당': 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80',
@@ -40,8 +42,11 @@ const DashboardTab = ({
   activeMobileCard, setActiveMobileCard, setSelectedPlanInfo,
   handleEditPlanClick, handleDeletePlan, changeTab, displayCityName, openPhotoViewer,
   currentRestaurants, setIsSettingsOpen,
+  isDomesticTrip, countryTips = [], resolvedGlobalCountry,
 }) => {
   const [transitView, setTransitView] = useState(null);
+  const [isTipsOpen, setIsTipsOpen] = useState(false);
+  const [isLanguageOpen, setIsLanguageOpen] = useState(false);
   const findPinCoord = (placeName) => {
     const pin = (Array.isArray(currentRestaurants) ? currentRestaurants : []).find(r => r && r.lat && r.lng && S(r.name) === S(placeName));
     return pin ? { lat: pin.lat, lng: pin.lng } : null;
@@ -53,8 +58,16 @@ const DashboardTab = ({
   const softBtn = `${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600 text-slate-200' : 'bg-[#f4f3f8] border-slate-200/60 hover:bg-slate-200 text-slate-700'}`;
 
   // 환율 계산기: KRW 또는 외화 어디에 입력해도 나머지가 실시간으로 환산됨
-  const foreignCurrencies = CURRENCIES.filter(c => c.code !== 'KRW');
-  const currencyInputValue = (code) => { const v = getInputValue(code); return v === '-' ? '' : v; };
+  // 원화 + 달러 + 여행 국가 통화, 이렇게 최대 3개만 보여줌 (국가 통화가 USD면 중복 표시 안 함)
+  const tripCurrency = COUNTRY_CURRENCY[resolvedGlobalCountry];
+  const currencyLabel = (code, unit) => unit && unit > 1 ? `${code}(${unit})` : code;
+  const foreignCurrencies = [
+    { code: 'USD', label: currencyLabel('USD', 1), unit: 1 },
+    ...(tripCurrency && tripCurrency.code !== 'USD'
+      ? [{ code: tripCurrency.code, label: currencyLabel(tripCurrency.code, tripCurrency.unit), unit: tripCurrency.unit || 1 }]
+      : []),
+  ];
+  const currencyInputValue = (code, unit) => { const v = getInputValue(code, unit); return v === '-' ? '' : v; };
   const updatedLabel = (() => {
     if (!ratesUpdatedAt) return '';
     const mins = Math.floor((Date.now() - ratesUpdatedAt) / 60000);
@@ -66,10 +79,11 @@ const DashboardTab = ({
   const highlightPlans = (Array.isArray(todayPlans) ? todayPlans : []).filter(p => p && !isTransportPlan(p));
 
   const tools = [
-    { key: 'translate', label: 'AI 번역기', Icon: Languages, onClick: handleOpenGoogleTranslate },
+    ...(isDomesticTrip ? [] : [{ key: 'translate', label: 'AI 번역기', Icon: Languages, onClick: handleOpenGoogleTranslate }]),
     { key: 'expense', label: '여행정산', Icon: Wallet, onClick: () => setIsExpenseModalOpen(true), badge: totalExpenseKrw > 0 ? `₩${totalExpenseKrw.toLocaleString()}` : null },
     { key: 'packing', label: '준비물', Icon: Backpack, onClick: () => setIsDashboardPackingOpen(true) },
     { key: 'shopping', label: '쇼핑', Icon: ShoppingBag, onClick: () => setIsDashboardShoppingOpen(true) },
+    ...(countryTips.length > 0 ? [{ key: 'tips', label: `${resolvedGlobalCountry} 꿀팁`, Icon: Sparkles, onClick: () => setIsTipsOpen(true) }] : []),
     { key: 'map', label: '지도 열기', Icon: MapIcon, onClick: () => changeTab('map'), full: true },
   ];
 
@@ -254,9 +268,10 @@ const DashboardTab = ({
           </div>
         </div>
 
-        {/* 2열: 실시간 환율 / 빠른 도구 */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* 2열: 실시간 환율 / 빠른 도구 (국내 여행이면 환율 계산기는 숨김) */}
+        <div className={`grid grid-cols-1 ${isDomesticTrip ? '' : 'sm:grid-cols-2'} gap-3`}>
           {/* 실시간 환율 (양방향 계산기) */}
+          {!isDomesticTrip && (
           <div className={`${panel} p-3 flex flex-col gap-2`}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h3 className={`flex items-center gap-1.5 text-[13px] font-semibold shrink-0 ${textMain}`}>
@@ -292,8 +307,8 @@ const DashboardTab = ({
                   <input
                     type="text"
                     inputMode="decimal"
-                    value={currencyInputValue(cur.code)}
-                    placeholder={getPlaceholder(cur.code)}
+                    value={currencyInputValue(cur.code, cur.unit)}
+                    placeholder={getPlaceholder(cur.code, cur.unit)}
                     onFocus={() => setFocusedCurrency(cur.code)}
                     onBlur={() => setFocusedCurrency(prev => prev === cur.code ? null : prev)}
                     onChange={e => handleInputChange(cur.code, e.target.value)}
@@ -306,6 +321,7 @@ const DashboardTab = ({
               ? <span className="text-rose-500 text-[10px] font-semibold">{errorRates}</span>
               : updatedLabel && <span className={`text-[10px] font-medium ${textMuted}`}>{updatedLabel}</span>}
           </div>
+          )}
 
           {/* 빠른 도구 */}
           <div className={`${panel} p-3 flex flex-col gap-2`}>
@@ -335,6 +351,43 @@ const DashboardTab = ({
         route={transitView?.route}
         onClose={() => setTransitView(null)}
         findPinCoord={findPinCoord}
+      />
+
+      {isTipsOpen && createPortal(
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4" onClick={() => setIsTipsOpen(false)}>
+          <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'} w-full max-w-sm shadow-2xl overflow-hidden rounded-2xl border`} onClick={e => e.stopPropagation()}>
+            <div className={`flex items-center justify-between p-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h3 className={`text-sm font-black flex items-center gap-1.5 ${textMain}`}><Sparkles className="w-4 h-4 text-[#007AFF]" /> {resolvedGlobalCountry} 여행 꿀팁</h3>
+              <button onClick={() => setIsTipsOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-4 space-y-2.5 max-h-[60vh] overflow-y-auto custom-scrollbar">
+              {countryTips.map((tip, i) => (
+                <div key={i} className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 ${isDarkMode ? 'bg-slate-900/40 border-slate-700' : 'bg-[#f4f3f8] border-slate-200/50'}`}>
+                  <span className="text-base leading-none">{tip.icon}</span>
+                  <span className={`text-[12px] font-medium leading-snug ${textMain}`}>{tip.text}</span>
+                </div>
+              ))}
+              {COUNTRY_LANGUAGE[resolvedGlobalCountry] && (
+                <button
+                  onClick={() => setIsLanguageOpen(true)}
+                  className={`w-full flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-[12px] font-bold transition-colors ${isDarkMode ? 'bg-indigo-900/30 border-indigo-700 text-indigo-300 hover:bg-indigo-900/50' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}
+                >
+                  🗣️ 현지 언어 알아보기
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      <LanguageModal
+        isOpen={isLanguageOpen}
+        onClose={() => setIsLanguageOpen(false)}
+        isDarkMode={isDarkMode}
+        textMain={textMain}
+        countryName={resolvedGlobalCountry}
+        languageList={COUNTRY_LANGUAGE[resolvedGlobalCountry]}
       />
     </div>
   );

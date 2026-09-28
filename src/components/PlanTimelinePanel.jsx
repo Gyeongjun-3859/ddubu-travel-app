@@ -15,6 +15,7 @@ const PlanTimelinePanel = ({
   activeMobileCard, setActiveMobileCard,
   handleEditPlanClick, handleDeletePlan, handleCopyLocalName, openPhotoViewer,
   currentRestaurants, onAddPlace,
+  isDomesticTrip,
 }) => {
   const safePT = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
 
@@ -173,12 +174,14 @@ const PlanTimelinePanel = ({
                           <span>{getThemeEmoji(plan.theme)} {S(plan.theme) || '기타'}</span>
                           {plan.localName && (<><span className="opacity-40">•</span><span className="truncate text-[#007AFF] font-semibold" onClick={(e) => handleCopyLocalName(e, plan.localName)}>{S(plan.localName)}</span></>)}
                         </div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); openNav(plan); }}
-                          className="mt-0.5 flex w-fit items-center gap-1 rounded-md bg-[#007AFF]/10 px-2 py-1 text-[11px] font-semibold text-[#007AFF]"
-                        >
-                          <Navigation className="w-3 h-3" /> 길찾기
-                        </button>
+                        {!isDomesticTrip && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openNav(plan); }}
+                            className="mt-0.5 flex w-fit items-center gap-1 rounded-md bg-[#007AFF]/10 px-2 py-1 text-[11px] font-semibold text-[#007AFF]"
+                          >
+                            <Navigation className="w-3 h-3" /> 길찾기
+                          </button>
+                        )}
                       </div>
                       {actionBar(plan, isActive)}
                     </div>

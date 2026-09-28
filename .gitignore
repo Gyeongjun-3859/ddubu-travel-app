@@ -28,3 +28,4 @@ yarn-error.log*
 # Android build
 /android
 .vercel
+.env*

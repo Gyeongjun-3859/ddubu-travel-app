@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 // 실시간 환율 조회 + 마지막 성공 값 로컬 캐싱(오프라인 대비)
 export function useExchangeRates(showToast) {
   const [rates, setRates] = useState({ USD: 1, KRW: 1350, JPY: 150, EUR: 0.92, CNY: 7.2 });
+  // ↑ 초기값은 로딩 중 표시용 fallback. 실제로는 아래에서 전체 통화(약 160종)를 받아와 rates에 채워 넣음.
   const [loadingRates, setLoadingRates] = useState(false);
   const [errorRates, setErrorRates] = useState(null);
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
@@ -13,7 +14,8 @@ export function useExchangeRates(showToast) {
       const res = await fetch('https://open.er-api.com/v6/latest/USD');
       if (!res.ok) throw new Error('Data fetch failed');
       const data = await res.json();
-      const nextRates = { USD: 1, KRW: data.rates.KRW, JPY: data.rates.JPY, EUR: data.rates.EUR, CNY: data.rates.CNY };
+      // [여행국가 통화 대응] API가 주는 전체 통화(약 160종)를 그대로 저장해서, 어떤 국가 통화든 rates[code]로 바로 조회 가능하게 함
+      const nextRates = { ...data.rates, USD: 1 };
       setRates(nextRates);
       setErrorRates(null);
       const now = Date.now();

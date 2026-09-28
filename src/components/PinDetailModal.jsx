@@ -3,6 +3,7 @@ import { S, openGoogleMapsNav } from '../utils/helpers';
 
 const PinDetailModal = ({
   selectedPinInfo, setSelectedPinInfo, cardBg, setViewPhoto, handleCopyLocalName, openEditPinModal,
+  isDomesticTrip,
 }) => {
   if (!selectedPinInfo) return null;
 
@@ -34,7 +35,7 @@ const PinDetailModal = ({
             <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
           )}
 
-          {selectedPinInfo.lat && selectedPinInfo.lng && (
+          {!isDomesticTrip && selectedPinInfo.lat && selectedPinInfo.lng && (
             <button onClick={() => openGoogleMapsNav(selectedPinInfo.lat, selectedPinInfo.lng, 'driving')} className="w-full mt-4 bg-green-500 hover:bg-green-600 active:scale-95 text-white py-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center space-x-2">
               <span>🧭</span><span>구글 네비게이션으로 길 안내</span>
             </button>
