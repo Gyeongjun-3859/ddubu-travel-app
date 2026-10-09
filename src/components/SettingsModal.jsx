@@ -12,7 +12,7 @@ const SettingsModal = ({
   inviteIdInput, setInviteIdInput, handleSendInvite,
   sentInvites, handleRevokeInvite,
   sharedUsers, isTripOwner,
-  kickUserTarget, setKickUserTarget,
+  kickUserTarget, setKickUserTarget, purgeUserPersonalItems,
   supabaseClient, activeTripId, setSharedUsers, showToast,
 }) => {
   return (
@@ -146,6 +146,8 @@ const SettingsModal = ({
                     const newShared = sharedUsers.filter(u => u !== kickUserTarget);
                     setSharedUsers(newShared);
                     if(supabaseClient) await supabaseClient.from('travel_state').update({ shared_users: newShared }).eq('id', activeTripId);
+                    // 내보낸 사람이 예전 방식으로 여행에 남긴 개인 항목도 지운다 (I6)
+                    if (purgeUserPersonalItems) purgeUserPersonalItems(kickUserTarget);
                     showToast(`${kickUserTarget} 님을 여행에서 내보냈습니다.`);
                     setKickUserTarget(null);
                  }}>중지하기</button>

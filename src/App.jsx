@@ -42,6 +42,7 @@ import { useCurrencyConverter } from './hooks/useCurrencyConverter';
 import { useMapSdkLoader } from './hooks/useMapSdkLoader';
 import { useUndoRedo } from './hooks/useUndoRedo';
 import { queuePhotoCleanup, runPhotoCleanup, extractPhotoPaths } from './utils/photoCleanup';
+import { createPersonalStore, clearPersonalCache, PERSONAL_FIELDS } from './sync/personalItems';
 import { useAppSettings } from './hooks/useAppSettings';
 import { usePhotoViewer } from './hooks/usePhotoViewer';
 import { usePanelResize } from './hooks/usePanelResize';
@@ -408,6 +409,127 @@ const MainApp = () => {
   }
   useEffect(() => { engineRef.current.setActiveTrip(activeTripId); }, [activeTripId]);
 
+  // [개인 항목] 내 개인용(🔒) 준비물·쇼핑은 여행 데이터가 아니라 내 계정 행에만 저장한다(sync/personalItems).
+  // 화면 목록 = 여행 데이터의 공동 항목 + 내 개인 항목. lastSharedRef는 여행 데이터 쪽 최근 값(정리 전 원본).
+  const lastSharedRef = useRef({ tripId: null, packing_list: [], shopping_list: [] });
+  const applyListViewsRef = useRef(() => {});
+  const personalRef = useRef(null);
+  if (!personalRef.current) {
+    personalRef.current = createPersonalStore({
+      getClient: () => supabaseClientRef.current,
+      getUserId: () => appUserIdRef.current,
+      onChange: () => applyListViewsRef.current(),
+    });
+  }
+  useEffect(() => {
+    if (supabaseClient && appUserId && appUserId !== 'Guest') {
+      personalRef.current.start(appUserId);
+      personalRef.current.load();
+    } else {
+      personalRef.current.stop();
+    }
+  }, [supabaseClient, appUserId]);
+  // 여행을 바꿀 때마다 다시 불러와 같은 계정의 다른 기기에서 바꾼 내용도 반영
+  useEffect(() => {
+    if (activeTripId && appUserId && appUserId !== 'Guest') personalRef.current.load();
+  }, [activeTripId]);
+
+  const isPersonalOf = (item, uid) => Boolean(item && item.isPersonal && S(item.userId) === S(uid));
+  applyListViewsRef.current = () => {
+    const shared = lastSharedRef.current;
+    const tripId = shared.tripId;
+    if (!tripId || tripId !== engineRef.current.getActiveTrip()) return;
+    const uid = appUserIdRef.current;
+    const isGuestNow = !uid || uid === 'Guest';
+    const personal = personalRef.current;
+    const lists = {};
+    PERSONAL_FIELDS.forEach(field => {
+      const sharedArr = Array.isArray(shared[field]) ? shared[field].filter(Boolean) : [];
+      if (isGuestNow) { lists[field] = sharedArr; return; }
+      const mine = personal.getTripItems(tripId, field);
+      const mineIds = new Set(mine.map(it => S(it.id)));
+      // 공동 항목 + 아직 옮기지 못한 내 옛 개인 항목(여행 데이터에 남은 것) + 내 개인 항목. 남의 개인 항목은 제외.
+      const merged = [
+        ...sharedArr.filter(it => !it.isPersonal || (isPersonalOf(it, uid) && !mineIds.has(S(it.id)))),
+        ...mine,
+      ];
+      // 만든 순서(id = 생성 시각) 유지
+      merged.sort((a, b) => {
+        const na = Number(a.id), nb = Number(b.id);
+        return Number.isFinite(na) && Number.isFinite(nb) ? na - nb : 0;
+      });
+      lists[field] = merged;
+    });
+    setPackingList(lists.packing_list);
+    setShoppingList(lists.shopping_list);
+
+    // 예전 방식으로 여행 데이터에 들어 있던 내 개인 항목은 내 계정으로 옮기고 여행 데이터에서 지운다(I5)
+    if (!isGuestNow && personal.isLoaded() && loadedTripIdRef.current === tripId) {
+      PERSONAL_FIELDS.forEach(field => {
+        const legacy = (shared[field] || []).filter(it => isPersonalOf(it, uid));
+        if (legacy.length === 0) return;
+        personal.upsert(tripId, field, legacy);
+        engineRef.current.deleteItems(tripId, field, legacy.map(it => S(it.id)));
+      });
+      // 내 여행이면: 이미 나갔거나 강퇴된 사람(참여자 목록에 없는 사람)의 옛 개인 항목도 지운다(I6)
+      if (S(tripId).startsWith(`trip_${uid}_`) && Array.isArray(shared.shared_users)) {
+        const members = new Set((shared.shared_users || []).map(S));
+        PERSONAL_FIELDS.forEach(field => {
+          const orphanIds = (shared[field] || [])
+            .filter(it => it && it.isPersonal && S(it.userId) !== S(uid) && !members.has(S(it.userId)))
+            .map(it => S(it.id));
+          if (orphanIds.length > 0) engineRef.current.deleteItems(tripId, field, orphanIds);
+        });
+      }
+    }
+  };
+
+  // 준비물·쇼핑 쓰기 분배: 내 개인 항목 → 내 계정, 나머지 → 여행 데이터
+  const writeListField = (tripId, field, upserts, deleteIds) => {
+    const uid = appUserIdRef.current;
+    const engine = engineRef.current;
+    if (!PERSONAL_FIELDS.includes(field) || !uid || uid === 'Guest') {
+      if (upserts.length > 0) engine.upsertItems(tripId, field, upserts);
+      if (deleteIds.length > 0) engine.deleteItems(tripId, field, deleteIds);
+      return;
+    }
+    const personal = personalRef.current;
+    const sharedIds = new Set((lastSharedRef.current.tripId === tripId ? (lastSharedRef.current[field] || []) : []).map(it => S(it && it.id)));
+    const personalUpserts = upserts.filter(it => isPersonalOf(it, uid));
+    const sharedUpserts = upserts.filter(it => !isPersonalOf(it, uid));
+    if (personalUpserts.length > 0) {
+      personal.upsert(tripId, field, personalUpserts);
+      // 여행 데이터에 옛 사본이 남아 있으면 지운다
+      const legacyIds = personalUpserts.map(it => S(it.id)).filter(id => sharedIds.has(id));
+      if (legacyIds.length > 0) engine.deleteItems(tripId, field, legacyIds);
+    }
+    if (sharedUpserts.length > 0) {
+      // 개인 → 공동으로 바뀐 항목은 개인 저장소에서 뺀다
+      const movedIds = sharedUpserts.map(it => S(it.id)).filter(id => personal.hasItem(tripId, field, id));
+      if (movedIds.length > 0) personal.remove(tripId, field, movedIds);
+      engine.upsertItems(tripId, field, sharedUpserts);
+    }
+    if (deleteIds.length > 0) {
+      const personalDel = deleteIds.filter(id => personal.hasItem(tripId, field, id));
+      if (personalDel.length > 0) personal.remove(tripId, field, personalDel);
+      // 개인 저장소에만 있던 항목은 여행 데이터에 삭제 표식을 남길 필요 없음
+      const engineDel = deleteIds.filter(id => !personalDel.includes(id) || sharedIds.has(S(id)));
+      if (engineDel.length > 0) engine.deleteItems(tripId, field, engineDel);
+    }
+  };
+  const writeListFieldRef = useRef(writeListField);
+  writeListFieldRef.current = writeListField;
+
+  // [I6] 강퇴한 사람이 예전 방식으로 여행 데이터에 남긴 개인 항목 삭제 (주인 기기에서)
+  function purgeUserPersonalItems(userId) {
+    const tripId = engineRef.current.getActiveTrip();
+    if (!tripId || lastSharedRef.current.tripId !== tripId) return;
+    PERSONAL_FIELDS.forEach(field => {
+      const ids = (lastSharedRef.current[field] || []).filter(it => isPersonalOf(it, userId)).map(it => S(it.id));
+      if (ids.length > 0) engineRef.current.deleteItems(tripId, field, ids);
+    });
+  }
+
   // 탭을 닫거나(pagehide) 백그라운드로 전환(visibilitychange)할 때, 아직 서버로 안 나간 저장이
   // 있으면 최대한 내보낸다. (여전히 완벽한 보장은 아니지만 — fire-and-forget 저장은 브라우저가
   // 강제 종료되면 어차피 유실될 수 있음 — 짧게라도 창을 벌어준다. localStorage에는 이미 즉시
@@ -736,8 +858,7 @@ const saveToDb = useCallback((updates, explicitTripId) => {
         }
         const arr = Array.isArray(updates[field]) ? updates[field] : [];
         const { realItems, tombstoneIds } = splitTombstones(arr);
-        if (realItems.length > 0) engineRef.current.upsertItems(tripId, field, realItems);
-        if (tombstoneIds.size > 0) engineRef.current.deleteItems(tripId, field, Array.from(tombstoneIds));
+        writeListFieldRef.current(tripId, field, realItems, Array.from(tombstoneIds));
       } else {
         scalarPatch[field] = updates[field];
       }
@@ -796,8 +917,9 @@ const saveToDb = useCallback((updates, explicitTripId) => {
         plan_timeline: planTimeline,
         flights: flights,
         max_day: maxDay,
-        packing_list: (Array.isArray(packingList) ? packingList : []).filter(isMineOrShared),
-        shopping_list: (Array.isArray(shoppingList) ? shoppingList : []).filter(isMineOrShared),
+        // 내 개인 항목은 복사본 여행 데이터가 아니라 내 계정의 개인 저장소로 (I5)
+        packing_list: (Array.isArray(packingList) ? packingList : []).filter(it => isMineOrShared(it) && !(it && it.isPersonal)),
+        shopping_list: (Array.isArray(shoppingList) ? shoppingList : []).filter(it => isMineOrShared(it) && !(it && it.isPersonal)),
         shared_users: [],
         owner_app_user_id: appUserId,
         version: nextVersion,
@@ -811,6 +933,12 @@ const saveToDb = useCallback((updates, explicitTripId) => {
            showToast("⚠️ 복사에 실패했어요. 잠시 후 다시 시도해 주세요.");
            return;
        }
+    }
+    if (appUserId && appUserId !== 'Guest') {
+        PERSONAL_FIELDS.forEach(field => {
+            const src = field === 'packing_list' ? packingList : shoppingList;
+            personalRef.current.replaceTrip(cloneTripId, field, (Array.isArray(src) ? src : []).filter(it => isPersonalOf(it, appUserId)));
+        });
     }
     showToast("✅ 내 일정(문서함)으로 성공적으로 복사(업데이트) 되었습니다!");
   }
@@ -979,6 +1107,8 @@ async function confirmDeleteTrip() {
     setTrips(updatedTrips);
     // 이 기기에 남은 이 여행 캐시/못 보낸 변경도 지운다
     if (engineRef.current) engineRef.current.forgetTrip(tripToDelete);
+    // 이 여행의 내 개인 항목도 지운다 (나간 여행에 남지 않게 — I6)
+    if (appUserId !== "Guest") personalRef.current.forgetTrip(tripToDelete);
     
     try {
         if (supabaseClient && appUserId !== "Guest") {
@@ -1059,8 +1189,7 @@ async function confirmDeleteTrip() {
       const deleteIds = [];
       prevMap.forEach((_, id) => { if (!nextMap.has(id)) deleteIds.push(id); });
 
-      if (upserts.length > 0) engineRef.current.upsertItems(tripId, field, upserts);
-      if (deleteIds.length > 0) engineRef.current.deleteItems(tripId, field, deleteIds);
+      writeListFieldRef.current(tripId, field, upserts, deleteIds);
     });
 
     if (JSON.stringify(prev.flights) !== JSON.stringify(next.flights)) {
@@ -1269,6 +1398,8 @@ async function confirmDeleteTrip() {
       else localStorage.removeItem('my_travel_auth');
     } catch(e){}
     clearAccountTripCache();
+    personalRef.current.stop();
+    clearPersonalCache();
     showToast("로그아웃 되었습니다.");
   }
 
@@ -2740,6 +2871,7 @@ function deletePackingItem(id) {
     // 데이터가 없는 기본 여행 등)까지 "강퇴됨"으로 오인해 목록에서 지워 버린다 (실제로 '나의 첫 번째 여행'이 사라졌음).
     if (!entry.isShared) return;
     engineRef.current.forgetTrip(tripId);
+    personalRef.current.forgetTrip(tripId);
     const filtered = current.filter(t => t && t.id !== tripId);
     const nextId = (filtered.find(t => t && !t.archived) || filtered[0])?.id || 'default';
     tripsRef.current = filtered;
@@ -2813,8 +2945,13 @@ function deletePackingItem(id) {
       setTravelStartDate(view.travel_start_date ? S(view.travel_start_date) : new Date().toISOString().split('T')[0]);
       setFlights(view.flights || { outbound: null, inbound: null });
       if (typeof view.max_day === 'number' && view.max_day >= 1) setMaxDay(view.max_day);
-      setPackingList(Array.isArray(view.packing_list) ? view.packing_list : []);
-      setShoppingList(Array.isArray(view.shopping_list) ? view.shopping_list : []);
+      lastSharedRef.current = {
+        tripId,
+        packing_list: Array.isArray(view.packing_list) ? view.packing_list : [],
+        shopping_list: Array.isArray(view.shopping_list) ? view.shopping_list : [],
+        // 참여자 목록을 아직 모르면(null) 떠난 사람 판정을 하지 않는다 — 현재 참여자 항목을 잘못 지우지 않게
+        shared_users: Array.isArray(view.shared_users) ? view.shared_users : null,
+      };
       setPlanTimeline(Array.isArray(view.plan_timeline) ? view.plan_timeline : []);
       setCurrentRestaurants(Array.isArray(view.current_restaurants) ? view.current_restaurants : []);
 
@@ -2841,6 +2978,7 @@ function deletePackingItem(id) {
       }
 
       loadedTripIdRef.current = tripId; setLoadedTripId(tripId);
+      applyListViewsRef.current();
     });
 
     engine.load(tripId).then(view => {
@@ -3901,7 +4039,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         inviteIdInput={inviteIdInput} setInviteIdInput={setInviteIdInput} handleSendInvite={handleSendInvite}
         sentInvites={(sentInvites || []).filter(i => i && S(i.trip_id) === S(activeTripId))} handleRevokeInvite={handleRevokeInvite}
         sharedUsers={sharedUsers} isTripOwner={isTripOwner}
-        kickUserTarget={kickUserTarget} setKickUserTarget={setKickUserTarget}
+        kickUserTarget={kickUserTarget} setKickUserTarget={setKickUserTarget} purgeUserPersonalItems={purgeUserPersonalItems}
         supabaseClient={supabaseClient} activeTripId={activeTripId} setSharedUsers={setSharedUsers} showToast={showToast}
       />
 

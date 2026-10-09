@@ -64,9 +64,12 @@ export async function runPhotoCleanup(supabaseClient, appUserId, before = Date.n
   const done = new Set();    // 후보에서 뺄 것
   const failed = new Set();  // 이번에 확인 못 함 → tries+1
   try {
-    // 1) 이 기기에 저장된 여행 데이터(못 보낸 변경 포함)에 아직 있으면 지우지 않는다
+    // 1) 이 기기에 저장된 여행 데이터·개인 항목(못 보낸 변경 포함)에 아직 있으면 지우지 않는다
     let localText = '';
-    try { localText = (localStorage.getItem('my_travel_states') || '') + (localStorage.getItem('my_travel_pending') || ''); } catch (e) {}
+    try {
+      localText = ['my_travel_states', 'my_travel_pending', 'my_travel_personal', 'my_travel_personal_pending']
+        .map(k => localStorage.getItem(k) || '').join('');
+    } catch (e) {}
     const candidates = mine.filter(it => {
       if (localText.includes(fileName(it.path))) { failed.add(it); return false; }
       return true;
