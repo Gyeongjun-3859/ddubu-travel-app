@@ -963,8 +963,9 @@ const saveToDb = useCallback((updates, explicitTripId) => {
     }
   }
 
+// 삭제/나가기 확인은 DeleteTripConfirmModal에서 이미 받았다 (예전엔 여기서 한 번 더 물어 확인창이 두 번 떴다)
 async function confirmDeleteTrip() {
-  showConfirm("이 여행 데이터를 내 목록에서 정말 삭제(또는 나가기) 하시겠습니까?", async () => {
+  await (async () => {
   if (trips.length <= 1) {
         showToast("최소 1개의 여행 일정은 남겨두어야 합니다.");
         setTripToDelete(null);
@@ -982,10 +983,12 @@ async function confirmDeleteTrip() {
             await supabaseClient.from('profiles').update({ trips: updatedTrips }).eq('app_user_id', appUserId);
             
             if (tripToRemove?.isShared) {
-               const { data } = await supabaseClient.from('travel_state').select('shared_users').eq('id', tripToDelete).single();
-               if (data && Array.isArray(data.shared_users)) {
-                  const newShared = data.shared_users.filter(u => u !== appUserId);
-                  await supabaseClient.from('travel_state').update({ shared_users: newShared }).eq('id', tripToDelete);
+               // 참여자가 자기 자신을 shared_users에서 빼는 건 RLS가 막아서(바뀐 행이 내게 안 보이게 되므로)
+               // 예전 방식(직접 update)은 조용히 실패했다 → 서버 함수 leave_shared_trip으로 뺀다.
+               const { error: leaveErr } = await supabaseClient.rpc('leave_shared_trip', { p_trip_id: tripToDelete });
+               if (leaveErr) {
+                 console.error('공유 여행 나가기 실패', leaveErr);
+                 showToast("⚠️ 내 목록에선 뺐지만 서버의 참여자 목록에서 빠지지 못했어요. 여행 주인에게 '강퇴'를 부탁해 주세요.");
                }
             } else {
                // 주인이 지우는 경우: 이 여행 사진 파일(trip-photos/<여행id>/)과 보내 둔 초대장도 같이 정리한다.
@@ -1024,7 +1027,7 @@ async function confirmDeleteTrip() {
     
     setTripToDelete(null);
     showToast(tripToRemove?.isShared ? "공유된 여행 목록에서 나갔습니다." : "여행이 정상적으로 삭제되었습니다.");
-  }); // showConfirm end
+  })();
   }
 
   // [실행취소/재실행 저장] prev(지금 화면) → next(되돌아갈 스냅샷) 사이의 차이만 명시적으로
@@ -1336,7 +1339,11 @@ async function confirmDeleteTrip() {
   }
 
   async function handleRejectInvite() {
-    await supabaseClient.from('invites').delete().eq('target_id', appUserId);
+    // 거절한 그 초대장만 지운다 (예전엔 target_id만으로 지워서 다른 사람이 보낸 초대장까지 사라졌다)
+    let q = supabaseClient.from('invites').delete().eq('target_id', appUserId);
+    if (pendingInvite && pendingInvite.from_id) q = q.eq('from_id', pendingInvite.from_id);
+    if (pendingInvite && pendingInvite.trip_id) q = q.eq('trip_id', pendingInvite.trip_id);
+    await q;
     setPendingInvite(null);
   }
 
@@ -2056,7 +2063,10 @@ function handleDeletePlan(id) {
     const lastDay = maxDay;
     const next = maxDay - 1;
     const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-    const onLastDay = safeTimeline.filter(p => parseInt(p.day) === lastDay);
+    // 밤 비행기 도착처럼 출발 다음 날에 놓인 교통 '도착' 항목은 옮기지도 지우지도 않는다
+    // (예전엔 '앞 Day로 옮기기'를 누르면 도착이 출발과 같은 날/앞으로 가서 순서가 뒤집혔다)
+    const isTransportArrival = (p) => /^trans_.*_arr$/.test(S(p.id));
+    const onLastDay = safeTimeline.filter(p => parseInt(p.day) === lastDay && !isTransportArrival(p));
     const dropLastFromStay = (p) => (Array.isArray(p.accommodationDays) && p.accommodationDays.includes(lastDay))
       ? { ...p, accommodationDays: p.accommodationDays.filter(d => d !== lastDay) } : p;
 
@@ -2064,7 +2074,7 @@ function handleDeletePlan(id) {
       let updated = safeTimeline.map(dropLastFromStay);
       const deletedIds = [];
       if (mode === 'move') {
-        updated = updated.map(p => parseInt(p.day) === lastDay ? { ...p, day: next } : p);
+        updated = updated.map(p => (parseInt(p.day) === lastDay && !isTransportArrival(p)) ? { ...p, day: next } : p);
       } else if (mode === 'delete') {
         onLastDay.forEach(p => deletedIds.push(S(p.id)));
         updated = updated.filter(p => !deletedIds.includes(S(p.id)));
@@ -3027,6 +3037,17 @@ function deletePackingItem(id) {
   useEffect(() => { resetAmount(); }, [activeTripId]); // eslint-disable-line react-hooks/exhaustive-deps
   // 여행을 바꾸면 수동 선택을 풀고 자동 판별로 돌아간다 (일본 여행에서 구글로 바꾼 게 국내 여행까지 남던 문제)
   useEffect(() => { setMapTypeOverride(null); }, [activeTripId]);
+  // 여행을 바꾸면 화면 필터·선택을 처음 상태로 (예전엔 이전 여행의 지도 Day 필터 등이 그대로 남아
+  // 일수가 짧은 여행에선 지도가 텅 비어 보였다). 여행 데이터 state는 건드리지 않는 UI 값들만.
+  const prevTripForUiRef = useRef(activeTripId);
+  useEffect(() => {
+    if (prevTripForUiRef.current === activeTripId) return;
+    prevTripForUiRef.current = activeTripId;
+    setMapActiveDays(['all']); setExpenseFilterDay('all'); setMarkerSearchQuery('');
+    setMyPinsFilter('all'); setMyPinsThemeFilter('all'); setKakaoCategory([]); setNavDayFilter('all');
+    setIsPinMode(false); setMovingPinId(null); setPendingMove(null); setPreviewTransportDay(null);
+    setPinQuickView(null); setSelectedPlanInfo(null); setSelectedPinInfo(null);
+  }, [activeTripId]);
 
   useEffect(() => {
     // 수동 선택 중이면 자동 전환 안 함
