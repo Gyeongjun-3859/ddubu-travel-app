@@ -16,6 +16,10 @@ import { ARRAY_FIELDS, SCALAR_FIELDS, isArrayField, mergeArrayField, splitTombst
 const FLUSH_DELAY_MS = 200;
 const MAX_WRITE_RETRIES = 3;
 const LOCAL_STORAGE_KEY = 'my_travel_states';
+// 아직 서버에 못 보낸 변경(오프라인 등) — 앱을 껐다 켜도 이어서 보내기 위해 따로 보관
+export const PENDING_STORAGE_KEY = 'my_travel_pending';
+const RETRY_MIN_MS = 2000;
+const RETRY_MAX_MS = 60000;
 
 function nowIso() { return Date.now(); }
 
@@ -33,6 +37,7 @@ function emptyTripState() {
     flushPromise: null,
     listeners: new Set(),
     zeroRowStreak: 0,
+    retryDelay: 0,           // 저장 실패 후 다음 재시도까지 기다릴 시간(점점 늘어남, 성공하면 0)
     loaded: false,
   };
 }
@@ -92,9 +97,63 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
       state.views[field] = cleanFn ? cleanFn(raw, state.scalars.display_city_name) : realItems;
     });
 
+    // 아직 서버에 못 보낸 내 변경이 있으면 서버 값 위에 다시 얹는다 — 안 그러면 다른 사람 변경이 실시간으로
+    // 들어오는 순간(또는 다시 불러올 때) 방금 내가 추가/수정한 항목이 화면에서 사라졌다가 돌아오거나 아예 사라졌다.
+    Object.assign(state.scalars, state.pendingScalars);
+    Object.keys(ARRAY_FIELDS).forEach(field => {
+      if (state.pendingUpserts.has(field) || state.pendingDeletes.has(field)) overlayPending(state, field);
+    });
+
     state.loaded = true;
     persistLocal(tripId, state);
     notify(tripId);
+  }
+
+  // 서버(또는 캐시) 원본 위에 대기 중인 변경을 얹어 화면용 값을 다시 만든다
+  function overlayPending(state, field) {
+    const upserts = Array.from((state.pendingUpserts.get(field) || new Map()).values());
+    const deleteIds = Array.from(state.pendingDeletes.get(field) || []);
+    if (upserts.length === 0 && deleteIds.length === 0) return;
+    const base = state.base.get(field) || new Map();
+    const mergedRaw = mergeArrayField({ dbItems: state.rawArrays[field] || [], upserts, deleteIds, base });
+    state.rawArrays[field] = mergedRaw;
+    const { realItems } = splitTombstones(mergedRaw);
+    const cleanFn = ARRAY_FIELDS[field].clean;
+    state.views[field] = cleanFn ? cleanFn(mergedRaw, state.scalars.display_city_name) : realItems;
+  }
+
+  // 대기 중인 변경을 브라우저에 따로 저장 (없으면 지움)
+  function persistPending(tripId, state) {
+    try {
+      const all = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '{}');
+      if (!hasPending(state)) { delete all[tripId]; }
+      else {
+        const upserts = {}; state.pendingUpserts.forEach((m, f) => { upserts[f] = Array.from(m.values()); });
+        const deletes = {}; state.pendingDeletes.forEach((set, f) => { deletes[f] = Array.from(set); });
+        all[tripId] = { scalars: state.pendingScalars, upserts, deletes, savedAt: Date.now() };
+      }
+      localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(all));
+    } catch (e) {}
+  }
+
+  // 보내다 실패한 변경을 대기열에 다시 넣는다. 그 사이 새로 생긴 변경이 있으면 새 것이 이긴다.
+  function requeue(tripId, state, batch) {
+    state.pendingScalars = { ...batch.scalars, ...state.pendingScalars };
+    batch.upserts.forEach((m, field) => {
+      const newer = state.pendingUpserts.get(field) || new Map();
+      const newerDeletes = state.pendingDeletes.get(field) || new Set();
+      const merged = new Map(m);
+      newer.forEach((item, id) => merged.set(id, item));
+      newerDeletes.forEach(id => merged.delete(id));
+      if (merged.size > 0) state.pendingUpserts.set(field, merged);
+    });
+    batch.deletes.forEach((set, field) => {
+      const newerUpserts = state.pendingUpserts.get(field) || new Map();
+      const merged = new Set(state.pendingDeletes.get(field) || []);
+      set.forEach(id => { if (!newerUpserts.has(id)) merged.add(id); });
+      if (merged.size > 0) state.pendingDeletes.set(field, merged);
+    });
+    persistPending(tripId, state);
   }
 
   function persistLocal(tripId, state) {
@@ -144,7 +203,9 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
     try {
       const { data, error } = await client.from('travel_state').select('*').eq('id', tripId).single();
       if (error || !data) return null; // 여행 row가 아직 없을 수 있음(생성 직후 race) — 기존 로컬 상태 보존, 아무것도 안 바꿈
+      restoreStoredPending(tripId);
       applyRow(tripId, data);
+      if (hasPending(getState(tripId))) scheduleFlush(tripId, 0);
       return currentView(getState(tripId));
     } catch (e) {
       console.error('[tripSyncEngine] load 실패', e);
@@ -185,6 +246,7 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
     Object.assign(state.pendingScalars, fields);
     Object.assign(state.scalars, fields); // 화면엔 낙관적으로 즉시 반영
     persistLocal(tripId, state);
+    persistPending(tripId, state);
     notify(tripId);
     scheduleFlush(tripId);
   }
@@ -195,7 +257,11 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
     if (!state.pendingUpserts.has(field)) state.pendingUpserts.set(field, new Map());
     const bucket = state.pendingUpserts.get(field);
     items.filter(Boolean).forEach(item => { if (item.id != null) bucket.set(String(item.id), item); });
+    // 같은 항목에 대기 중이던 삭제가 있으면 이번 저장이 이긴다
+    const del = state.pendingDeletes.get(field);
+    if (del) items.forEach(item => { if (item && item.id != null) del.delete(String(item.id)); });
     applyOptimisticArrayChange(tripId, state, field);
+    persistPending(tripId, state);
     scheduleFlush(tripId);
   }
 
@@ -206,6 +272,7 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
     const bucket = state.pendingDeletes.get(field);
     ids.filter(id => id != null).forEach(id => bucket.add(String(id)));
     applyOptimisticArrayChange(tripId, state, field);
+    persistPending(tripId, state);
     scheduleFlush(tripId);
   }
 
@@ -238,16 +305,23 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
     return snapshot;
   }
 
-  function scheduleFlush(tripId) {
+  function scheduleFlush(tripId, delayOverride) {
     const state = getState(tripId);
     if (state.flushTimer || state.flushPromise) return; // 이미 예약됐거나 진행 중 — 끝나면 알아서 다시 확인함
+    const delay = typeof delayOverride === 'number' ? delayOverride : (state.retryDelay || FLUSH_DELAY_MS);
     state.flushTimer = setTimeout(() => {
       state.flushTimer = null;
       state.flushPromise = doFlush(tripId).finally(() => {
         state.flushPromise = null;
         if (hasPending(state)) scheduleFlush(tripId);
       });
-    }, FLUSH_DELAY_MS);
+    }, delay);
+  }
+
+  // 저장 실패 → 대기열에 되돌리고 재시도 간격을 늘린다 (2초 → 4초 → … 최대 1분)
+  function failAndRetryLater(tripId, state, batch) {
+    requeue(tripId, state, batch);
+    state.retryDelay = state.retryDelay ? Math.min(state.retryDelay * 2, RETRY_MAX_MS) : RETRY_MIN_MS;
   }
 
   async function doFlush(tripId) {
@@ -257,6 +331,7 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
 
     if (isGuest()) {
       applyLocalBatch(tripId, state, batch);
+      persistPending(tripId, state);
       return;
     }
 
@@ -270,9 +345,15 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
       const { data: latest, error: selErr } = await client.from('travel_state').select(selectCols).eq('id', tripId).single();
       if (selErr || !latest) {
         console.error('❌ [동기화] 최신 데이터 조회 실패', selErr);
-        // 행이 안 보이면(강퇴 등으로 접근 권한이 사라짐) 앱에 알려서 화면/목록을 정리하게 한다.
-        if (selErr && selErr.code === NO_ROW_CODE && typeof onAccessLost === 'function') onAccessLost(tripId);
-        break;
+        // 행이 안 보이면(강퇴 등으로 접근 권한이 사라짐) 앱에 알려서 화면/목록을 정리하게 한다 — 이 변경은 보낼 곳이 없다.
+        if (selErr && selErr.code === NO_ROW_CODE) {
+          persistPending(tripId, state);
+          if (typeof onAccessLost === 'function') onAccessLost(tripId);
+          return;
+        }
+        // 그 외(오프라인·서버 오류)는 변경을 버리지 않고 대기열에 되돌려 나중에 다시 보낸다
+        failAndRetryLater(tripId, state, batch);
+        return;
       }
       const payload = { version: (latest.version || 0) + 1 };
       touchedScalarKeys.forEach(k => { payload[k] = batch.scalars[k]; });
@@ -292,17 +373,21 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
 
       if (updErr) {
         console.error('❌ [동기화] 저장 실패', updErr);
-        break;
+        failAndRetryLater(tripId, state, batch);
+        return;
       }
       if (Array.isArray(updated) && updated.length > 0) {
         state.zeroRowStreak = 0;
+        state.retryDelay = 0;
+        persistPending(tripId, state);
         applyRow(tripId, payload);
         return;
       }
       // 0건 반영 = version 충돌(다른 저장이 먼저 끼어듦) → 재시도
     }
 
-    // 재시도 소진 — RLS 등으로 계속 0건이면 한 번만 알림
+    // 재시도 소진 — RLS 등으로 계속 0건이면 한 번만 알림 (변경은 버리지 않고 나중에 다시 시도)
+    failAndRetryLater(tripId, state, batch);
     state.zeroRowStreak += 1;
     if (state.zeroRowStreak === 1 && typeof onToast === 'function') {
       onToast('⚠️ 저장 권한 확인이 필요합니다. 로그아웃 후 다시 로그인해 주세요.');
@@ -335,6 +420,37 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
     }));
   }
 
+  // 앱을 껐다 켜기 전에 못 보낸 변경이 브라우저에 남아 있으면 대기열로 되살린다 (지금 대기열이 비어 있을 때만)
+  function restoreStoredPending(tripId) {
+    const state = getState(tripId);
+    if (hasPending(state)) return;
+    try {
+      const all = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '{}');
+      const saved = all[tripId];
+      if (!saved) return;
+      state.pendingScalars = saved.scalars || {};
+      Object.entries(saved.upserts || {}).forEach(([f, items]) => {
+        if (isArrayField(f) && Array.isArray(items) && items.length) state.pendingUpserts.set(f, new Map(items.filter(Boolean).map(it => [String(it.id), it])));
+      });
+      Object.entries(saved.deletes || {}).forEach(([f, ids]) => {
+        if (isArrayField(f) && Array.isArray(ids) && ids.length) state.pendingDeletes.set(f, new Set(ids.map(String)));
+      });
+      if (typeof onToast === 'function' && hasPending(state)) onToast('📤 저장하지 못했던 변경을 다시 보내는 중이에요.');
+    } catch (e) {}
+  }
+
+  // 인터넷이 다시 연결되면 기다리던 저장을 바로 보낸다
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+      trips.forEach((state, id) => {
+        if (!hasPending(state)) return;
+        state.retryDelay = 0;
+        if (state.flushTimer) { clearTimeout(state.flushTimer); state.flushTimer = null; }
+        scheduleFlush(id, 0);
+      });
+    });
+  }
+
   // 이 여행을 지금도 볼 수 있는지 확인: 'ok' | 'denied'(행이 안 보임) | 'unknown'(네트워크 오류 등 — 판단 보류)
   async function checkAccess(tripId) {
     if (isGuest()) return 'ok';
@@ -355,6 +471,9 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
       const all = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '{}');
       delete all[tripId];
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(all));
+      const pend = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '{}');
+      delete pend[tripId];
+      localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(pend));
     } catch (e) {}
   }
 

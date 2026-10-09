@@ -96,6 +96,11 @@ function clearAccountTripCache() {
     const kept = {};
     guestIds.forEach(id => { if (all && all[id]) kept[id] = all[id]; });
     localStorage.setItem('my_travel_states', JSON.stringify(kept));
+    // 아직 못 보낸 변경 대기열도 게스트 것만 남긴다 (다른 사람이 같은 기기를 쓸 때 이전 계정 데이터가 남지 않게)
+    const pending = JSON.parse(localStorage.getItem('my_travel_pending') || '{}');
+    const keptPending = {};
+    guestIds.forEach(id => { if (pending && pending[id]) keptPending[id] = pending[id]; });
+    localStorage.setItem('my_travel_pending', JSON.stringify(keptPending));
   } catch (e) {}
 }
 
