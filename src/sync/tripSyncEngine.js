@@ -12,6 +12,7 @@
 //      실수로 다른 사람이 추가한 항목을 지우는 일이 구조적으로 불가능해진다.
 
 import { ARRAY_FIELDS, SCALAR_FIELDS, isArrayField, mergeArrayField, splitTombstones, tombstone } from './tripDataModel';
+import { extractPhotoPaths } from '../utils/photoCleanup';
 
 const FLUSH_DELAY_MS = 200;
 const MAX_WRITE_RETRIES = 3;
@@ -45,7 +46,7 @@ function emptyTripState() {
 // PostgREST: .single()로 조회했는데 행이 0개 — 행이 없거나, 보안 규칙(RLS)상 더 이상 볼 수 없을 때
 const NO_ROW_CODE = 'PGRST116';
 
-export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLost }) {
+export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLost, onPhotosRemoved }) {
   let activeTripId = null;
   const trips = new Map(); // tripId -> state
 
@@ -240,8 +241,24 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
   // ---------------------------------------------------------------------
   // 쓰기: patch(단순필드) / upsertItems / deleteItems — 전부 pending에 쌓고 flush 예약
   // ---------------------------------------------------------------------
+  // 내 변경(patch/upsert/delete)으로 이 여행 데이터에서 빠진 저장소 사진을 알려 준다 → 삭제 후보로 담김.
+  // (실제 파일 삭제는 슝으로 되살릴 수 없게 된 뒤 photoCleanup이 사용 여부를 확인하고 한다)
+  function withPhotoTracking(tripId, change) {
+    if (!onPhotosRemoved || isGuest() || !trips.has(tripId)) { change(); return; }
+    const before = extractPhotoPaths(currentView(getState(tripId)));
+    change();
+    if (before.length === 0) return;
+    const after = new Set(extractPhotoPaths(currentView(getState(tripId))));
+    const removed = before.filter(path => !after.has(path));
+    if (removed.length > 0) { try { onPhotosRemoved(tripId, removed); } catch (e) { console.error('[tripSyncEngine] onPhotosRemoved error', e); } }
+  }
+
   function patch(tripId, fields) {
     if (!fields || typeof fields !== 'object') return;
+    withPhotoTracking(tripId, () => patchNow(tripId, fields));
+  }
+
+  function patchNow(tripId, fields) {
     const state = getState(tripId);
     Object.assign(state.pendingScalars, fields);
     Object.assign(state.scalars, fields); // 화면엔 낙관적으로 즉시 반영
@@ -253,6 +270,10 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
 
   function upsertItems(tripId, field, items) {
     if (!isArrayField(field) || !Array.isArray(items) || items.length === 0) return;
+    withPhotoTracking(tripId, () => upsertItemsNow(tripId, field, items));
+  }
+
+  function upsertItemsNow(tripId, field, items) {
     const state = getState(tripId);
     if (!state.pendingUpserts.has(field)) state.pendingUpserts.set(field, new Map());
     const bucket = state.pendingUpserts.get(field);
@@ -267,6 +288,10 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
 
   function deleteItems(tripId, field, ids) {
     if (!isArrayField(field) || !Array.isArray(ids) || ids.length === 0) return;
+    withPhotoTracking(tripId, () => deleteItemsNow(tripId, field, ids));
+  }
+
+  function deleteItemsNow(tripId, field, ids) {
     const state = getState(tripId);
     if (!state.pendingDeletes.has(field)) state.pendingDeletes.set(field, new Set());
     const bucket = state.pendingDeletes.get(field);

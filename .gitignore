@@ -29,3 +29,6 @@ yarn-error.log*
 /android
 .vercel
 .env*
+
+# 일회성 DB 정리 SQL (실행 완료, 기록용 보관)
+/scripts

@@ -41,6 +41,7 @@ import { useWeather } from './hooks/useWeather';
 import { useCurrencyConverter } from './hooks/useCurrencyConverter';
 import { useMapSdkLoader } from './hooks/useMapSdkLoader';
 import { useUndoRedo } from './hooks/useUndoRedo';
+import { queuePhotoCleanup, runPhotoCleanup, extractPhotoPaths } from './utils/photoCleanup';
 import { useAppSettings } from './hooks/useAppSettings';
 import { usePhotoViewer } from './hooks/usePhotoViewer';
 import { usePanelResize } from './hooks/usePanelResize';
@@ -402,6 +403,7 @@ const MainApp = () => {
       getUserId: () => appUserIdRef.current,
       onToast: (msg) => showToastRef.current(msg),
       onAccessLost: (tripId) => accessLostRef.current(tripId),
+      onPhotosRemoved: (tripId, paths) => queuePhotoCleanup(appUserIdRef.current, paths),
     });
   }
   useEffect(() => { engineRef.current.setActiveTrip(activeTripId); }, [activeTripId]);
@@ -994,20 +996,21 @@ async function confirmDeleteTrip() {
                // 주인이 지우는 경우: 이 여행 사진 파일(trip-photos/<여행id>/)과 보내 둔 초대장도 같이 정리한다.
                // (예전엔 여행 행만 지워서 저장소에 사진이 계속 쌓이고, 받은 사람에겐 없는 여행 초대가 남았다)
                // 공유받은 사람 목록에 남은 항목은 그쪽 앱이 '접근 불가'를 감지해 스스로 정리한다.
-               // 저장소엔 '목록 보기' 권한이 없어서 list()가 늘 빈 값 → 여행 데이터에 들어 있는 사진 주소를 모아 지운다.
-               // (삭제 권한은 올린 사람 본인 것만 있어서, 참여자가 올린 사진은 남을 수 있다)
+               // 저장소엔 '목록 보기' 권한이 없어서 list()가 늘 빈 값 → 여행 데이터에 들어 있는 사진 주소를 모아
+               // 삭제 후보에 담고, 여행 행을 지운 뒤 정리한다. 다른 사람이 만든 복사본·보관함에서 아직 쓰는 사진은
+               // 서버 함수 photos_in_use로 걸러 남긴다. (삭제 권한은 올린 사람 본인 것만 있어서, 참여자가 올린 사진은 남을 수 있다)
+               let photoPaths = [];
                try {
                  const { data: row } = await supabaseClient.from('travel_state').select('*').eq('id', tripToDelete).single();
-                 const found = JSON.stringify(row || {}).match(/\/trip-photos\/[^"?\s]+/g) || [];
-                 const paths = Array.from(new Set(found.map(u => decodeURIComponent(u.replace('/trip-photos/', '')))));
-                 if (paths.length > 0) {
-                   const { error: rmErr } = await supabaseClient.storage.from('trip-photos').remove(paths);
-                   if (rmErr) console.warn('여행 사진 정리 실패', rmErr);
-                 }
-               } catch (e) { console.warn('여행 사진 정리 실패', e); }
+                 photoPaths = extractPhotoPaths(row);
+               } catch (e) { console.warn('여행 사진 목록 읽기 실패', e); }
                await supabaseClient.from('invites').delete().eq('from_id', appUserId).eq('trip_id', tripToDelete);
                setSentInvites(prev => prev.filter(i => S(i.trip_id) !== S(tripToDelete)));
                await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
+               if (photoPaths.length > 0) {
+                 queuePhotoCleanup(appUserId, photoPaths);
+                 runPhotoCleanup(supabaseClient, appUserId, Date.now() + 1);
+               }
             }
         } else {
             localStorage.setItem('my_travel_guest_trips', JSON.stringify(updatedTrips));
@@ -1064,6 +1067,16 @@ async function confirmDeleteTrip() {
       engineRef.current.patch(tripId, { flights: next.flights || { outbound: null, inbound: null } });
     }
   }
+
+  // [사진 파일 정리] 여행을 열면(앱 시작·여행 전환) 슝 기록이 초기화되어 그전에 지운 일정은 더 이상 되살릴 수 없다.
+  // 그때 그전까지 담긴 삭제 후보 사진 중 아무 데도 안 쓰이는 것만 저장소에서 지운다(utils/photoCleanup).
+  // 못 보낸 저장이 먼저 서버에 반영되도록 조금 기다렸다 실행한다.
+  useEffect(() => {
+    if (!isDbLoaded || !activeTripId || loadedTripId !== activeTripId || !appUserId || appUserId === 'Guest') return;
+    const openedAt = Date.now();
+    const timer = setTimeout(() => { runPhotoCleanup(supabaseClientRef.current, appUserId, openedAt); }, 8000);
+    return () => clearTimeout(timer);
+  }, [isDbLoaded, activeTripId, loadedTripId, appUserId]);
 
   const { history, historyIndex, handleUndo, handleRedo } = useUndoRedo({
     isDbLoaded, activeTripId, isTripLoaded: loadedTripId === activeTripId,
