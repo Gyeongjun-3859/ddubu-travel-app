@@ -78,12 +78,13 @@ const ShoppingEditModal = ({
                             targetPlace = linkedPlan.place;
                         }
                     } else {
-                        targetPlace = itemName;
+                        // 연결할 일정을 안 골랐으면 장소 태그를 비워 둔다 (예전엔 물건 이름이 장소로 들어가 "📍동전파스"처럼 보였다)
+                        targetPlace = null;
                     }
 
                     const isPersonal = document.getElementById('shopType')?.value === 'personal';
                     // [NEW] 쇼핑 아이템에 img 필드 추가
-                    const newItem = { id: Date.now().toString(), text: newShoppingItem.trim(), isChecked: false, day: targetDay, theme: shoppingItemTheme, linkedPlace: targetPlace, isPersonal: isPersonal, userId: appUserId, img: newShoppingPhoto };
+                    const newItem = { id: Date.now().toString(), text: itemName, isChecked: false, day: targetDay, theme: shoppingItemTheme, linkedPlace: targetPlace, isPersonal: isPersonal, userId: appUserId, img: newShoppingPhoto };
                     const newList = [...shoppingList, newItem];
                     setShoppingList(newList);
                     dbUpdates.shopping_list = newList;
@@ -122,6 +123,8 @@ const ShoppingEditModal = ({
               {(() => {
                 {/* [교차 필터링 핵심 로직] */}
                 const filteredList = shoppingList.filter(item => {
+                  // 다른 사람이 "개인용"으로 넣은 항목은 숨김
+                  if (item.isPersonal && item.userId !== appUserId) return false;
                   const dayMatch = showAllShopping || String(item.day) === String(shoppingItemDay || "");
                   const themeMatch = shoppingFilterTheme === 'all' || item.theme === shoppingFilterTheme;
                   return dayMatch && themeMatch;
@@ -178,7 +181,7 @@ const ShoppingEditModal = ({
                        <>
                          <div className="flex items-center justify-between w-full">
                            <span className="text-[11px] font-bold truncate max-w-[200px]">{item.text}</span>
-                           <button onClick={(e) => { e.stopPropagation(); const newList = shoppingList.filter(s => s.id !== item.id); setShoppingList(newList); saveToDb({ shopping_list: [...newList, tombstone(item.id)] }); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-pink-400 hover:text-pink-600'}`}><X className="w-[1em] h-[1em] inline" /></button>
+                           <button onClick={(e) => { e.stopPropagation(); const newList = shoppingList.filter(s => s.id !== item.id); setShoppingList(newList); saveToDb({ shopping_list: [...newList, tombstone(item.id)] }); }} className={`ml-2 text-[10px] font-bold opacity-60 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-pink-400 hover:text-pink-600'}`}><X className="w-[1em] h-[1em] inline" /></button>
                          </div>
                          <div className="flex items-center space-x-1 mt-0.5 opacity-60">
                            <span className="text-[8px] font-bold bg-black/5 px-1 rounded">{item.linkedPlace ? `📍 ${item.linkedPlace}` : (item.day ? `Day ${item.day}` : '미지정')}</span>

@@ -6,9 +6,11 @@ const ShoppingDashboardModal = ({
   isOpen, onClose, isDarkMode, textMain, textMuted, inputBg,
   dashShoppingFilterTheme, setDashShoppingFilterTheme,
   dashShowAllShopping, setDashShowAllShopping,
-  shoppingList, setShoppingList, saveToDb, dashboardDay,
+  shoppingList, setShoppingList, saveToDb, dashboardDay, appUserId,
 }) => {
   if (!isOpen) return null;
+  // 다른 사람이 "개인용"으로 넣은 항목은 보이지 않게 (화면 표시용으로만 거름 — 저장은 전체 목록 기준)
+  const visibleShoppingList = shoppingList.filter(item => !item.isPersonal || item.userId === appUserId);
 
   return (
     <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[8000] flex items-center justify-center p-4 transition-opacity duration-300" onClick={onClose}>
@@ -34,16 +36,16 @@ const ShoppingDashboardModal = ({
          </div>
 
          <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar flex flex-col min-h-[30vh]">
-            {shoppingList.length === 0 && (
+            {visibleShoppingList.length === 0 && (
               <div className="text-center w-full py-10">
                  <p className="text-xs text-slate-400 font-bold">등록된 쇼핑 항목이 없습니다.</p>
               </div>
             )}
 
             {(() => {
-              const baseDisplayedList = dashShowAllShopping ? shoppingList : shoppingList.filter(item => String(item.day) === String(dashboardDay) || !item.day);
+              const baseDisplayedList = dashShowAllShopping ? visibleShoppingList : visibleShoppingList.filter(item => String(item.day) === String(dashboardDay) || !item.day);
               const displayedList = dashShoppingFilterTheme === 'all' ? baseDisplayedList : baseDisplayedList.filter(item => item.theme === dashShoppingFilterTheme);
-              if (shoppingList.length > 0 && displayedList.length === 0) {
+              if (visibleShoppingList.length > 0 && displayedList.length === 0) {
                  return <p className="text-center text-[10px] text-slate-400 font-bold py-5">현재 일차(Day {dashboardDay})에 등록된 쇼핑 항목이 없습니다.<br/>'전체 일정 보기'를 체크해 보세요.</p>;
               }
 

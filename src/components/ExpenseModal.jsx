@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Wallet, ClipboardList } from 'lucide-react';
 import { REGIONS_BY_COUNTRY, COUNTRY_FLAG } from '../utils/constants';
-import { S, getFlagForCity } from '../utils/helpers';
+import { S, getFlagForCity, isExpenseRecord } from '../utils/helpers';
 import { tombstone } from '../sync/tripDataModel';
 
 const ExpenseModal = ({
@@ -20,7 +20,7 @@ const ExpenseModal = ({
   cardBg, textMain, textMuted, inputBg, isDarkMode,
   planTimeline, setPlanTimeline, basicExpenses, setBasicExpenses,
   rates, tripDays, globalPlanCountry, globalPlanRegion, globalManualCountry,
-  travelStartDate, safeMaxDay, showToast, saveToDb,
+  travelStartDate, safeMaxDay, showToast, saveToDb, showConfirm,
 }) => {
   return (
     <>
@@ -56,7 +56,8 @@ const ExpenseModal = ({
 
         // 일정 일정 목록: 교통편·숙소 제외, D1→ 오름차순
         const allPlans = (Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [])
-          .filter(p => !p.isTransport && !p.isAccommodation)
+          // 지출 기록(기본지출)은 아래 "기본지출"에서 세므로 여기선 뺀다 — 예전엔 양쪽에서 세서 합계가 2배였다
+          .filter(p => !p.isTransport && !p.isAccommodation && !isExpenseRecord(p))
           .sort((a, b) => (Number(a.day) - Number(b.day)) || S(a.time).localeCompare(S(b.time)));
         const dayFiltered = expenseFilterDay === 'all' ? allPlans : allPlans.filter(p => String(p.day) === String(expenseFilterDay));
         const fullyFiltered = expenseFilterTheme === 'all' ? dayFiltered : dayFiltered.filter(p => (p.theme || '기타') === expenseFilterTheme);
@@ -71,12 +72,17 @@ const ExpenseModal = ({
           const dep = timelinePlans.find(p => p.id === `trans_${type}_outbound_dep`);
           const arr = timelinePlans.find(p => p.id === `trans_${type}_inbound_dep`);
           if (dep || arr) {
-            const depPlace = dep ? S(dep.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
-            const arrPlace = arr ? S(arr.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
+            const cleanPlace = (pl) => pl ? S(pl.place).replace(/[\uD800-\uDFFF☀-⟿️]|출발|도착/g, '').replace(/\(.*?\)/g, '').trim() : '';
+            // 편도(가는 편만 / 오는 편만)면 그 편의 "출발 → 도착"으로 보여준다 (예전엔 출발지만 덩그러니 보였다)
+            const isOneWay = !dep || !arr;
+            const oneWayDir = dep ? 'outbound' : 'inbound';
+            const oneWayArr = isOneWay ? timelinePlans.find(p => p.id === `trans_${type}_${oneWayDir}_arr`) : null;
+            const depPlace = dep ? cleanPlace(dep) : cleanPlace(arr);
+            const arrPlace = isOneWay ? cleanPlace(oneWayArr) : cleanPlace(arr);
             const depFlag = getFlagForCity(depPlace) || '';
             const arrFlag = getFlagForCity(arrPlace) || COUNTRY_FLAG[arr?.country] || '';
             const totalKrw = (Number(dep?.expenseKrw) || 0) + (Number(arr?.expenseKrw) || 0);
-            transportItems.push({ id: `transport_grouped_${type}`, name: depPlace && arrPlace ? `${depPlace} / ${arrPlace}` : (depPlace || arrPlace || type), depFlag, arrFlag, depPlace, arrPlace, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
+            transportItems.push({ id: `transport_grouped_${type}`, name: depPlace && arrPlace ? `${depPlace} / ${arrPlace}` : (depPlace || arrPlace || type), depFlag, arrFlag, depPlace, arrPlace, isOneWay, amtKrw: totalKrw, category: '항공권/교통', isFromTimeline: true, isGroupedTransport: true, depPlan: dep, arrPlan: arr });
           } else {
             // 구버전 데이터: isTransport이고 id가 trans_ 형식이 아닌 것들
             timelinePlans.filter(p => p.isTransport && !String(p.id).startsWith('trans_') && !String(p.id).endsWith('_arr'))
@@ -195,7 +201,7 @@ const ExpenseModal = ({
                         {item.isGroupedTransport && item.depPlace && item.arrPlace ? (
                           <span className={`flex-1 text-[10px] font-bold truncate ${textMain}`}>
                             {item.depFlag && <span>{item.depFlag}</span>}{item.depPlace}
-                            <span className="mx-1 text-slate-400 font-black">&#8596;</span>
+                            <span className="mx-1 text-slate-400 font-black">{item.isOneWay ? '→' : '↔'}</span>
                             {item.arrFlag && <span>{item.arrFlag}</span>}{item.arrPlace}
                           </span>
                         ) : (
@@ -204,15 +210,24 @@ const ExpenseModal = ({
                         <span className={`text-[10px] font-black flex-shrink-0 ${hasAmt ? 'text-rose-500' : textMuted}`}>{displayBasicAmt}</span>
                         <button onClick={e => {
                           e.stopPropagation();
-                          if (item.category === '기타' && item.isFromTimeline) {
-                            const updated = planTimeline.filter(p => String(p.id) !== String(item.planId));
-                            setPlanTimeline(updated);
-                            // [삭제 표식] 배열에서 빼기만 하면 공유 여행에서 되살아날 수 있어, DB에는 tombstone을 남긴다.
-                            saveToDb({ plan_timeline: [...updated, tombstone(item.planId)] });
+                          // 정산에서 직접 넣은 지출 기록이면 카테고리와 상관없이 삭제 가능 (예전엔 '기타'만 됐다).
+                          // 항공편·숙소처럼 실제 일정에서 온 항목은 일정 탭에서 지우도록 안내만 한다.
+                          if (item.isFromTimeline && isExpenseRecord({ id: item.planId })) {
+                            const doDelete = () => {
+                              const updated = planTimeline.filter(p => String(p.id) !== String(item.planId));
+                              setPlanTimeline(updated);
+                              // [삭제 표식] 배열에서 빼기만 하면 공유 여행에서 되살아날 수 있어, DB에는 tombstone을 남긴다.
+                              saveToDb({ plan_timeline: [...updated, tombstone(item.planId)] });
+                              showToast("지출 기록을 삭제했어요.");
+                            };
+                            if (typeof showConfirm === 'function') showConfirm(`"${S(item.name)}" 지출 기록을 삭제할까요?`, doDelete, null, { okLabel: '삭제' });
+                            else doDelete();
                           } else if (!item.isFromTimeline) {
                             setBasicExpenses(prev => prev.filter(b => b.id !== item.id));
+                          } else {
+                            showToast("이 항목은 일정 탭에서 일정(교통편·숙소)을 삭제하면 함께 빠져요.");
                           }
-                        }} className={`text-[10px] transition-colors flex-shrink-0 ${(item.category === '기타' && item.isFromTimeline) || !item.isFromTimeline ? 'text-slate-300 hover:text-rose-400' : 'text-slate-200 cursor-not-allowed opacity-30'}`} title={item.isFromTimeline && item.category !== '기타' ? '일정 탭에서 삭제하세요' : '삭제'}>🗑️</button>
+                        }} className={`text-[10px] transition-colors flex-shrink-0 ${(item.isFromTimeline && isExpenseRecord({ id: item.planId })) || !item.isFromTimeline ? 'text-slate-300 hover:text-rose-400' : 'text-slate-200 opacity-30'}`} title={item.isFromTimeline && !isExpenseRecord({ id: item.planId }) ? '일정 탭에서 삭제하세요' : '삭제'}>🗑️</button>
                       </div>
                       );
                     })}

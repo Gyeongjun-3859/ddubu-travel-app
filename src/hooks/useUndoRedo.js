@@ -7,61 +7,57 @@ import { useState, useRef, useEffect } from 'react';
 // 공유 여행에서 다른 사람이 추가한 항목이 "이 스냅샷엔 없는 항목"이라는 이유만으로 실제로
 // 삭제돼버릴 위험이 있었다. 차이만 반영하면 이번 되돌리기가 지울 수 있는 항목은 "이번 세션에서
 // 내가 만들었다가 되돌리는 항목"으로만 한정되어, 그런 사고가 구조적으로 불가능해진다.
+//
+// [버그 수정] 히스토리 목록(list)과 현재 위치(index)를 한 state에 묶어 항상 같이 갱신한다.
+// 예전엔 둘을 따로 setState해서, 상태가 안 바뀌어 목록엔 안 쌓였는데도 index만 +1 되는 일이
+// 반복됐고 → index가 목록 끝을 넘어가 슝을 누르면 undefined를 읽어 크래시가 났다.
 export function useUndoRedo({
-  isDbLoaded, activeTripId,
+  isDbLoaded, activeTripId, isTripLoaded,
   planTimeline, currentRestaurants, packingList, flights,
   setPlanTimeline, setCurrentRestaurants, setPackingList, setFlights,
   applySnapshot, showToast,
 }) {
-  const [history, setHistory] = useState([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [hist, setHist] = useState({ list: [], index: -1 });
   const isUndoingRef = useRef(false);
   const [isReadyToTrack, setIsReadyToTrack] = useState(false);
 
+  const moveTo = (targetIndex, toastMsg) => {
+      const target = hist.list[targetIndex];
+      if (!target) return false;
+      isUndoingRef.current = true;
+      const currentState = { planTimeline, currentRestaurants, packingList, flights };
+      setHist(prev => ({ ...prev, index: targetIndex }));
+
+      setPlanTimeline(target.planTimeline || []);
+      setCurrentRestaurants(target.currentRestaurants || []);
+      setPackingList(target.packingList || []);
+      setFlights(target.flights || { outbound: null, inbound: null });
+
+      applySnapshot(currentState, target);
+      showToast(toastMsg);
+      return true;
+  };
+
   const handleUndo = () => {
-      if (historyIndex > 0) {
-          isUndoingRef.current = true;
-          const currentState = { planTimeline, currentRestaurants, packingList, flights };
-          const prevState = history[historyIndex - 1];
-          setHistoryIndex(historyIndex - 1);
-
-          setPlanTimeline(prevState.planTimeline || []);
-          setCurrentRestaurants(prevState.currentRestaurants || []);
-          setPackingList(prevState.packingList || []);
-          setFlights(prevState.flights || { outbound: null, inbound: null });
-
-          applySnapshot(currentState, prevState);
-          showToast("⏪ 슝! 이전 상태로 되돌렸습니다.");
-      } else {
-          showToast("더 이상 되돌릴 수 없습니다.");
-      }
+      if (hist.index > 0 && moveTo(hist.index - 1, "⏪ 슝! 이전 상태로 되돌렸습니다.")) return;
+      showToast("더 이상 되돌릴 수 없습니다.");
   };
 
   const handleRedo = () => {
-      if (historyIndex < history.length - 1) {
-          isUndoingRef.current = true;
-          const currentState = { planTimeline, currentRestaurants, packingList, flights };
-          const nextState = history[historyIndex + 1];
-          setHistoryIndex(historyIndex + 1);
-
-          setPlanTimeline(nextState.planTimeline || []);
-          setCurrentRestaurants(nextState.currentRestaurants || []);
-          setPackingList(nextState.packingList || []);
-          setFlights(nextState.flights || { outbound: null, inbound: null });
-
-          applySnapshot(currentState, nextState);
-          showToast("⏩ 뽕! 다시 실행했습니다.");
-      } else {
-          showToast("더 이상 다시 실행할 수 없습니다.");
-      }
+      if (hist.index < hist.list.length - 1 && moveTo(hist.index + 1, "⏩ 뽕! 다시 실행했습니다.")) return;
+      showToast("더 이상 다시 실행할 수 없습니다.");
   };
 
+  // [위험 수정] 예전엔 여행을 연 뒤 "1.5초 후"부터 무조건 기록을 시작해서, 데이터가 그보다 늦게 오면
+  // 기록이 [빈 화면 → 불러온 화면]이 됐고, 이때 슝을 누르면 여행 전체가 삭제될 수 있었다.
+  // 이제 그 여행 데이터가 실제로 화면에 다 들어온 뒤(isTripLoaded)부터, 그 상태를 첫 기록으로 삼아 시작한다.
   useEffect(() => {
-      if (isDbLoaded && activeTripId) {
-          const timer = setTimeout(() => setIsReadyToTrack(true), 1500);
+      if (isDbLoaded && activeTripId && isTripLoaded) {
+          const timer = setTimeout(() => { setHist({ list: [], index: -1 }); setIsReadyToTrack(true); }, 300);
           return () => clearTimeout(timer);
       }
-  }, [isDbLoaded, activeTripId]);
+      setIsReadyToTrack(false);
+  }, [isDbLoaded, activeTripId, isTripLoaded]);
 
   useEffect(() => {
       if (!isReadyToTrack) return;
@@ -71,24 +67,19 @@ export function useUndoRedo({
       }
 
       const currentState = { planTimeline, currentRestaurants, packingList, flights };
-      setHistory(prev => {
-          const newHistory = prev.slice(0, historyIndex + 1);
-          if (newHistory.length > 0) {
-              const last = newHistory[newHistory.length - 1];
-              if (JSON.stringify(last) === JSON.stringify(currentState)) {
-                  return prev;
-              }
-          }
-          return [...newHistory, currentState];
+      setHist(prev => {
+          const kept = prev.list.slice(0, prev.index + 1);
+          const last = kept[kept.length - 1];
+          if (last && JSON.stringify(last) === JSON.stringify(currentState)) return prev;
+          const list = [...kept, currentState];
+          return { list, index: list.length - 1 };
       });
-      setHistoryIndex(prev => prev + 1);
   }, [planTimeline, currentRestaurants, packingList, flights, isReadyToTrack]);
 
   useEffect(() => {
       setIsReadyToTrack(false);
-      setHistory([]);
-      setHistoryIndex(-1);
+      setHist({ list: [], index: -1 });
   }, [activeTripId]);
 
-  return { history, historyIndex, handleUndo, handleRedo };
+  return { history: hist.list, historyIndex: hist.index, handleUndo, handleRedo };
 }

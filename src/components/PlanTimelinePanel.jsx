@@ -1,6 +1,6 @@
 import React from 'react';
 import { Trash2, Navigation, Star } from 'lucide-react';
-import { S, getAccommodationTransitFrom, openGoogleMapsNav, openExternalUrl } from '../utils/helpers';
+import { S, getAccommodationTransitFrom, openGoogleMapsNav, openExternalUrl, isExpenseRecord, findPinForPlan } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 
 const THEME_EMOJI = {
@@ -29,6 +29,7 @@ const PlanTimelinePanel = ({
   const dayPlans = safePT
     .filter(p => {
       if (p.isAccommodation) return false;
+      if (isExpenseRecord(p)) return false; // 정산에서 넣은 지출 기록은 일정 카드로 보여주지 않음
       if (parseInt(p.day || 1) !== currentDay) return false;
       if (hasRental && !String(p.id).startsWith('trans_rental_') && S(p.place).includes('렌터카')) return false;
       return true;
@@ -52,7 +53,8 @@ const PlanTimelinePanel = ({
 
   const openNav = (plan) => {
     const rests = Array.isArray(currentRestaurants) ? currentRestaurants : [];
-    const pin = rests.find(r => r && r.lat && r.lng && S(r.name) === S(plan.place));
+    const found = findPinForPlan(plan, rests, planTimeline);
+    const pin = found && found.lat && found.lng ? found : null;
     if (pin) openGoogleMapsNav(pin.lat, pin.lng);
     else openExternalUrl(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(S(plan.localName) || S(plan.place))}`);
   };
@@ -102,6 +104,9 @@ const PlanTimelinePanel = ({
                       🏠 숙소{Array.isArray(plan.accommodationDays) && plan.accommodationDays.length > 0 ? ` (D${plan.accommodationDays.join(',D')})` : ''}
                     </span>
                     <h3 className={`text-[14px] font-semibold leading-tight ${textMain}`}>{S(plan.place)}</h3>
+                    {plan.time && plan.time !== '99:99' && (
+                      <p className={`text-[11px] font-semibold ${textMuted}`}>🕒 체크인 {S(plan.time)}</p>
+                    )}
                     {plan.localName && (
                       <p className="truncate text-[11px] font-semibold text-[#007AFF]" onClick={(e) => handleCopyLocalName(e, plan.localName)}>📋 {S(plan.localName)}</p>
                     )}

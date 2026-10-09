@@ -81,14 +81,15 @@ const PackingEditModal = ({
                            const newList = packingList.map(p => p.id === item.id ? { ...p, text: e.target.value } : p);
                            setPackingList(newList);
                          }}
-                         onKeyDown={e => e.key === 'Enter' && setEditingItemId(null)}
+                         onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { setEditingItemId(null); saveToDb({ packing_list: packingList }); } }}
                        />
                        <button onClick={() => { setEditingItemId(null); saveToDb({ packing_list: packingList }); }} className="text-[10px] font-black text-indigo-600">저장</button>
                      </div>
                    ) : (
                      <>
-                       <span className="text-[11px] font-bold truncate max-w-[200px]">{item.text}</span>
-                       <button onClick={(e) => { e.stopPropagation(); onDeleteItem(item.id); }} className={`ml-2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-indigo-400 hover:text-indigo-600'}`}><X className="w-[1em] h-[1em] inline" /></button>
+                       <span className="text-[11px] font-bold truncate max-w-[200px]">{item.isPersonal ? '🔒 ' : ''}{item.text}</span>
+                       {/* 휴대폰(터치)에선 마우스를 올릴 수 없으므로 항상 보이게, 큰 화면에서만 올렸을 때 진하게 */}
+                       <button onClick={(e) => { e.stopPropagation(); onDeleteItem(item.id); }} className={`ml-2 text-[10px] font-bold opacity-60 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 ${item.isChecked ? 'text-slate-400 hover:text-slate-600' : 'text-indigo-400 hover:text-indigo-600'}`}><X className="w-[1em] h-[1em] inline" /></button>
                      </>
                    )}
                  </div>

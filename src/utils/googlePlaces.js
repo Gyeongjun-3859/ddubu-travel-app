@@ -34,13 +34,44 @@ export async function googleAutocomplete(input, sessionToken, languageCode = 'ko
     });
 }
 
-// 후보의 placeId → 좌표·주소 (요금이 낮은 Essentials 필드만 요청)
-export async function googlePlaceLocation(placeId, sessionToken, languageCode = 'ko') {
+// 여행 국가 → 현지 언어 코드 (현지어 이름 자동 채우기용). 목록에 없으면 영어.
+export const LOCAL_LANG_BY_COUNTRY = {
+  '일본': 'ja', '중국': 'zh-CN', '대만': 'zh-TW', '홍콩': 'zh-HK', '태국': 'th', '베트남': 'vi',
+  '프랑스': 'fr', '이탈리아': 'it', '스페인': 'es', '독일': 'de', '러시아': 'ru', '카자흐스탄': 'ru',
+  '인도네시아': 'id', '말레이시아': 'ms', '필리핀': 'en', '미국': 'en', '영국': 'en', '호주': 'en', '싱가포르': 'en',
+};
+
+// 후보의 placeId → 좌표·주소. localLanguageCode를 주면 같은 한 번의 요청으로 그 언어의 장소 이름(displayName)도
+// 받아온다 — 택시 기사에게 보여줄 "현지어 이름" 자동 채우기용 (요청을 한 번 더 보내지 않기 위해 합침)
+export async function googlePlaceLocation(placeId, sessionToken, languageCode = 'ko', localLanguageCode = null) {
   if (!KEY) throw new Error('no-key');
-  const url = `${BASE}/places/${encodeURIComponent(placeId)}?languageCode=${languageCode}&sessionToken=${encodeURIComponent(sessionToken)}`;
-  const res = await fetch(url, { headers: { 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': 'location,formattedAddress' } });
+  const lang = localLanguageCode || languageCode;
+  const fields = localLanguageCode ? 'location,formattedAddress,displayName' : 'location,formattedAddress';
+  const url = `${BASE}/places/${encodeURIComponent(placeId)}?languageCode=${lang}&sessionToken=${encodeURIComponent(sessionToken)}`;
+  const res = await fetch(url, { headers: { 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': fields } });
   if (!res.ok) throw new Error(`places-details-${res.status}`);
   const data = await res.json();
   if (!data.location) throw new Error('places-details-no-location');
-  return { lat: data.location.latitude, lng: data.location.longitude, address: data.formattedAddress || '' };
+  return {
+    lat: data.location.latitude, lng: data.location.longitude, address: data.formattedAddress || '',
+    localName: (localLanguageCode && data.displayName && data.displayName.text) ? data.displayName.text : '',
+  };
+}
+
+// 좌표 → 바로 근처(반경 40m) 가장 가까운 장소 이름 — 지도를 눌러 핀을 만들 때 이름 칸 미리 채우기용.
+// 근처에 장소가 없으면 빈 문자열.
+export async function googleNearbyPlaceName(lat, lng, languageCode = 'ko') {
+  if (!KEY) throw new Error('no-key');
+  const res = await fetch(`${BASE}/places:searchNearby`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': 'places.displayName' },
+    body: JSON.stringify({
+      maxResultCount: 1, rankPreference: 'DISTANCE', languageCode,
+      locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: 40 } },
+    }),
+  });
+  if (!res.ok) throw new Error(`places-nearby-${res.status}`);
+  const data = await res.json();
+  const p = Array.isArray(data.places) && data.places[0];
+  return (p && p.displayName && p.displayName.text) ? p.displayName.text : '';
 }

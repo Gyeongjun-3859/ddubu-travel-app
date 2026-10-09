@@ -68,20 +68,32 @@ const ArchiveTab = ({
                     >
                       <button
                         onClick={(e) => { e.stopPropagation(); setTripToDelete(trip.id); }}
-                        className="absolute top-2 right-2 z-10 p-1.5 rounded-lg bg-white/80 dark:bg-slate-800/80 text-slate-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                        className="absolute top-2 right-2 z-10 p-1.5 rounded-lg bg-white/80 dark:bg-slate-800/80 text-slate-400 hover:text-rose-500 opacity-70 md:opacity-0 md:group-hover:opacity-100 transition-opacity shadow-sm"
                         title="여행기록 삭제"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
+                      {/* 대표 사진 (완료할 때 기록된 경우) */}
+                      {trip.coverPhoto && (
+                        <div className="-mx-4 -mt-4 mb-3 h-28 overflow-hidden rounded-t-3xl">
+                          <img src={trip.coverPhoto} alt="" className="w-full h-full object-cover" />
+                        </div>
+                      )}
                       <div className="flex justify-between items-start mb-3">
-                        <div className="w-10 h-10 rounded-2xl bg-indigo-100 flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform">🛫</div>
-                        <div className="text-right">
-                          <span className="text-[9px] font-black text-slate-400 block mb-0.5">FINISH DATE</span>
-                          <span className="text-[10px] font-bold text-slate-500">{new Date(trip.finishDate).toLocaleDateString()}</span>
+                        {!trip.coverPhoto && <div className="w-10 h-10 rounded-2xl bg-indigo-100 flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform">🛫</div>}
+                        <div className="text-right ml-auto">
+                          {/* 실제 여행 기간이 기록돼 있으면 그걸, 없으면(옛 기록) 완료한 날 */}
+                          <span className="text-[9px] font-black text-slate-400 block mb-0.5">{trip.startDate ? 'TRIP DATE' : 'FINISH DATE'}</span>
+                          <span className="text-[10px] font-bold text-slate-500">
+                            {trip.startDate
+                              ? `${S(trip.startDate).replace(/-/g, '.')}${trip.endDate && trip.endDate !== trip.startDate ? ` ~ ${S(trip.endDate).slice(5).replace(/-/g, '.')}` : ''}`
+                              : new Date(trip.finishDate).toLocaleDateString()}
+                          </span>
                         </div>
                       </div>
                       <h3 className={`text-sm font-black mb-1.5 ${textMain} line-clamp-1`}>{S(trip.name)}</h3>
                       <div className="flex flex-wrap gap-1.5 mt-auto">
+                        {(trip.city || trip.country) && <span className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 rounded text-[9px] font-bold">📍 {[S(trip.country), S(trip.city)].filter(Boolean).join(' · ')}</span>}
                         <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-500 rounded text-[9px] font-bold"># {year}년 추억</span>
                         {activeTripId === trip.id && <span className="px-2 py-0.5 bg-indigo-600 text-white rounded text-[9px] font-black animate-pulse">현재 선택됨</span>}
                       </div>

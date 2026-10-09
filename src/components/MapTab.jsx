@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Search, Navigation, Compass, Layers, Route, Image, Tag, MapPin, List, Utensils, Bus, Camera, ShoppingBag, BedDouble, MoreHorizontal, Cake } from 'lucide-react';
 import { KAKAO_CAT_COLORS } from '../utils/constants';
-import { S } from '../utils/helpers';
+import { S, escapeHtml, findPlansForPin } from '../utils/helpers';
 import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation } from '../utils/googlePlaces';
 
 const CATS = [
@@ -26,7 +26,7 @@ const MapTab = ({
   showMapLabels, setShowMapLabels,
   handleFindMyLocation,
   setNavOrigin, setNavDest, setIsNavModalOpen,
-  cardBg, isKakaoMapLoaded, isLeafletLoaded, setMapTypeOverride,
+  cardBg, isKakaoMapLoaded, isLeafletLoaded, setMapTypeOverride, isOverseasTrip,
   mapContainerRef, kakaoMapContainerRef, mapInstanceRef,
 }) => {
   const [layersOpen, setLayersOpen] = useState(false);
@@ -233,7 +233,7 @@ const MapTab = ({
                           el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
                           el.innerHTML = `
                             <div style="background:#4f46e5;color:white;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35);">${idx + 1}</div>
-                            <div style="background:white;border:1px solid #e2e8f0;border-radius:6px;padding:2px 6px;font-size:10px;font-weight:700;color:#1e293b;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.12);margin-top:2px;max-width:100px;overflow:hidden;text-overflow:ellipsis;">${place.place_name}</div>
+                            <div style="background:white;border:1px solid #e2e8f0;border-radius:6px;padding:2px 6px;font-size:10px;font-weight:700;color:#1e293b;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.12);margin-top:2px;max-width:100px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(place.place_name)}</div>
                           `;
                           const overlay = new kakao.maps.CustomOverlay({
                             position: new kakao.maps.LatLng(parseFloat(place.y), parseFloat(place.x)),
@@ -273,7 +273,7 @@ const MapTab = ({
                   onClick={() => handleMarkerSearchSelect(marker)}
                   className={`w-full text-left px-3 py-2.5 text-[12px] font-semibold border-b last:border-0 flex items-center ${isDarkMode ? 'text-slate-200 border-slate-700 hover:bg-slate-700' : 'text-slate-700 border-slate-100 hover:bg-[#007AFF]/5'}`}
                 >
-                  <span className={`w-2 h-2 rounded-full mr-2.5 ${planTimeline.some(p => S(p.place) === S(marker.name)) ? 'bg-orange-500' : 'bg-[#007AFF]'}`}></span>
+                  <span className={`w-2 h-2 rounded-full mr-2.5 ${findPlansForPin(marker, planTimeline).length > 0 ? 'bg-orange-500' : 'bg-[#007AFF]'}`}></span>
                   <span className="truncate flex-1">{S(marker.name)}</span>
                   <span className={`text-[10px] ml-2 ${textMuted}`}>{S(marker.city)}</span>
                 </button>
@@ -299,7 +299,11 @@ const MapTab = ({
 
         {/* 지도 타입 토글 (우상단) */}
         <div className="absolute top-[68px] right-3 z-30 flex rounded-lg overflow-hidden shadow-md">
-          <button onClick={() => setMapTypeOverride('kakao')} className={`px-2.5 py-1 text-[9px] font-black ${isKakaoMap ? 'bg-yellow-400 text-yellow-900' : (isDarkMode ? 'bg-slate-700/90 text-slate-400' : 'bg-white/90 text-slate-400')}`}>카카오</button>
+          <button onClick={() => {
+            // 카카오 지도는 국내 지도만 있어서 해외에선 빈 바다 화면이 된다 — 바꾸지 않고 안내
+            if (isOverseasTrip) { showToast("카카오 지도는 한국 지도만 지원해요. 해외 여행은 구글 지도를 써 주세요."); return; }
+            setMapTypeOverride('kakao');
+          }} className={`px-2.5 py-1 text-[9px] font-black ${isKakaoMap ? 'bg-yellow-400 text-yellow-900' : (isDarkMode ? 'bg-slate-700/90 text-slate-400' : 'bg-white/90 text-slate-400')}`}>카카오</button>
           <button onClick={() => setMapTypeOverride('leaflet')} className={`px-2.5 py-1 text-[9px] font-black ${!isKakaoMap ? 'bg-[#007AFF] text-white' : (isDarkMode ? 'bg-slate-700/90 text-slate-400' : 'bg-white/90 text-slate-400')}`}>구글</button>
         </div>
 

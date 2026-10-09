@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, MapPin, Compass, Trash2 } from 'lucide-react';
-import { S, openGoogleMapsNav } from '../utils/helpers';
+import { S, openGoogleMapsNav, findPlansForPin } from '../utils/helpers';
 import { tombstone } from '../sync/tripDataModel';
 
 const MyPinsModal = ({
@@ -92,7 +92,7 @@ const MyPinsModal = ({
                         <div className="flex items-center mb-1 gap-1">
                           <span className="text-[8px] font-bold bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-400 px-1 py-0.5 rounded shrink-0">
                             {(() => {
-                               const linked = planTimeline.find(p => p && S(p.place).trim() === S(pin.name).trim());
+                               const linked = findPlansForPin(pin, planTimeline)[0];
                                return linked?.theme || pin.theme || '기타';
                             })()}
                           </span>
@@ -175,6 +175,36 @@ const MyPinsModal = ({
             )}
             <div className="p-4 flex flex-col space-y-3">
               <h3 className={`text-base font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{S(pinQuickView.name)}</h3>
+              {/* 연결된 일정(Day·시간), 메모, 일기 별점·소감까지 한눈에 (예전엔 이름과 길 안내 버튼만 있었다) */}
+              {(() => {
+                const linked = findPlansForPin(pinQuickView, planTimeline);
+                const memo = S(pinQuickView.signature);
+                const hasMemo = memo && memo !== '직접 추가한 장소';
+                // 별점은 연결된 일정의 일기 별점을 우선. 옛 핀은 평가 전에도 기본 5점이 박혀 있어서,
+                // 소감(review)이 없으면 핀 자체 별점은 믿지 않는다.
+                const ratedPlan = linked.find(p => Number(p.rating) > 0);
+                const rating = ratedPlan ? Number(ratedPlan.rating) : (pinQuickView.review ? (Number(pinQuickView.rating) || 0) : 0);
+                return (
+                  <div className="space-y-1.5">
+                    {linked.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {linked.map(p => (
+                          <span key={p.id} className="text-[10px] font-bold bg-[#007AFF]/10 text-[#007AFF] px-2 py-0.5 rounded-full">
+                            D{S(p.day)}{p.time && p.time !== '99:99' ? ` · ${S(p.time)}` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {hasMemo && <p className={`text-xs leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>📝 {memo}</p>}
+                    {rating > 0 && (
+                      <p className={`text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                        <span className="font-black text-amber-500">⭐ {rating}점</span>
+                        {pinQuickView.review ? <span> · "{S(pinQuickView.review)}"</span> : null}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
               {pinQuickView.localName && (
                 <button onClick={(e) => handleCopyLocalName(e, pinQuickView.localName)} className="flex items-center space-x-2 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 px-3 py-2 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-colors text-left">
                   <span>📋</span>

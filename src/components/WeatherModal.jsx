@@ -34,7 +34,9 @@ const WeatherModal = ({
                   return tripDays.map((d) => {
                    const targetDateStr = getDateStringForDay(d);
                    const f = forecast.find(fc => fc && fc.date === targetDateStr);
-                   const todayStr = new Date().toISOString().split('T')[0];
+                   // 오늘 날짜는 기기 현지 시각 기준 (toISOString은 UTC라 한국 새벽 0~9시엔 하루 전 날짜가 나왔다)
+                   const nowLocal = new Date();
+                   const todayStr = `${nowLocal.getFullYear()}-${String(nowLocal.getMonth() + 1).padStart(2, '0')}-${String(nowLocal.getDate()).padStart(2, '0')}`;
                    const isToday = targetDateStr === todayStr;
 
                    if (!f) {
@@ -114,11 +116,12 @@ const WeatherModal = ({
                                     <span className="animate-spin inline-block mr-1">🔄</span> 시간대별 날씨를 분석중입니다...
                                  </div>
                               ) : (
-                                 Array.from({length: 24}).map((_, hour) => {
+                                 // 오늘이면 지금 시각부터 보여준다 (지나간 새벽 시간대는 의미가 없음)
+                                 Array.from({length: 24 - (isToday ? nowLocal.getHours() : 0)}, (_, i) => i + (isToday ? nowLocal.getHours() : 0)).map((hour, idxInList) => {
                                     const hRegion = getRegionForHour(hour);
-                                    const prevRegion = hour > 0 ? getRegionForHour(hour - 1) : null;
+                                    const prevRegion = idxInList > 0 ? getRegionForHour(hour - 1) : null;
 
-                                    const divider = (hour === 0 || hRegion !== prevRegion) ? (
+                                    const divider = (idxInList === 0 || hRegion !== prevRegion) ? (
                                        <div className="flex-shrink-0 flex items-center justify-center px-1">
                                           <span className={`px-2 py-1 rounded-full text-[9px] font-black shadow-sm border whitespace-nowrap ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300 border-indigo-700/50' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
                                              📍 {hRegion}

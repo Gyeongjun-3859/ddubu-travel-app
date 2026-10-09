@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Navigation, MapPin } from 'lucide-react';
-import { S, openExternalUrl } from '../utils/helpers';
+import { S, openExternalUrl, findPinForPlan, findPlansForPin } from '../utils/helpers';
 
 const NavModal = ({
   isOpen, onClose, isDarkMode, currentRestaurants,
@@ -103,18 +103,17 @@ const NavModal = ({
           {navSelectingFor !== null && (() => {
             // Day별 핀 분류
             const safeTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
-            const linkedPinNames = new Set(safeTimeline.map(p => S(p.place).trim()));
             const pinsByDay = {};
             tripDays.forEach(d => { pinsByDay[d] = []; });
             safeTimeline.forEach(p => {
-              const pin = validPins.find(r => S(r.name).trim() === S(p.place).trim());
+              const pin = findPinForPlan(p, validPins, safeTimeline);
               if (pin && p.day) {
                 const d = parseInt(p.day);
                 if (!pinsByDay[d]) pinsByDay[d] = [];
                 if (!pinsByDay[d].find(x => x.id === pin.id)) pinsByDay[d].push(pin);
               }
             });
-            const unlinkedPins = validPins.filter(r => !linkedPinNames.has(S(r.name).trim()));
+            const unlinkedPins = validPins.filter(r => findPlansForPin(r, safeTimeline).length === 0);
 
             // 현재 필터에 따른 표시 핀
             let shownPins;
@@ -157,13 +156,13 @@ const NavModal = ({
                       setNavSelectingFor(null);
                       setNavDayFilter('all');
                     }} className={`w-full flex items-center space-x-2 px-3 py-2 text-left transition-colors ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}>
-                      <span style={{ color: getDayColor(safeTimeline.find(p => S(p.place).trim() === S(pin.name).trim())?.day) || '#94a3b8' }} className="text-xs">📍</span>
+                      <span style={{ color: getDayColor(findPlansForPin(pin, safeTimeline)[0]?.day) || '#94a3b8' }} className="text-xs">📍</span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-xs font-black truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{S(pin.name)}</p>
                         {pin.localName && <p className="text-[10px] text-slate-400 truncate">{S(pin.localName)}</p>}
                       </div>
                       {(() => {
-                        const linked = safeTimeline.find(p => S(p.place).trim() === S(pin.name).trim());
+                        const linked = findPlansForPin(pin, safeTimeline)[0];
                         return linked ? <span style={{ background: getDayColor(linked.day) }} className="text-[8px] font-black text-white px-1.5 py-0.5 rounded-full flex-shrink-0">D{linked.day}</span> : null;
                       })()}
                     </button>

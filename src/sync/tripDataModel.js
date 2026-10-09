@@ -78,6 +78,8 @@ export function cleanPlanItem(p, fallbackCountry = "", fallbackRegion = "") {
     transitNote: p.transitNote, transitFromPlace: S(p.transitFromPlace || ''),
     transitFromIsAccommodation: Boolean(p.transitFromIsAccommodation),
     ...(Array.isArray(p.transitRoutes) ? { transitRoutes: p.transitRoutes } : {}),
+    // 연결된 핀 번호 — 여기서 빠지면 화면 데이터에서 사라졌다가 다음 저장 때 DB에서도 지워진다
+    ...(p.pinId != null && p.pinId !== '' ? { pinId: S(p.pinId) } : {}),
   };
 }
 

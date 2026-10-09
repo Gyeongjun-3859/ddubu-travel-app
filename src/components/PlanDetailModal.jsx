@@ -1,6 +1,6 @@
 import React from 'react';
 import { Trash2 } from 'lucide-react';
-import { S } from '../utils/helpers';
+import { S, findPinForPlan } from '../utils/helpers';
 
 const PlanDetailModal = ({
   selectedPlanInfo, setSelectedPlanInfo, cardBg, isDarkMode, openPhotoViewer, handleCopyLocalName,
@@ -98,13 +98,15 @@ const PlanDetailModal = ({
               if (isDiaryOpen) {
                 // 닫을 때 현재 작성 중인 내용 자동 저장
                 const safeReviewText = diaryReview ? String(diaryReview).trim() : "";
+                // 일기 별점·소감은 이 일정에 연결된 핀 하나에만 반영 (옛 일정이면 찾은 핀 번호를 채워 연결)
+                const linkedPin = findPinForPlan(selectedPlanInfo, currentRestaurants, planTimeline);
                 const updatedTimeline = (planTimeline || []).map(p =>
                   String(p.id) === String(selectedPlanInfo.id)
-                    ? { ...p, rating: Number(diaryRating) || 0, review: safeReviewText }
+                    ? { ...p, rating: Number(diaryRating) || 0, review: safeReviewText, ...(linkedPin ? { pinId: S(linkedPin.id) } : {}) }
                     : p
                 );
                 const updatedRests = (currentRestaurants || []).map(r =>
-                  S(r.name).trim() === S(selectedPlanInfo.place).trim()
+                  linkedPin && S(r.id) === S(linkedPin.id)
                     ? { ...r, rating: Number(diaryRating) || 0, review: safeReviewText }
                     : r
                 );
@@ -158,16 +160,21 @@ const PlanDetailModal = ({
                   <div
                     className="flex items-center space-x-1.5 cursor-pointer touch-none"
                     style={{ touchAction: 'none' }}
+                    // 별을 "탭"하면 그 별까지 1점 단위(3번째 별 → 3점), 손가락을 "끌면" 0.5점 단위로 세밀하게.
+                    // (예전엔 탭도 0.5점 단위라 별 가운데를 누르면 3번째 별이 2.5점이 됐다)
                     onPointerDown={(e) => {
                       e.currentTarget.setPointerCapture(e.pointerId);
+                      e.currentTarget.dataset.startX = String(e.clientX);
                       const rect = e.currentTarget.getBoundingClientRect();
-                      let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-                      setDiaryRating(Math.round((x / rect.width) * 10) / 2);
+                      const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+                      setDiaryRating(Math.min(5, Math.max(1, Math.ceil((x / rect.width) * 5))));
                     }}
                     onPointerMove={(e) => {
                       if (e.buttons !== 1) return; // 클릭/터치 유지 상태일 때만 작동
+                      const startX = parseFloat(e.currentTarget.dataset.startX || 'NaN');
+                      if (!isNaN(startX) && Math.abs(e.clientX - startX) < 6) return; // 살짝 떨린 건 탭으로 본다
                       const rect = e.currentTarget.getBoundingClientRect();
-                      let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+                      const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
                       setDiaryRating(Math.round((x / rect.width) * 10) / 2);
                     }}
                     onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
@@ -211,8 +218,9 @@ const PlanDetailModal = ({
                 );
 
                 // 2. 장소(Pins) 데이터 업데이트 (장소명이 일치하는 경우 연동)
+                const linkedPin2 = findPinForPlan(selectedPlanInfo, currentRestaurants, planTimeline);
                 const updatedRests = (currentRestaurants || []).map(r =>
-                  S(r.name).trim() === S(selectedPlanInfo.place).trim()
+                  linkedPin2 && S(r.id) === S(linkedPin2.id)
                     ? { ...r, rating: Number(diaryRating) || 0, review: safeReviewText }
                     : r
                 );

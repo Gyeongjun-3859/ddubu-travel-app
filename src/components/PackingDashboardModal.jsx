@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Backpack } from 'lucide-react';
 
-const PackingDashboardModal = ({ isOpen, onClose, isDarkMode, textMain, packingList, onToggleItem }) => {
+const PackingDashboardModal = ({ isOpen, onClose, isDarkMode, textMain, packingList, onToggleItem, onAddItem }) => {
   if (!isOpen) return null;
 
   return (
@@ -12,6 +12,11 @@ const PackingDashboardModal = ({ isOpen, onClose, isDarkMode, textMain, packingL
             <button onClick={onClose} className="text-slate-400 hover:text-slate-600 font-bold text-lg transition-colors"><X className="w-[1em] h-[1em] inline" /></button>
          </div>
          <div className="p-4 space-y-4 max-h-[60vh] flex flex-col min-h-[30vh]">
+            {/* 여기서도 바로 추가 (예전엔 "일정 탭에서 등록해 주세요"만 나왔다) — 공동용으로 담기고, 개인용은 일정 탭 준비물에서 */}
+            {typeof onAddItem === 'function' && (
+              <input type="text" placeholder="챙길 물건 입력 후 엔터키 (공동용)" onKeyDown={onAddItem}
+                className={`shrink-0 w-full border px-3 py-2.5 text-xs font-bold outline-none rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 ${isDarkMode ? 'bg-slate-900 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-800'}`} />
+            )}
             {packingList.some(item => item.isChecked) && (
               <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 p-2.5 rounded-lg text-[11px] font-bold text-center animate-in fade-in shrink-0 border border-emerald-100 dark:border-emerald-800/50 duration-300">
                  ✨ 앗! 준비물을 하나씩 채우고 계시군요. 완벽한 여행이 될 거예요!
@@ -29,7 +34,7 @@ const PackingDashboardModal = ({ isOpen, onClose, isDarkMode, textMain, packingL
               {packingList.length === 0 && (
                 <div className="text-center w-full py-10">
                    <p className="text-xs text-slate-400 font-bold">등록된 준비물이 없습니다.</p>
-                   <p className="text-[10px] text-slate-400 mt-2">일정 탭에서 등록해 주세요!</p>
+                   <p className="text-[10px] text-slate-400 mt-2">위 칸에 입력하고 엔터를 눌러 추가해 보세요!</p>
                 </div>
               )}
             </div>

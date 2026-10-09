@@ -60,14 +60,17 @@ const DashboardTab = ({
   // 환율 계산기: KRW 또는 외화 어디에 입력해도 나머지가 실시간으로 환산됨
   // 원화 + 달러 + 여행 국가 통화, 이렇게 최대 3개만 보여줌 (국가 통화가 USD면 중복 표시 안 함)
   const tripCurrency = COUNTRY_CURRENCY[resolvedGlobalCountry];
-  const currencyLabel = (code, unit) => unit && unit > 1 ? `${code}(${unit})` : code;
+  // 칸 이름은 통화 코드만, 기준 환율은 그 아래 작게 따로 보여준다. (예전엔 "JPY(100)" 칸에 입력 전엔 100엔당 원화,
+  // 입력 후엔 실제 엔화 금액이 떠서 같은 칸의 뜻이 바뀌어 헷갈렸다)
+  const currencyLabel = (code) => code;
   const foreignCurrencies = [
     { code: 'USD', label: currencyLabel('USD', 1), unit: 1 },
     ...(tripCurrency && tripCurrency.code !== 'USD'
       ? [{ code: tripCurrency.code, label: currencyLabel(tripCurrency.code, tripCurrency.unit), unit: tripCurrency.unit || 1 }]
       : []),
   ];
-  const currencyInputValue = (code, unit) => { const v = getInputValue(code, unit); return v === '-' ? '' : v; };
+  // 금액을 입력하기 전엔 칸을 비워 둔다(기준 환율은 아래 캡션에 표시)
+  const currencyInputValue = (code, unit) => { if (!amount) return ''; const v = getInputValue(code, unit); return v === '-' ? '' : v; };
   const updatedLabel = (() => {
     if (!ratesUpdatedAt) return '';
     const mins = Math.floor((Date.now() - ratesUpdatedAt) / 60000);
@@ -303,12 +306,15 @@ const DashboardTab = ({
             <div className="flex flex-col gap-1.5">
               {foreignCurrencies.map(cur => (
                 <div key={cur.code} className={`flex items-center justify-between rounded-lg border px-3 py-2 ${isDarkMode ? 'bg-slate-900/40 border-slate-700' : 'bg-[#f4f3f8] border-slate-200/50'}`}>
-                  <span className={`text-[11px] font-semibold uppercase ${textMuted}`}>{cur.label}</span>
+                  <span className="flex flex-col leading-tight">
+                    <span className={`text-[11px] font-semibold uppercase ${textMuted}`}>{cur.label}</span>
+                    <span className={`text-[9px] font-medium ${textMuted}`}>{cur.unit || 1} {cur.code} = ₩{getPlaceholder(cur.code, cur.unit)}</span>
+                  </span>
                   <input
                     type="text"
                     inputMode="decimal"
                     value={currencyInputValue(cur.code, cur.unit)}
-                    placeholder={getPlaceholder(cur.code, cur.unit)}
+                    placeholder="0"
                     onFocus={() => setFocusedCurrency(cur.code)}
                     onBlur={() => setFocusedCurrency(prev => prev === cur.code ? null : prev)}
                     onChange={e => handleInputChange(cur.code, e.target.value)}

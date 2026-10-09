@@ -37,7 +37,10 @@ function emptyTripState() {
   };
 }
 
-export function createTripSyncEngine({ getClient, getUserId, onToast }) {
+// PostgREST: .single()로 조회했는데 행이 0개 — 행이 없거나, 보안 규칙(RLS)상 더 이상 볼 수 없을 때
+const NO_ROW_CODE = 'PGRST116';
+
+export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLost }) {
   let activeTripId = null;
   const trips = new Map(); // tripId -> state
 
@@ -74,7 +77,7 @@ export function createTripSyncEngine({ getClient, getUserId, onToast }) {
     if (typeof row.version === 'number') state.version = row.version;
 
     // 1) 스칼라 필드 먼저 반영 (배열 정제 시 display_city_name을 기준으로 삼기 때문에 순서 중요)
-    [...SCALAR_FIELDS, 'shared_users', 'archived', 'finish_date', 'owner_app_user_id'].forEach(field => {
+    [...SCALAR_FIELDS, 'shared_users', 'archived', 'finish_date', 'owner_app_user_id', 'trip_name'].forEach(field => {
       if (Object.prototype.hasOwnProperty.call(row, field)) state.scalars[field] = row[field];
     });
 
@@ -267,6 +270,8 @@ export function createTripSyncEngine({ getClient, getUserId, onToast }) {
       const { data: latest, error: selErr } = await client.from('travel_state').select(selectCols).eq('id', tripId).single();
       if (selErr || !latest) {
         console.error('❌ [동기화] 최신 데이터 조회 실패', selErr);
+        // 행이 안 보이면(강퇴 등으로 접근 권한이 사라짐) 앱에 알려서 화면/목록을 정리하게 한다.
+        if (selErr && selErr.code === NO_ROW_CODE && typeof onAccessLost === 'function') onAccessLost(tripId);
         break;
       }
       const payload = { version: (latest.version || 0) + 1 };
@@ -330,7 +335,31 @@ export function createTripSyncEngine({ getClient, getUserId, onToast }) {
     }));
   }
 
+  // 이 여행을 지금도 볼 수 있는지 확인: 'ok' | 'denied'(행이 안 보임) | 'unknown'(네트워크 오류 등 — 판단 보류)
+  async function checkAccess(tripId) {
+    if (isGuest()) return 'ok';
+    try {
+      const { data, error } = await getClient().from('travel_state').select('id').eq('id', tripId).single();
+      if (data) return 'ok';
+      if (error && error.code === NO_ROW_CODE) return 'denied';
+      return 'unknown';
+    } catch (e) { return 'unknown'; }
+  }
+
+  // 더 이상 접근할 수 없는 여행의 대기 중 저장과 이 기기 캐시를 버린다 (강퇴 후 남아 있던 내 화면 변경 정리)
+  function forgetTrip(tripId) {
+    const state = trips.get(tripId);
+    if (state && state.flushTimer) clearTimeout(state.flushTimer);
+    trips.delete(tripId);
+    try {
+      const all = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '{}');
+      delete all[tripId];
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(all));
+    } catch (e) {}
+  }
+
   return {
+    checkAccess, forgetTrip,
     setActiveTrip, getActiveTrip,
     load, reload, subscribeTrip,
     patch, upsertItems, deleteItems,

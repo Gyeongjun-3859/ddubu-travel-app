@@ -10,7 +10,7 @@ const MobileMenu = ({
   activeTab, openAddTripModal, openRenameTripModal,
   pendingInvite, handleAcceptInvite, handleRejectInvite,
   handleUndo, handleRedo, historyIndex, history,
-  setIsSettingsOpen, handleLogout,
+  setIsSettingsOpen, handleLogout, displayCityName,
 }) => {
   if (!isOpen) return null;
 
@@ -50,6 +50,39 @@ const MobileMenu = ({
                     if (endDate < new Date()) isTimeFinished = true;
                   }
 
+// 여행 완료(기록 보관) — 확인 후 보관함으로
+                  const completeTrip = (e) => {
+                    e.stopPropagation();
+                    showConfirm("정말 이 여행을 완료하시겠습니까?\n완료된 여행은 '소중한 여행기록'으로 이동합니다.", async () => {
+                              const finishDate = new Date().toISOString();
+                              const finalCountry = S((globalPlanCountry === '수동입력') ? globalManualCountry : globalPlanCountry);
+                              // 보관함 카드에 보여줄 실제 여행 기간·여행지·대표 사진도 함께 기록 (예전엔 완료 버튼 누른 날만 남았다)
+                              const startStr = S(travelStartDate);
+                              let endStr = startStr;
+                              try { const e = new Date(startStr); e.setDate(e.getDate() + Math.max(1, parseInt(maxDay) || 1) - 1); endStr = `${e.getFullYear()}-${String(e.getMonth() + 1).padStart(2, '0')}-${String(e.getDate()).padStart(2, '0')}`; } catch (err) {}
+                              const coverPlan = (Array.isArray(planTimeline) ? planTimeline : []).find(p => p && p.photo && !S(p.photo).includes('unsplash'));
+                              const city = displayCityName && displayCityName !== '선택된 지역 없음' ? S(displayCityName) : '';
+                              const newTrips = trips.map(item => item.id === t.id ? { ...item, archived: true, finishDate: finishDate, country: finalCountry, startDate: startStr, endDate: endStr, city, coverPhoto: coverPlan ? S(coverPlan.photo) : '' } : item);
+                              setTrips(newTrips);
+                              if(supabaseClient && appUserId !== "Guest") {
+                                await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
+                                // 공유받은 여행(참여자)이면 "내 목록에서만" 보관함으로 옮긴다. 여행 자체와 다른 사람의
+                                // 공유는 건드리지 않는다 — 예전엔 참여자가 눌러도 shared_users를 비워 모두의 공유가 끊겼다.
+                                if (!t.isShared) {
+                                  await supabaseClient.from('travel_state').update({ archived: true, finish_date: finishDate, shared_users: [] }).eq('id', t.id);
+                                }
+                              }
+                              // [보관함 자동 전환] 방금 완료 처리한 여행이 활성 여행이었다면, 보관함(완료된) 여행이
+                              // 계속 활성 상태로 남아있지 않도록 다른 진행 중인 여행으로 자동 전환한다.
+                              if (t.id === activeTripId) {
+                                const nextActive = newTrips.find(item => item && !item.archived);
+                                if (nextActive) handleSwitchTrip(nextActive.id);
+                              }
+                              showToast("축하합니다! 성공적으로 여행을 마쳤습니다. 🏁");
+                              setActiveTab('archive');
+                            });
+                  };
+
 return (
                     <div key={t.id} className="group relative">
                       <button
@@ -66,11 +99,17 @@ return (
                                 : 'bg-white text-slate-600 border-slate-100 shadow-sm hover:border-indigo-200 hover:bg-indigo-50/30')
                         }`}
                       >
-                        <span className="truncate flex items-center pr-8">
+                        <span className={`truncate flex items-center ${isTimeFinished ? 'pr-14' : 'pr-8'}`}>
                           {t.isShared ? <Handshake className="w-3 h-3 mr-1.5 flex-shrink-0" /> : <MapPin className="w-3 h-3 mr-1.5 flex-shrink-0" />}
                           {S(t.name)}
                         </span>
 
+                        {/* 여행 완료 🏁 — 일정이 끝난 현재 여행에만. 예전엔 여행 아래에 큰 버튼이 끼어들어 목록이 밀려서
+                            다른 여행을 잘못 누르기 쉬웠다 → 이름 옆 아이콘으로 */}
+                        {isTimeFinished && (
+                          <span onClick={completeTrip} title="여행 완료 (기록 보관하기)"
+                            className="absolute right-9 px-1 py-0.5 rounded-md text-sm leading-none bg-emerald-400/90 hover:bg-emerald-300 shadow animate-in fade-in">🏁</span>
+                        )}
                         {/* 삭제/나가기 버튼 강조 및 위치 고정 */}
                         <span
                           onClick={(e) => {
@@ -80,42 +119,13 @@ return (
                           className={`absolute right-3 px-1 py-1 rounded-md transition-all duration-200 ${
                             isActive
                               ? 'text-indigo-200 hover:text-white hover:bg-indigo-500'
-                              : 'text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100'
+                              : 'text-slate-300 hover:text-rose-500 opacity-60 md:opacity-0 md:group-hover:opacity-100'
                           }`}
                         >
                           {t.isShared ? <LogOut className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
                         </span>
                       </button>
 
-                      {/* 스마트 완료 버튼: 시간이 지났을 때만 노출 */}
-                      {isTimeFinished && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            showConfirm("정말 이 여행을 완료하시겠습니까?\n완료된 여행은 '소중한 여행기록'으로 이동합니다.", async () => {
-                              const finishDate = new Date().toISOString();
-                              const finalCountry = S((globalPlanCountry === '수동입력') ? globalManualCountry : globalPlanCountry);
-                              const newTrips = trips.map(item => item.id === t.id ? { ...item, archived: true, finishDate: finishDate, country: finalCountry } : item);
-                              setTrips(newTrips);
-                              if(supabaseClient && appUserId !== "Guest") {
-                                await supabaseClient.from('profiles').update({ trips: newTrips }).eq('app_user_id', appUserId);
-                                await supabaseClient.from('travel_state').update({ archived: true, finish_date: finishDate, shared_users: [] }).eq('id', t.id);
-                              }
-                              // [보관함 자동 전환] 방금 완료 처리한 여행이 활성 여행이었다면, 보관함(완료된) 여행이
-                              // 계속 활성 상태로 남아있지 않도록 다른 진행 중인 여행으로 자동 전환한다.
-                              if (t.id === activeTripId) {
-                                const nextActive = newTrips.find(item => item && !item.archived);
-                                if (nextActive) handleSwitchTrip(nextActive.id);
-                              }
-                              showToast("축하합니다! 성공적으로 여행을 마쳤습니다. 🏁");
-                              setActiveTab('archive');
-                            });
-                          }}
-                          className="w-full mt-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[9px] py-1.5 rounded-lg font-black shadow-lg transition-all animate-in slide-in-from-top-1"
-                        >
-                          🏁 여행 완료 (기록 보관하기)
-                        </button>
-                      )}
                     </div>
                   );
                 })}
@@ -143,6 +153,8 @@ return (
           {pendingInvite && (
             <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 animate-in fade-in duration-300">
               <h3 className="text-[10px] font-black text-indigo-600 mb-1 flex items-center gap-1"><Mail className="w-3 h-3" /> 새 초대장 도착!</h3>
+              {/* 어떤 여행 초대인지 보여준다 (예전엔 보낸 사람만 보였다) */}
+              {pendingInvite.trip_name && <p className="text-[10px] font-black text-indigo-700 dark:text-indigo-300 truncate">✈️ {S(pendingInvite.trip_name)}</p>}
               <p className="text-[9px] text-indigo-500 mb-2 truncate">From: {S(pendingInvite.from_id)}</p>
               <div className="flex space-x-1.5">
                 <button onClick={handleAcceptInvite} className="flex-1 bg-indigo-600 text-white py-1.5 rounded text-[10px] font-bold shadow-sm hover:bg-indigo-700 transition-colors">수락</button>

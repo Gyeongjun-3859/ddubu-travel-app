@@ -35,7 +35,17 @@ const TransportModal = ({
           {transType !== 'rental' && (
           <div className="flex space-x-2 items-center">
              <button onClick={() => setTransDir('outbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'outbound' ? 'border-indigo-500 text-indigo-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>가는 편 (Outbound)</button>
-             <button onClick={() => setTransDir('inbound')} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'inbound' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>오는 편 (Inbound)</button>
+             <button onClick={() => {
+               setTransDir('inbound');
+               // 오는 편은 보통 마지막 날이므로, 아직 아무것도 안 적은 오는 편이면 Day 기본값을 마지막 Day로
+               setModalTransData(prev => {
+                 const cur = prev[transType].inbound;
+                 const untouched = !cur.dep && !cur.arr && !cur.depTime && !cur.arrTime && !cur.flightNum && !cur.airline;
+                 const lastDay = tripDays[tripDays.length - 1];
+                 if (untouched && cur.day === 1 && lastDay > 1) return { ...prev, [transType]: { ...prev[transType], inbound: { ...cur, day: lastDay } } };
+                 return prev;
+               });
+             }} className={`flex-1 py-1 text-[10px] font-bold border-b-2 transition-colors duration-300 ${transDir === 'inbound' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>오는 편 (Inbound)</button>
              <button onClick={() => setModalTransData(prev => ({...prev, [transType]: {...prev[transType], [transDir]: {...initialTransState}}}))} className="px-2 py-1 text-[9px] font-bold bg-slate-100 text-slate-500 rounded border hover:bg-slate-200 transition-colors duration-300">초기화</button>
           </div>
           )}

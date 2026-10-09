@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Check, Copy, Calendar, ArrowUpDown, Camera, Image as ImageIcon, Bookmark, MapPinPlus, Link as LinkIcon } from 'lucide-react';
-import { S, compressAndStoreImage } from '../utils/helpers';
-import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation } from '../utils/googlePlaces';
+import { S, compressAndStoreImage, isExpenseRecord, findPinForPlan } from '../utils/helpers';
+import { usePlaceSearch } from '../hooks/usePlaceSearch';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -26,13 +26,24 @@ const AddPlaceModal = ({
   newManualIsAccommodation, setNewManualIsAccommodation,
   newManualAccommodationDays, setNewManualAccommodationDays,
   manualFileInputRef, supabaseClient, appUserId, activeTripId,
-  handleManualPlaceAdd,
+  handleManualPlaceAdd, currentRestaurants, showConfirm, country,
 }) => {
-  const [placeSuggestions, setPlaceSuggestions] = React.useState([]);
-  const [showSuggestions, setShowSuggestions] = React.useState(false);
-  const searchTimerRef = React.useRef(null);
-  const searchReqRef = React.useRef(0);
-  const placeSessionRef = React.useRef(newPlacesSessionToken());
+  // 장소 자동완성은 일정 수정 창과 같은 훅을 쓴다. 해외 장소를 구글에서 고르면 현지어 이름도 (비어 있을 때) 채운다.
+  const { suggestions: placeSuggestions, showSuggestions, setShowSuggestions, onQueryChange, select: selectSuggestion } = usePlaceSearch({
+    isKakaoMap, isKakaoMapLoaded, country, showToast,
+    onPick: ({ name, lat, lng, localName }) => {
+      setNewManualPlaceName(name);
+      if (localName && !S(newManualLocalNameRef.current).trim()) setNewManualLocalName(localName);
+      if (!isNaN(lat) && !isNaN(lng) && typeof setClickedLocation === 'function') {
+        setClickedLocation(prev => ({ ...(prev || {}), lat, lng }));
+      }
+    },
+  });
+  const [isPreviewOpen, setIsPreviewOpen] = React.useState(false); // 좁은 화면에서 "등록된 일정" 미리보기 펼침 여부
+  const newManualLocalNameRef = React.useRef(newManualLocalName);
+  newManualLocalNameRef.current = newManualLocalName;
+  // 기존 일정을 불러오기 직전의 위치(지도 클릭 좌표 등) — "새 일정으로"로 되돌릴 때 복원용
+  const locationBeforeLoadRef = React.useRef(null);
 
   if (!isOpen) return null;
 
@@ -40,109 +51,84 @@ const AddPlaceModal = ({
   const softBg = isDarkMode ? 'bg-slate-900/40' : 'bg-slate-50/70';
   const inputCls = `w-full ${softBg} border ${border} focus:border-[#007AFF] rounded-2xl px-3.5 py-2.5 text-sm font-medium outline-none focus:ring-4 focus:ring-[#007AFF]/10 transition-all ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`;
 
-  const runPlaceSearch = (query) => {
-    const reqId = ++searchReqRef.current; // 늦게 도착한 이전 검색 결과가 덮어쓰지 않게 구분
-    if (!query || query.trim().length < 2) { setPlaceSuggestions([]); return; }
-    if (isKakaoMap && isKakaoMapLoaded && window.kakao && window.kakao.maps && window.kakao.maps.services) {
-      const kakao = window.kakao;
-      const ps = new kakao.maps.services.Places();
-      ps.keywordSearch(query, (data, status) => {
-        if (status === kakao.maps.services.Status.OK && Array.isArray(data)) {
-          setPlaceSuggestions(data.slice(0, 5).map(d => ({
-            name: d.place_name, address: d.road_address_name || d.address_name || '',
-            lat: parseFloat(d.y), lng: parseFloat(d.x),
-          })));
-          setShowSuggestions(true);
-        } else { setPlaceSuggestions([]); }
-      }, { size: 5 });
-    } else {
-      const runNominatim = () => {
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=ko,en,ru`)
-          .then(r => r.json())
-          .then(data => {
-            if (reqId !== searchReqRef.current) return;
-            if (Array.isArray(data)) {
-              setPlaceSuggestions(data.map(d => ({
-                name: S(d.display_name).split(',')[0], address: S(d.display_name),
-                lat: parseFloat(d.lat), lng: parseFloat(d.lon),
-              })));
-              setShowSuggestions(true);
-            }
-          }).catch(() => { if (reqId === searchReqRef.current) setPlaceSuggestions([]); });
-      };
-      // 해외는 구글 Places 우선, 키가 없거나 실패/결과 없음이면 기존 OSM 검색으로 대체
-      if (!hasGooglePlacesKey()) { runNominatim(); return; }
-      googleAutocomplete(query.trim(), placeSessionRef.current)
-        .then(list => {
-          if (reqId !== searchReqRef.current) return;
-          if (list.length > 0) { setPlaceSuggestions(list); setShowSuggestions(true); }
-          else runNominatim();
-        })
-        .catch(e => {
-          console.warn('[구글 장소 검색 실패 → OSM 대체]', e && e.message);
-          if (reqId === searchReqRef.current) runNominatim();
-        });
-    }
-  };
-
   const handlePlaceNameChange = (val) => {
     setNewManualPlaceName(val);
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => runPlaceSearch(val), 350);
+    onQueryChange(val);
   };
 
-  const handleSelectSuggestion = async (s) => {
-    setNewManualPlaceName(s.name);
-    setPlaceSuggestions([]); setShowSuggestions(false);
-    searchReqRef.current++; // 선택 직후 도착하는 검색 결과 무시
-    let { lat, lng } = s;
-    // 구글 후보는 좌표가 없어서 선택 시점에 조회 (세션 종료 → 새 토큰 발급)
-    if (s.placeId && (isNaN(lat) || isNaN(lng))) {
-      try {
-        const loc = await googlePlaceLocation(s.placeId, placeSessionRef.current);
-        lat = loc.lat; lng = loc.lng;
-      } catch (e) {
-        console.warn('[구글 좌표 조회 실패]', e && e.message);
-        showToast("위치를 가져오지 못했어요. 지도를 눌러 직접 지정해주세요.");
-      }
-      placeSessionRef.current = newPlacesSessionToken();
-    }
-    if (!isNaN(lat) && !isNaN(lng) && typeof setClickedLocation === 'function') {
-      setClickedLocation(prev => ({ ...(prev || {}), lat, lng }));
-    }
-  };
+  const handleSelectSuggestion = (s) => { selectSuggestion(s); };
 
   const photoCount = newManualPhotos.length;
   const emptySlotCount = Math.max(0, 3 - photoCount - (photoCount < 3 ? 1 : 0));
 
   const dayExistingPlans = pinLinkDay
-    ? (Array.isArray(planTimeline) ? planTimeline : []).filter(p => p && String(p.day) === String(pinLinkDay)).sort((a, b) => S(a.time).localeCompare(S(b.time)))
+    ? (Array.isArray(planTimeline) ? planTimeline : []).filter(p => p && String(p.day) === String(pinLinkDay) && !isExpenseRecord(p)).sort((a, b) => S(a.time).localeCompare(S(b.time)))
     : [];
 
-  const loadExistingPlan = (id) => {
-    setPinLinkPlanId(id);
-    const matched = planTimeline.find(p => String(p.id) === String(id));
-    if (!matched) return;
-    setNewManualTime(matched.time);
-    setNewManualPlaceName(matched.place);
-    if (matched.localName) setNewManualLocalName(matched.localName);
-    if (matched.features && matched.features !== "직접 추가한 장소") setNewManualFeature(matched.features);
-    if (matched.theme) setNewManualTheme(S(matched.theme));
+  // 기존 일정을 불러와 "그 일정(과 연결된 핀)을 수정"하는 모드로 바꾼다.
+  // [버그 수정] 예전엔 ⓐ입력 중인 내용을 경고 없이 덮어쓰고 ⓑ기존 일정에 빈 칸이 있으면 새로 입력한
+  // 값이 남아 두 데이터가 섞였고 ⓒ연결된 핀을 모른 채 저장해 핀이 중복 생성되면서 직전에 검색한
+  // 장소 좌표가 찍혔다. 이제 모든 칸을 그 일정 값으로 통째로 채우고, 같은 이름의 핀을 수정 대상으로 연결한다.
+  const applyExistingPlan = (matched) => {
+    const isFreshLoad = !pinLinkPlanId || pinLinkPlanId === 'manual';
+    if (isFreshLoad) locationBeforeLoadRef.current = clickedLocation || null;
+    setPinLinkPlanId(matched.id);
+    setNewManualTime(S(matched.time));
+    setNewManualPlaceName(S(matched.place));
+    setNewManualLocalName(S(matched.localName));
+    setNewManualFeature(matched.features && matched.features !== "직접 추가한 장소" ? S(matched.features) : "");
+    setNewManualTheme(S(matched.theme) || "기타");
     setNewManualIsAccommodation(Boolean(matched.isAccommodation));
     setNewManualAccommodationDays(Array.isArray(matched.accommodationDays) ? matched.accommodationDays : []);
     const matchedImgs = Array.isArray(matched.photos) && matched.photos.length > 0 ? matched.photos : (matched.photo ? [matched.photo] : []);
-    if (matchedImgs.length > 0) { setNewManualPhotos(matchedImgs); setNewManualPhoto(matchedImgs[0]); }
-    showToast("✨ 선택한 일정의 데이터가 쏙 채워졌어요!");
+    setNewManualPhotos(matchedImgs);
+    setNewManualPhoto(matchedImgs[0] || "");
+    const linkedPin = findPinForPlan(matched, currentRestaurants, planTimeline);
+    if (typeof setClickedLocation === 'function') {
+      setClickedLocation(linkedPin ? { id: linkedPin.id, lat: linkedPin.lat, lng: linkedPin.lng } : null);
+    }
+    showToast("✨ 선택한 일정을 불러왔어요. 고친 뒤 등록하면 이 일정이 수정돼요.");
+  };
+
+  const loadExistingPlan = (id) => {
+    const matched = planTimeline.find(p => String(p.id) === String(id));
+    if (!matched) return;
+    const isFreshLoad = !pinLinkPlanId || pinLinkPlanId === 'manual';
+    const hasTypedSomething = isFreshLoad && S(newManualPlaceName).trim() !== "";
+    if (hasTypedSomething && typeof showConfirm === 'function') {
+      showConfirm(`"${S(matched.place)}" 일정을 불러오면
+지금 입력한 내용이 그 일정 내용으로 바뀌어요.
+불러올까요?`, () => applyExistingPlan(matched), null, { okLabel: '불러오기' });
+      return;
+    }
+    applyExistingPlan(matched);
+  };
+
+  // "새 일정으로"로 되돌리기: 불러왔던 일정 내용을 비우고, 불러오기 전 위치(지도 클릭 좌표 등)를 복원
+  const resetToNewPlan = () => {
+    setPinLinkPlanId('manual');
+    setNewManualTime("");
+    setNewManualPlaceName("");
+    setNewManualLocalName("");
+    setNewManualFeature("");
+    setNewManualIsAccommodation(false);
+    setNewManualAccommodationDays([]);
+    setNewManualPhotos([]);
+    setNewManualPhoto("");
+    if (typeof setClickedLocation === 'function') setClickedLocation(locationBeforeLoadRef.current);
+    locationBeforeLoadRef.current = null;
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 z-[9000] backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto transition-opacity duration-300" onClick={onClose}>
-      <div className="flex flex-row items-stretch justify-center gap-2 w-full max-w-[720px] my-auto">
+      {/* 넓은 화면: 왼쪽 미니 패널 + 오른쪽 등록 창 / 좁은 화면(휴대폰): 미니 패널이 위로 올라가고 목록은 눌러서 펼침
+          (예전엔 휴대폰에서도 왼쪽에 좁게 끼어 있어 둘 다 답답했다) */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:justify-center gap-2 w-full max-w-sm sm:max-w-[720px] my-auto mx-auto">
 
-        {/* 좌측 미니 패널: Day 선택 + 해당 Day에 이미 등록된 일정 미리보기 (항상 좌측 고정, 화면이 좁으면 함께 축소) */}
+        {/* 미니 패널: Day 선택 + 해당 Day에 이미 등록된 일정 미리보기 */}
         <div
           onClick={e => e.stopPropagation()}
-          className={`w-[30%] max-w-[180px] min-w-0 shrink rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}
+          className={`w-full sm:w-[30%] sm:max-w-[180px] min-w-0 shrink rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[40vh] sm:max-h-[92vh] animate-in zoom-in-95 duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}
         >
           <div className={`p-2 border-b shrink-0 space-y-1.5 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
             <select
@@ -155,13 +141,13 @@ const AddPlaceModal = ({
               <option value="0">보관함</option>
             </select>
             {pinLinkDay && (
-              <div className="flex items-center justify-between px-0.5">
-                <span className={`text-[10px] font-semibold ${textMuted}`}>등록된 일정</span>
+              <button type="button" onClick={() => setIsPreviewOpen(o => !o)} className="w-full flex items-center justify-between px-0.5 sm:cursor-default">
+                <span className={`text-[10px] font-semibold ${textMuted}`}><span className="sm:hidden">{isPreviewOpen ? '▾ ' : '▸ '}</span>등록된 일정</span>
                 <span className="text-[10px] font-bold text-[#007AFF] bg-[#007AFF]/10 px-1.5 py-0.5 rounded-full shrink-0">{dayExistingPlans.length}</span>
-              </div>
+              </button>
             )}
           </div>
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5">
+          <div className={`${isPreviewOpen ? 'block' : 'hidden'} sm:block flex-1 overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5`}>
             {!pinLinkDay ? (
               <p className={`text-center text-[10px] px-1 py-3 ${textMuted}`}>Day를 선택하면<br />일정 미리보기가 나와요</p>
             ) : dayExistingPlans.length === 0 ? (
@@ -180,7 +166,7 @@ const AddPlaceModal = ({
           </div>
         </div>
 
-      <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} flex-1 min-w-0 max-w-sm max-h-[92vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
+      <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} w-full sm:w-auto sm:flex-1 min-w-0 max-w-sm max-h-[85vh] sm:max-h-[92vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
 
         {/* Header */}
         <div className={`sticky top-0 z-10 ${isDarkMode ? 'bg-slate-800/95 border-slate-700' : 'bg-white/95 border-slate-100'} backdrop-blur-xl border-b px-4 pt-3.5 pb-3`}>
@@ -221,7 +207,15 @@ const AddPlaceModal = ({
                   <button
                     key={opt.value}
                     type="button"
-                    onClick={() => setNewManualTheme(opt.value)}
+                    onClick={() => {
+                      setNewManualTheme(opt.value);
+                      // 숙소 테마를 고르면 "숙소로 설정"과 지금 Day 숙박을 자동으로 켜 준다 (따로 체크하는 걸 잊기 쉬움)
+                      if (opt.value === '숙소' && !newManualIsAccommodation) {
+                        setNewManualIsAccommodation(true);
+                        const d = parseInt(pinLinkDay);
+                        if (!isNaN(d) && (!Array.isArray(newManualAccommodationDays) || newManualAccommodationDays.length === 0)) setNewManualAccommodationDays([d]);
+                      }
+                    }}
                     className={`flex items-center justify-center gap-1 py-2.5 px-1.5 rounded-xl border text-[11px] font-semibold transition-all ${selected
                       ? 'border-[#007AFF] bg-[#007AFF]/10 text-[#007AFF]'
                       : (isDarkMode ? 'border-slate-600 bg-slate-900/30 text-slate-300 hover:border-slate-500' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300')}`}
@@ -313,19 +307,20 @@ const AddPlaceModal = ({
             {pinLinkDay && (
               <div className="animate-in fade-in duration-300">
                 <label className={`flex items-center gap-1 text-[11px] font-semibold mb-1 ${textMuted}`}>
-                  <ArrowUpDown className="w-3 h-3" /> 기존 일정 사이 연동
+                  <ArrowUpDown className="w-3 h-3" /> 기존 일정 불러오기(수정)
                 </label>
                 <select
                   value={pinLinkPlanId || 'manual'}
                   onChange={e => {
                     const val = e.target.value;
                     if (val !== 'manual' && val !== '') loadExistingPlan(val);
+                    else if (pinLinkPlanId && pinLinkPlanId !== 'manual') resetToNewPlan();
                     else { setPinLinkPlanId(val); setNewManualTime(""); }
                   }}
                   className={`w-full ${isDarkMode ? 'bg-slate-800' : 'bg-white'} border ${border} rounded-xl px-2.5 py-2 text-xs font-medium outline-none focus:border-[#007AFF] cursor-pointer transition-all ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}
                 >
                   <option value="manual">➕ 새 일정으로 (시간 직접 입력)</option>
-                  {planTimeline.filter(p => String(p.day) === String(pinLinkDay)).map(p => (
+                  {planTimeline.filter(p => p && String(p.day) === String(pinLinkDay) && !isExpenseRecord(p)).map(p => (
                     <option key={p.id} value={p.id}>[{p.time}] {S(p.place)}</option>
                   ))}
                 </select>

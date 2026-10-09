@@ -1,8 +1,9 @@
 import React from 'react';
 import { X, Globe, MapPin, Clock, Home, Copy, Camera, Image as ImageIcon, PenLine } from 'lucide-react';
 import { REGIONS_BY_COUNTRY } from '../utils/constants';
-import { S, compressAndStoreImage } from '../utils/helpers';
+import { S, compressAndStoreImage, isExpenseRecord, findPinForPlan } from '../utils/helpers';
 import SelectOrInput from './SelectOrInput';
+import { usePlaceSearch } from '../hooks/usePlaceSearch';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -19,8 +20,28 @@ const EditPlanModal = ({
   supabaseClient, appUserId, activeTripId,
   planTimeline, setPlanTimeline, currentRestaurants, setCurrentRestaurants,
   setDisplayCityName, saveToDb, showToast, handleCopyLocalName,
+  isKakaoMap, isKakaoMapLoaded, country,
 }) => {
-  if (!editingPlan) return null;
+  // 창을 연 순간의 값(내가 바꾼 칸을 가려내는 기준)과, 그때 일정표에 있던 원본(다른 사람이 그 사이
+  // 고쳤는지 확인하는 기준)을 기억해 둔다. 같은 일정을 다시 열면 새로 잡는다.
+  const openedRef = React.useRef({ id: null, snapshot: null, baseline: null });
+  // 장소 자동완성 (등록 창과 같은 훅). 고르면 장소 이름과 함께 위치(좌표)도 바꾸고, 해외면 현지어 이름도 비어 있을 때 채운다.
+  // 골라 둔 좌표는 저장 때 연결된 핀 위치에 반영한다(_pickedLat/_pickedLng는 화면 전용 — 일정 데이터엔 안 들어감).
+  const placeSearch = usePlaceSearch({
+    isKakaoMap, isKakaoMapLoaded, country, showToast,
+    onPick: ({ name, lat, lng, localName }) => {
+      setEditingPlan(prev => prev ? ({
+        ...prev, place: name,
+        ...(localName && !S(prev.localName).trim() ? { localName } : {}),
+        ...(!isNaN(lat) && !isNaN(lng) ? { _pickedLat: lat, _pickedLng: lng } : {}),
+      }) : prev);
+    },
+  });
+  if (!editingPlan) { openedRef.current = { id: null, snapshot: null, baseline: null }; return null; }
+  if (openedRef.current.id !== editingPlan.id) {
+    const baseline = (Array.isArray(planTimeline) ? planTimeline : []).find(p => p && S(p.id) === S(editingPlan.id)) || null;
+    openedRef.current = { id: editingPlan.id, snapshot: editingPlan, baseline };
+  }
 
   const border = isDarkMode ? 'border-slate-600' : 'border-slate-200';
   const softBg = isDarkMode ? 'bg-slate-900/40' : 'bg-slate-50/70';
@@ -31,7 +52,7 @@ const EditPlanModal = ({
   const emptySlotCount = Math.max(0, 3 - photoCount - (photoCount < 3 ? 1 : 0));
 
   const dayOtherPlans = (Array.isArray(planTimeline) ? planTimeline : [])
-    .filter(p => p && String(p.day) === String(editingPlan.day) && S(p.id) !== S(editingPlan.id))
+    .filter(p => p && String(p.day) === String(editingPlan.day) && S(p.id) !== S(editingPlan.id) && !isExpenseRecord(p))
     .sort((a, b) => S(a.time).localeCompare(S(b.time)));
 
   return (
@@ -39,7 +60,8 @@ const EditPlanModal = ({
       <div className="flex flex-row items-stretch justify-center gap-2 w-full max-w-[720px] my-auto">
 
         {/* 좌측 미니 패널: 같은 Day에 등록된 다른 일정 미리보기 (항상 좌측 고정, 화면이 좁으면 함께 축소) */}
-        {dayOtherPlans.length > 0 && (
+        {/* 미리보기 패널은 항상 표시 — 일정이 없는 Day로 바꿀 때 패널이 사라지면 창 전체가 옆으로 밀려 잘못 누르기 쉬웠다 */}
+        {(
           <div
             onClick={e => e.stopPropagation()}
             className={`w-[30%] max-w-[180px] min-w-0 shrink rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-300 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}
@@ -51,6 +73,9 @@ const EditPlanModal = ({
               <span className="text-[10px] font-bold text-[#007AFF] bg-[#007AFF]/10 px-1.5 py-0.5 rounded-full shrink-0">{dayOtherPlans.length}</span>
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 sm:p-2 space-y-1.5">
+              {dayOtherPlans.length === 0 && (
+                <p className={`text-center text-[10px] leading-relaxed py-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>이 Day엔 다른<br/>일정이 없어요</p>
+              )}
               {dayOtherPlans.map(p => (
                 <div key={p.id} className={`rounded-lg border px-1.5 sm:px-2 py-1.5 leading-tight ${isDarkMode ? 'bg-slate-900/40 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
                   {p.time && p.time !== '99:99' && <div className="text-[10px] font-bold text-[#007AFF]">{S(p.time)}</div>}
@@ -96,7 +121,12 @@ const EditPlanModal = ({
                   <button
                     key={opt.value}
                     type="button"
-                    onClick={() => setEditingPlan({ ...editingPlan, theme: opt.value })}
+                    onClick={() => {
+                      // 숙소 테마를 고르면 숙소 설정과 이 일정 Day 숙박을 자동으로 켜 준다
+                      const toStay = opt.value === '숙소' && !editingPlan.isAccommodation;
+                      const days = Array.isArray(editingPlan.accommodationDays) && editingPlan.accommodationDays.length > 0 ? editingPlan.accommodationDays : [parseInt(editingPlan.day) || 1];
+                      setEditingPlan({ ...editingPlan, theme: opt.value, ...(toStay ? { isAccommodation: true, accommodationDays: days } : {}) });
+                    }}
                     className={`flex items-center justify-center gap-1 py-2.5 px-1.5 rounded-xl border text-[11px] font-semibold transition-all ${selected
                       ? 'border-[#007AFF] bg-[#007AFF]/10 text-[#007AFF]'
                       : (isDarkMode ? 'border-slate-600 bg-slate-900/30 text-slate-300 hover:border-slate-500' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300')}`}
@@ -117,7 +147,25 @@ const EditPlanModal = ({
             </div>
             <div className="col-span-2 space-y-1">
               <label className={`block text-[11px] font-semibold ${textMuted}`}>장소 <MapPin className="w-3 h-3 inline" /></label>
-              <input type="text" placeholder="장소 이름 입력" value={S(editingPlan.place)} onChange={(e) => setEditingPlan({ ...editingPlan, place: e.target.value })} className={`w-full ${softBg} border ${border} rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/10 transition-all ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`} />
+              <div className="relative">
+                <input type="text" placeholder="장소 이름 입력 (검색하면 위치도 바뀌어요)" value={S(editingPlan.place)}
+                  onChange={(e) => { setEditingPlan({ ...editingPlan, place: e.target.value }); placeSearch.onQueryChange(e.target.value); }}
+                  onFocus={() => { if (placeSearch.suggestions.length > 0) placeSearch.setShowSuggestions(true); }}
+                  onBlur={() => setTimeout(() => placeSearch.setShowSuggestions(false), 150)}
+                  className={`w-full ${softBg} border ${border} rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/10 transition-all ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`} />
+                {placeSearch.showSuggestions && placeSearch.suggestions.length > 0 && (
+                  <div className={`absolute left-0 right-0 top-full mt-1 z-20 rounded-xl border shadow-lg overflow-hidden ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+                    {placeSearch.suggestions.map((sg, i) => (
+                      <button key={i} type="button" onMouseDown={e => e.preventDefault()} onClick={() => placeSearch.select(sg)}
+                        className={`w-full text-left px-3 py-2 border-b last:border-b-0 ${isDarkMode ? 'border-slate-700 hover:bg-slate-700' : 'border-slate-100 hover:bg-slate-50'}`}>
+                        <div className={`text-xs font-bold truncate ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>{S(sg.name)}</div>
+                        {sg.address && <div className="text-[10px] text-slate-400 truncate">{S(sg.address)}</div>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {editingPlan._pickedLat != null && <p className="text-[10px] font-semibold text-[#007AFF]">📍 새 위치로 바뀌어요 (저장하면 지도 핀도 이동)</p>}
             </div>
           </section>
 
@@ -301,7 +349,7 @@ const EditPlanModal = ({
             const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
             // [저장 로직 수정] 테마(theme) 데이터가 핀 목록에도 저장되도록 강제 연동합니다.
             // [데이터 보정] 테마가 비어있거나 선택되지 않은 경우 '기타'로 강제 할당하여 저장
-            const planData = {
+            const edited = {
               ...editingPlan,
               country: finalCountry,
               region: finalRegion,
@@ -310,17 +358,41 @@ const EditPlanModal = ({
               review: editingPlan.review || "",
               accommodationDays: editingPlan.isAccommodation ? (Array.isArray(editingPlan.accommodationDays) ? editingPlan.accommodationDays : []) : []
             };
+            // [동시 수정 덮어쓰기 방지] 창을 연 뒤 "내가 실제로 바꾼 칸"만 골라서, 지금 일정표에 있는
+            // 최신 일정 위에 덮어 저장한다. 예전엔 창을 열 때 복사해 둔 일정 전체를 저장해서, 그 사이
+            // 공유 상대가 바꾼 칸(예: 메모)이 내 옛 값으로 소리 없이 되돌아갔다.
+            // 화면 전용 칸(국가/지역 선택 상태, 랜드마크 체크)은 일정 데이터에 넣지 않는다.
+            const UI_ONLY_KEYS = ['countrySelect', 'manualCountry', 'regionSelect', 'manualRegion', 'isLandmark', '_pickedLat', '_pickedLng'];
+            const original = openedRef.current.snapshot || editingPlan;
+            const changed = {};
+            Object.keys(edited).forEach(k => {
+              if (k === 'updatedAt' || UI_ONLY_KEYS.includes(k)) return;
+              if (JSON.stringify(edited[k]) !== JSON.stringify(original[k])) changed[k] = edited[k];
+            });
             const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+            const latest = safePlanTimeline.find(p => p && S(p.id) === S(editingPlan.id)) || original;
+            const baseline = openedRef.current.baseline;
+            const someoneElseChanged = Boolean(baseline) && JSON.stringify(baseline) !== JSON.stringify(latest);
+            // 연결된 핀은 "수정 전" 일정 기준으로 찾는다(핀 번호 우선, 없으면 수정 전 이름) — 예전엔 바뀐 이름으로
+            // 찾아서 이름을 고치면 핀을 못 찾고 연결이 끊겼다.
+            const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+            const linkedPin = findPinForPlan(baseline || original, safeCurrentRestaurants, safePlanTimeline);
+            const planData = { ...latest, ...changed, ...(linkedPin ? { pinId: S(linkedPin.id) } : {}) };
+            UI_ONLY_KEYS.forEach(k => { delete planData[k]; });
+            delete planData.updatedAt; // 저장 시각을 새로 찍게 함 — 옛 시각을 들고 가면 서버의 더 새 값에 밀려 내 수정이 버려질 수 있다
             let updatedTimeline = safePlanTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p).sort((a, b) => S(a.time).localeCompare(S(b.time)));
 
-            const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
-            const matchedIndex = safeCurrentRestaurants.findIndex(r => r && S(r.name).trim() === S(editingPlan.place).trim());
+            const matchedIndex = linkedPin ? safeCurrentRestaurants.findIndex(r => S(r.id) === S(linkedPin.id)) : -1;
             let dbUpdates = { plan_timeline: updatedTimeline };
 
             if (matchedIndex !== -1) {
               const updatedRests = [...safeCurrentRestaurants];
               updatedRests[matchedIndex] = {
                 ...updatedRests[matchedIndex],
+                // 일정 이름을 바꿨으면 핀 이름도 같이 바꿔서 지도·핀 목록에서도 같은 장소로 보이게 함
+                name: Object.prototype.hasOwnProperty.call(changed, 'place') ? S(planData.place) : updatedRests[matchedIndex].name,
+                // 자동완성으로 새 장소를 골랐으면 핀 위치도 그 장소로 옮긴다
+                ...(editingPlan._pickedLat != null ? { lat: editingPlan._pickedLat, lng: editingPlan._pickedLng } : {}),
                 localName: editingPlan.localName ? S(editingPlan.localName) : updatedRests[matchedIndex].localName,
                 signature: editingPlan.features ? S(editingPlan.features) : updatedRests[matchedIndex].signature,
                 img: editingPlan.photo ? S(editingPlan.photo) : updatedRests[matchedIndex].img,
@@ -338,12 +410,17 @@ const EditPlanModal = ({
             // displayCityName: 드롭다운 지역 선택 or 수동입력 텍스트만 허용 (장소명 오염 방지)
             const regionIsFromDropdown = editingPlan.regionSelect && editingPlan.regionSelect !== "수동입력";
             const regionIsManual = editingPlan.regionSelect === "수동입력" && editingPlan.manualRegion;
-            if (finalRegion && (regionIsFromDropdown || regionIsManual)) {
+            // 지역을 실제로 바꿨을 때만 여행 대표 지역을 바꾼다 (예전엔 일정 하나 고칠 때마다 덮어써서,
+            // 다른 도시 일정을 고치면 여행 전체의 대표 지역·날씨·지도가 그 도시로 바뀌었다)
+            if (Object.prototype.hasOwnProperty.call(changed, 'region') && finalRegion && (regionIsFromDropdown || regionIsManual)) {
               setDisplayCityName(S(finalRegion));
               dbUpdates.display_city_name = S(finalRegion);
             }
             saveToDb(dbUpdates);
-            setEditingPlan(null); showToast("일정이 예쁘게 수정됐어요! 📝");
+            setEditingPlan(null);
+            showToast(someoneElseChanged && Object.keys(changed).length > 0
+              ? "📝 저장했어요. 그 사이 다른 사람이 고친 내용과 합쳐서 저장했어요."
+              : "일정이 예쁘게 수정됐어요! 📝");
           }} className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-500/25 transition-all flex items-center justify-center gap-1.5 active:scale-95">
             <PenLine className="w-[18px] h-[18px]" />
             <span>수정 내용 저장</span>

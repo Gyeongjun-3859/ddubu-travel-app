@@ -49,5 +49,8 @@ export function useCurrencyConverter(rates, loadingRates) {
     return Math.round(krwPerUnit).toLocaleString();
   }
 
-  return { amount, focusedCurrency, setFocusedCurrency, handleInputChange, getInputValue, getPlaceholder };
+  // 여행을 바꿨을 때 계산기에 입력해 둔 금액을 비운다
+  function resetAmount() { setAmount(''); setActiveCurrency('KRW'); }
+
+  return { amount, focusedCurrency, setFocusedCurrency, handleInputChange, getInputValue, getPlaceholder, resetAmount };
 }
