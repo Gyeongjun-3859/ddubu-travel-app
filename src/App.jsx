@@ -8,7 +8,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTR
 import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, isExpenseRecord, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
-import { hasGooglePlacesKey, googleNearbyPlaceName } from './utils/googlePlaces';
+import { hasGooglePlacesKey, googleNearbyPlaceNames } from './utils/googlePlaces';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
 import PackingDashboardModal from './components/PackingDashboardModal';
@@ -3064,11 +3064,13 @@ function deletePackingItem(id) {
           // 누른 자리 바로 근처의 장소 이름을 구글에서 찾아 이름 칸에 미리 채운다 (그 사이 직접 입력했으면 덮어쓰지 않음)
           if (hasGooglePlacesKey()) {
             const reqId = ++nearbyNameReqRef.current;
-            googleNearbyPlaceName(e.latlng.lat, e.latlng.lng)
-              .then(name => {
+            // 한국어 이름이 없는 장소는 번역한 이름을 이름 칸에, 원문을 현지어 칸에 (I3)
+            googleNearbyPlaceNames(e.latlng.lat, e.latlng.lng)
+              .then(({ name, localName }) => {
                 if (!name || reqId !== nearbyNameReqRef.current) return;
                 if (S(newManualPlaceNameRef.current).trim() !== '') return;
                 setNewManualPlaceName(name);
+                if (localName) setNewManualLocalName(prev => (S(prev).trim() ? prev : localName));
               })
               .catch(err => console.warn('[근처 장소 이름 조회 실패]', err && err.message));
           }

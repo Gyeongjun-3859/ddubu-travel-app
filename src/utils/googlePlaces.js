@@ -91,3 +91,35 @@ export async function googleNearbyPlaceName(lat, lng, languageCode = 'ko') {
   const p = Array.isArray(data.places) && data.places[0];
   return (p && p.displayName && p.displayName.text) ? p.displayName.text : '';
 }
+
+// 현지어 이름 → 한국어 번역 (Cloud Translation API v2, Places와 같은 키 사용)
+const HANGUL_RE = /[가-힣]/;
+export async function translateToKorean(text) {
+  if (!KEY) throw new Error('no-key');
+  const res = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(KEY)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ q: text, target: 'ko', format: 'text' }),
+  });
+  if (!res.ok) throw new Error(`translate-${res.status}`);
+  const data = await res.json();
+  const t = data && data.data && Array.isArray(data.data.translations) && data.data.translations[0];
+  return t && t.translatedText ? String(t.translatedText).trim() : '';
+}
+
+// 지도를 눌러 핀을 만들 때 이름 칸 미리 채우기(I3).
+// 구글에 한국어 이름이 없는 장소는 현지어 이름이 와서 이름 칸에 그대로 들어갔다 →
+// 원문은 현지어 칸에, 이름 칸엔 한국어 번역을 넣는다. 번역이 실패하면 이름 칸에도 원문.
+export async function googleNearbyPlaceNames(lat, lng) {
+  const name = await googleNearbyPlaceName(lat, lng, 'ko');
+  if (!name || HANGUL_RE.test(name)) return { name, localName: '' };
+  try {
+    const ko = await translateToKorean(name);
+    // 영어 상호처럼 번역해도 그대로면 현지어 칸에 같은 글자를 또 넣지 않는다
+    if (!ko || ko === name) return { name, localName: '' };
+    return { name: ko, localName: name };
+  } catch (e) {
+    console.warn('[장소 이름 번역 실패]', e && e.message);
+    return { name, localName: name };
+  }
+}
