@@ -483,7 +483,14 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
       }
 
       if (imageFile) {
-        compressAndStoreImage(supabaseClient, appUserId, activeTripId, imageFile, (compressedBase64) => {
+        // [버그 수정] 이 핸들러는 앱 시작 때 한 번 등록돼서, 예전엔 그때 값(로그인 전 → 클라이언트 없음,
+        // 여행 'default')을 계속 써서 로그인 사용자도 사진이 저장소 대신 base64로 DB에 통째로 들어갔다.
+        // 지금 로그인·여행 값은 ref/엔진에서 매번 새로 읽는다.
+        const client = supabaseClientRef.current;
+        const uid = appUserIdRef.current;
+        const tripId = engineRef.current ? engineRef.current.getActiveTrip() : null;
+        compressAndStoreImage(client, uid, tripId, imageFile, (compressedBase64) => {
+          if (!compressedBase64) return;
           const ctx = activeContextRef.current;
           if (ctx.editingPlan) {
             setEditingPlan(prev => {
@@ -494,7 +501,14 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
             });
             showToast("📋 복사된 이미지가 붙여넣기 되었습니다!");
           } else if (ctx.isAddPlaceModalOpen) {
-            setNewManualPhoto(compressedBase64);
+            // 등록 창은 사진 여러 장(최대 3장) 목록에 추가 (예전엔 대표 사진 1장 칸에만 넣어 다른 사진이 무시됐다)
+            setNewManualPhotos(prev => {
+              const list = Array.isArray(prev) ? prev : [];
+              if (list.length >= 3) { showToast("사진은 최대 3장까지 추가할 수 있어요."); return list; }
+              const next = [...list, compressedBase64];
+              setNewManualPhoto(next[0]);
+              return next;
+            });
             showToast("📋 핀 사진에 이미지가 붙여넣어 졌습니다!");
           } else if (ctx.activeTab === 'plan') {
             setNewPlanPhotos(prev => {
@@ -507,7 +521,15 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
       }
     };
     window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
+    // 사진 처리/업로드 실패 안내 (helpers의 PHOTO_FAILED_EVENT)
+    const handlePhotoFailed = (ev) => {
+      const reason = ev && ev.detail && ev.detail.reason;
+      showToastRef.current(reason === 'decode' || reason === 'read'
+        ? "이 사진 형식은 열 수 없어요. (아이폰 HEIC 사진이면 '가장 호환성 높은 형식'으로 바꾸거나 캡처해서 올려 주세요)"
+        : "사진을 올리지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.");
+    };
+    window.addEventListener('ddubu-photo-failed', handlePhotoFailed);
+    return () => { window.removeEventListener('paste', handlePaste); window.removeEventListener('ddubu-photo-failed', handlePhotoFailed); };
   }, []);
 
   const syncCountryRegionFromCityName = useCallback((cityName, timeline = []) => {

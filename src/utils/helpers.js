@@ -107,11 +107,21 @@ export function openGoogleMapsNav(lat, lng, mode = 'driving') {
   openExternalUrl(url);
 }
 
+// 사진 처리/업로드가 실패하면 빈 값('')을 넘기지 않고 이 이벤트로 알린다 (App이 받아서 안내 토스트).
+// 예전엔 실패 시 callback('')이 불려 사진 칸에 빈 사진이 끼어들었고, HEIC(아이폰)처럼 브라우저가 못 읽는
+// 파일은 img.onload가 안 불려 아무 반응이 없었다.
+export const PHOTO_FAILED_EVENT = 'ddubu-photo-failed';
+function notifyPhotoFailed(reason) {
+  try { window.dispatchEvent(new CustomEvent(PHOTO_FAILED_EVENT, { detail: { reason } })); } catch (e) {}
+}
+
 export function compressImage(file, callback) {
   const reader = new FileReader();
+  reader.onerror = () => notifyPhotoFailed('read');
   reader.readAsDataURL(file);
   reader.onload = (e) => {
     const img = new Image();
+    img.onerror = () => notifyPhotoFailed('decode');
     img.src = e.target.result;
     img.onload = () => {
       const canvas = document.createElement('canvas');
@@ -133,9 +143,11 @@ export function compressAndStoreImage(supabaseClient, appUserId, folderId, file,
   }
 
   const reader = new FileReader();
+  reader.onerror = () => notifyPhotoFailed('read');
   reader.readAsDataURL(file);
   reader.onload = (e) => {
     const img = new Image();
+    img.onerror = () => notifyPhotoFailed('decode');
     img.src = e.target.result;
     img.onload = () => {
       const canvas = document.createElement('canvas');
@@ -145,16 +157,16 @@ export function compressAndStoreImage(supabaseClient, appUserId, folderId, file,
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       canvas.toBlob(async (blob) => {
-        if (!blob) { callback(''); return; }
+        if (!blob) { notifyPhotoFailed('encode'); return; }
         try {
           const path = `${folderId || appUserId}/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.jpg`;
           const { error } = await supabaseClient.storage.from('trip-photos').upload(path, blob, { contentType: 'image/jpeg' });
           if (error) throw error;
           const { data } = supabaseClient.storage.from('trip-photos').getPublicUrl(path);
-          callback(data?.publicUrl || '');
+          if (data?.publicUrl) callback(data.publicUrl); else notifyPhotoFailed('upload');
         } catch (err) {
           console.error('사진 업로드 실패', err);
-          callback('');
+          notifyPhotoFailed('upload');
         }
       }, 'image/jpeg', 0.85);
     };
