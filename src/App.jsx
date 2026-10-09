@@ -974,6 +974,8 @@ async function confirmDeleteTrip() {
     const tripToRemove = trips.find(t => t.id === tripToDelete);
     const updatedTrips = trips.filter(t => t.id !== tripToDelete);
     setTrips(updatedTrips);
+    // 이 기기에 남은 이 여행 캐시/못 보낸 변경도 지운다
+    if (engineRef.current) engineRef.current.forgetTrip(tripToDelete);
     
     try {
         if (supabaseClient && appUserId !== "Guest") {
@@ -986,6 +988,22 @@ async function confirmDeleteTrip() {
                   await supabaseClient.from('travel_state').update({ shared_users: newShared }).eq('id', tripToDelete);
                }
             } else {
+               // 주인이 지우는 경우: 이 여행 사진 파일(trip-photos/<여행id>/)과 보내 둔 초대장도 같이 정리한다.
+               // (예전엔 여행 행만 지워서 저장소에 사진이 계속 쌓이고, 받은 사람에겐 없는 여행 초대가 남았다)
+               // 공유받은 사람 목록에 남은 항목은 그쪽 앱이 '접근 불가'를 감지해 스스로 정리한다.
+               // 저장소엔 '목록 보기' 권한이 없어서 list()가 늘 빈 값 → 여행 데이터에 들어 있는 사진 주소를 모아 지운다.
+               // (삭제 권한은 올린 사람 본인 것만 있어서, 참여자가 올린 사진은 남을 수 있다)
+               try {
+                 const { data: row } = await supabaseClient.from('travel_state').select('*').eq('id', tripToDelete).single();
+                 const found = JSON.stringify(row || {}).match(/\/trip-photos\/[^"?\s]+/g) || [];
+                 const paths = Array.from(new Set(found.map(u => decodeURIComponent(u.replace('/trip-photos/', '')))));
+                 if (paths.length > 0) {
+                   const { error: rmErr } = await supabaseClient.storage.from('trip-photos').remove(paths);
+                   if (rmErr) console.warn('여행 사진 정리 실패', rmErr);
+                 }
+               } catch (e) { console.warn('여행 사진 정리 실패', e); }
+               await supabaseClient.from('invites').delete().eq('from_id', appUserId).eq('trip_id', tripToDelete);
+               setSentInvites(prev => prev.filter(i => S(i.trip_id) !== S(tripToDelete)));
                await supabaseClient.from('travel_state').delete().eq('id', tripToDelete);
             }
         } else {
@@ -2705,7 +2723,7 @@ function deletePackingItem(id) {
     setTrips(filtered);
     if (engineRef.current.getActiveTrip() === tripId) setActiveTripId(nextId);
     if (supabaseClient) supabaseClient.from('profiles').update({ trips: filtered, activeTripId: nextId }).eq('app_user_id', uid).then();
-    showToast("⚠️ 관리자에 의해 공유가 중단되었습니다.");
+    showToast("⚠️ 공유가 중단되었거나 여행이 삭제되어 목록에서 뺐어요.");
   };
   useEffect(() => {
     if (!supabaseClient || !appUserId || appUserId === 'Guest' || !activeTripId) return;
