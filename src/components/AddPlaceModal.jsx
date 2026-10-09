@@ -26,13 +26,14 @@ const AddPlaceModal = ({
   newManualIsAccommodation, setNewManualIsAccommodation,
   newManualAccommodationDays, setNewManualAccommodationDays,
   manualFileInputRef, supabaseClient, appUserId, activeTripId,
-  handleManualPlaceAdd, currentRestaurants, showConfirm, country,
+  handleManualPlaceAdd, currentRestaurants, showConfirm, country, onPickArea,
 }) => {
   // 장소 자동완성은 일정 수정 창과 같은 훅을 쓴다. 해외 장소를 구글에서 고르면 현지어 이름도 (비어 있을 때) 채운다.
   const { suggestions: placeSuggestions, showSuggestions, setShowSuggestions, onQueryChange, select: selectSuggestion } = usePlaceSearch({
     isKakaoMap, isKakaoMapLoaded, country, showToast, biasPins: currentRestaurants,
-    onPick: ({ name, lat, lng, localName }) => {
+    onPick: ({ name, lat, lng, localName, area }) => {
       setNewManualPlaceName(name);
+      if (typeof onPickArea === 'function') onPickArea(area || null);
       if (localName && !S(newManualLocalNameRef.current).trim()) setNewManualLocalName(localName);
       if (!isNaN(lat) && !isNaN(lng) && typeof setClickedLocation === 'function') {
         setClickedLocation(prev => ({ ...(prev || {}), lat, lng }));

@@ -52,15 +52,25 @@ export const LOCAL_LANG_BY_COUNTRY = {
 export async function googlePlaceLocation(placeId, sessionToken, languageCode = 'ko', localLanguageCode = null) {
   if (!KEY) throw new Error('no-key');
   const lang = localLanguageCode || languageCode;
-  const fields = localLanguageCode ? 'location,formattedAddress,displayName' : 'location,formattedAddress';
+  // addressComponents: 나라 코드·도시 이름 — 지역을 안 정한 여행에 첫 장소 기준으로 국가·지역을 채울 때 씀(I2)
+  const fields = localLanguageCode ? 'location,formattedAddress,addressComponents,displayName' : 'location,formattedAddress,addressComponents';
   const url = `${BASE}/places/${encodeURIComponent(placeId)}?languageCode=${lang}&sessionToken=${encodeURIComponent(sessionToken)}`;
   const res = await fetch(url, { headers: { 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': fields } });
   if (!res.ok) throw new Error(`places-details-${res.status}`);
   const data = await res.json();
   if (!data.location) throw new Error('places-details-no-location');
+  const comps = Array.isArray(data.addressComponents) ? data.addressComponents : [];
+  const compOf = (type) => comps.find(c => Array.isArray(c.types) && c.types.includes(type));
+  const countryComp = compOf('country');
+  // 도시 이름은 한국어로 받았을 때만 쓴다(현지어면 앱 지역 이름과 비교할 수 없음). 작은 단위 → 큰 단위 순서
+  const areaNames = lang === 'ko'
+    ? ['locality', 'administrative_area_level_2', 'administrative_area_level_1'].map(t => compOf(t)?.longText).filter(Boolean)
+    : [];
   return {
     lat: data.location.latitude, lng: data.location.longitude, address: data.formattedAddress || '',
     localName: (localLanguageCode && data.displayName && data.displayName.text) ? data.displayName.text : '',
+    countryCode: countryComp ? (countryComp.shortText || '') : '',
+    areaNames,
   };
 }
 

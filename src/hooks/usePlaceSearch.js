@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { S } from '../utils/helpers';
+import { resolvePlaceArea } from '../utils/placeArea';
 import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation, LOCAL_LANG_BY_COUNTRY } from '../utils/googlePlaces';
 
 // 장소 이름 자동완성 (국내: 카카오 / 해외: 구글 → 실패하면 OSM). 일정 등록 창과 일정 수정 창이 같이 쓴다.
@@ -29,7 +30,7 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
         if (status === kakao.maps.services.Status.OK && Array.isArray(data)) {
           setSuggestions(data.slice(0, 5).map(d => ({
             name: d.place_name, address: d.road_address_name || d.address_name || '',
-            lat: parseFloat(d.y), lng: parseFloat(d.x),
+            lat: parseFloat(d.y), lng: parseFloat(d.x), source: 'kakao',
           })));
           setShowSuggestions(true);
         } else { setSuggestions([]); }
@@ -75,19 +76,22 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
     reqRef.current++; // 선택 직후 도착하는 검색 결과 무시
     let { lat, lng } = s;
     let localName = '';
+    // 장소의 국가·지역(I2) — 카카오는 주소로, 구글은 상세 요청의 주소 구성요소로
+    let area = s.source === 'kakao' ? resolvePlaceArea({ kakaoAddress: s.address }) : null;
     // 구글 후보는 좌표가 없어서 선택 시점에 조회 (세션 종료 → 새 토큰). 해외면 같은 요청으로 현지어 이름도 받음
     if (s.placeId && (isNaN(lat) || isNaN(lng))) {
       const localLang = country && country !== '한국' ? (LOCAL_LANG_BY_COUNTRY[country] || 'en') : null;
       try {
         const loc = await googlePlaceLocation(s.placeId, sessionRef.current, 'ko', localLang);
         lat = loc.lat; lng = loc.lng; localName = loc.localName || '';
+        area = resolvePlaceArea({ countryCode: loc.countryCode, names: loc.areaNames });
       } catch (e) {
         console.warn('[구글 좌표 조회 실패]', e && e.message);
         if (typeof showToast === 'function') showToast("위치를 가져오지 못했어요. 지도를 눌러 직접 지정해주세요.");
       }
       sessionRef.current = newPlacesSessionToken();
     }
-    if (typeof onPick === 'function') onPick({ name: s.name, lat, lng, localName: localName && localName !== s.name ? localName : '' });
+    if (typeof onPick === 'function') onPick({ name: s.name, lat, lng, localName: localName && localName !== s.name ? localName : '', area });
   };
 
   return { suggestions, showSuggestions, setShowSuggestions, onQueryChange, select };

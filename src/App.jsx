@@ -412,6 +412,8 @@ const MainApp = () => {
   // [개인 항목] 내 개인용(🔒) 준비물·쇼핑은 여행 데이터가 아니라 내 계정 행에만 저장한다(sync/personalItems).
   // 화면 목록 = 여행 데이터의 공동 항목 + 내 개인 항목. lastSharedRef는 여행 데이터 쪽 최근 값(정리 전 원본).
   const lastSharedRef = useRef({ tripId: null, packing_list: [], shopping_list: [] });
+  const pickedAreaRef = useRef(null); // 등록 창에서 검색으로 고른 장소의 국가·지역(I2)
+  useEffect(() => { if (isAddPlaceModalOpen) pickedAreaRef.current = null; }, [isAddPlaceModalOpen]); // 창을 새로 열면 이전에 고른 값 버림
   const applyListViewsRef = useRef(() => {});
   const personalRef = useRef(null);
   if (!personalRef.current) {
@@ -1503,6 +1505,10 @@ async function confirmDeleteTrip() {
 
   function handleManualPlaceAdd(isFromMap = true) {
     if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
+    // 검색으로 고른 장소의 국가·지역(I2). 여행에 국가·지역이 없을 때 이 값으로 채운다.
+    const area = pickedAreaRef.current;
+    pickedAreaRef.current = null;
+    const tripAreaUnset = !displayCityName || displayCityName === '선택된 지역 없음';
     
     let pLat = clickedLocation?.lat || null;
     let pLng = clickedLocation?.lng || null;
@@ -1520,8 +1526,9 @@ async function confirmDeleteTrip() {
     const placeId = clickedLocation?.id || `manual-${Date.now()}`;
     const finalImgs = newManualPhotos.length > 0 ? newManualPhotos : (newManualPhoto ? [newManualPhoto] : []);
     // country는 실제 국가명(globalPlanCountry), city는 지역명(displayCityName)으로 올바르게 저장
-    const pinCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || S(displayCityName));
-    const pinCity = displayCityName && displayCityName !== '선택된 지역 없음' ? displayCityName : S(globalPlanRegion === '수동입력' ? globalManualRegion : globalPlanRegion);
+    // (여행 국가가 없을 때 예전엔 '선택된 지역 없음'이 국가로 저장됐다 → 고른 장소의 국가로)
+    const pinCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || area?.country || (tripAreaUnset ? '' : S(displayCityName)));
+    const pinCity = !tripAreaUnset ? displayCityName : (S(globalPlanRegion === '수동입력' ? globalManualRegion : globalPlanRegion) || (area && (!pinCountry || pinCountry === area.country) ? area.region : ''));
     const newPlace = {
       id: S(placeId), lat: pLat, lng: pLng, country: pinCountry, city: pinCity,
       name: S(newManualPlaceName), localName: S(newManualLocalName), signature: newManualFeature ? S(newManualFeature) : "직접 추가한 장소",
@@ -1547,8 +1554,13 @@ async function confirmDeleteTrip() {
     
     if (pinLinkDay) {
       // 전역 여행 국가/지역을 기본값으로 사용 (핀 데이터보다 globalPlanCountry/globalPlanRegion 우선)
-      const targetCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || S(globalPlanCountry));
-      const targetRegion = globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : (globalManualRegion || S(globalPlanRegion));
+      let targetCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || S(globalPlanCountry));
+      let targetRegion = globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : (globalManualRegion || S(globalPlanRegion));
+      // 여행에 국가·지역이 비어 있으면 고른 장소 기준으로 (국가를 이미 골랐으면 같은 나라일 때만 지역을 채움)
+      if (area) {
+        if (!targetRegion && area.region && (!targetCountry || targetCountry === area.country)) targetRegion = area.region;
+        if (!targetCountry && area.country) targetCountry = area.country;
+      }
 
       const pinFinalImgs = newManualPhotos.length > 0 ? newManualPhotos : (newManualPhoto ? [newManualPhoto] : []);
       if (pinLinkPlanId && pinLinkPlanId !== 'manual') {
@@ -1596,6 +1608,24 @@ async function confirmDeleteTrip() {
     
     setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualAccommodationDays([]); setNewManualIsLandmark(false); setNewManualTheme("기타");
     setPinLinkDay(""); setPinLinkPlanId(""); 
+
+    // 지역을 안 정한 여행이면 이 장소의 지역으로 여행 지역을 설정할지 물어본다(I2)
+    if (tripAreaUnset && area && area.region) {
+      showConfirm(
+        `이 여행 지역을 '${area.region}'(으)로 설정할까요?
+(현지어 이름·통화·날씨가 이 지역 기준으로 맞춰져요)`,
+        () => {
+          // 지역 이름이 앱 목록에 없을 때 국가를 맞추는 데 쓰이는 값
+          if (area.country && Object.keys(REGIONS_BY_COUNTRY).includes(area.country)) {
+            try { localStorage.setItem('my_travel_global_country', area.country); } catch (e) {}
+          }
+          fetchCityRestaurants(area.region);
+          showToast(`🌏 여행 지역을 '${area.region}'(으)로 설정했어요.`);
+        },
+        null,
+        { okLabel: '설정하기' }
+      );
+    }
   }
 
   function handleManualPhotoUpload(e) {
@@ -4183,6 +4213,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         manualFileInputRef={manualFileInputRef} supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId}
         handleManualPlaceAdd={handleManualPlaceAdd} handleCopyLocalName={handleCopyLocalName}
         currentRestaurants={currentRestaurants} showConfirm={showConfirm} country={resolvedGlobalCountry}
+        onPickArea={(area) => { pickedAreaRef.current = area; }}
       />
 
       <MyPinsModal
