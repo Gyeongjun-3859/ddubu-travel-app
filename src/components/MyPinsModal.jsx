@@ -2,6 +2,7 @@ import React from 'react';
 import { X, MapPin, Compass, Trash2 } from 'lucide-react';
 import { S, openGoogleMapsNav, findPlansForPin } from '../utils/helpers';
 import { tombstone } from '../sync/tripDataModel';
+import TripImg from './TripImg';
 
 const MyPinsModal = ({
   isReadOnly, isOpen, onClose, cardBg, isDarkMode,
@@ -76,7 +77,7 @@ const MyPinsModal = ({
 
                       {pin.img && !S(pin.img).includes("unsplash") ? (
                         <div className="w-full h-20 mb-1.5 rounded-lg overflow-hidden relative shrink-0 cursor-pointer" onClick={() => { const pinImgs = Array.isArray(pin.imgs) && pin.imgs.length > 0 ? pin.imgs : (pin.img ? [pin.img] : []); if (pinImgs.length > 0) setViewPhoto({ imgs: pinImgs, idx: 0 }); }}>
-                          <img src={pin.img} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
+                          <TripImg src={pin.img} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
                           {pin.isAccommodation && <div className="absolute top-1 left-1 bg-yellow-400 text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm z-10">숙소</div>}
                           <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors duration-200 flex items-center justify-center">
                             <span className="opacity-0 hover:opacity-100 text-white text-[9px] font-bold bg-black/50 px-2 py-0.5 rounded-full transition-opacity">🔍 크게 보기</span>
@@ -168,7 +169,7 @@ const MyPinsModal = ({
           <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
             {pinQuickView.img && !S(pinQuickView.img).includes("unsplash") && (
               <div className="w-full h-44 relative cursor-pointer" onClick={() => { const qImgs = Array.isArray(pinQuickView.imgs) && pinQuickView.imgs.length > 0 ? pinQuickView.imgs : (pinQuickView.img ? [pinQuickView.img] : []); setPinQuickView(null); if (qImgs.length > 0) setViewPhoto({ imgs: qImgs, idx: 0 }); }}>
-                <img src={pinQuickView.img} className="w-full h-full object-cover" alt="" />
+                <TripImg src={pinQuickView.img} className="w-full h-full object-cover" alt="" />
                 <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center">
                   <span className="opacity-0 hover:opacity-100 text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full transition-opacity">🔍 크게 보기</span>
                 </div>

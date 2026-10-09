@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
+import TripImg from './TripImg';
 
 const PhotoViewerModal = ({
   viewPhoto, setViewPhoto, setViewPhotoAnim,
@@ -204,7 +205,7 @@ const PhotoViewerModal = ({
                    if (offset < 0) goPhotoPrev(imgs, idx);
                    else if (offset > 0) goPhotoNext(imgs, idx);
                  }}>
-              <img
+              <TripImg
                 ref={offset === 0 ? zoomImgRef : null}
                 src={imgs[ci]}
                 alt="" draggable={false}
@@ -237,7 +238,7 @@ const PhotoViewerModal = ({
                    opacity: i === idx ? 1 : 0.55,
                    transform: i === idx ? 'scale(1.12)' : 'scale(1)',
                    boxShadow: i === idx ? '0 4px 16px rgba(0,0,0,0.7)' : 'none' }}>
-              <img src={img} className="w-full h-full object-cover" alt="" draggable={false} />
+              <TripImg src={img} className="w-full h-full object-cover" alt="" draggable={false} />
             </div>
           ))}
         </div>

@@ -4,6 +4,7 @@ import { REGIONS_BY_COUNTRY } from '../utils/constants';
 import { S, compressAndStoreImage } from '../utils/helpers';
 import SelectOrInput from './SelectOrInput';
 import TransitNoteModal from './TransitNoteModal';
+import TripImg from './TripImg';
 
 const PlanFormPanel = ({
   planAddFormRef, textMuted, isDarkMode, inputBg, appTheme,
@@ -227,7 +228,7 @@ const PlanFormPanel = ({
           <div className="flex gap-1.5">
             {newPlanPhotos.map((img, i) => (
               <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border flex-shrink-0 shadow-sm cursor-pointer" style={{borderColor: i === 0 ? '#6366f1' : undefined}} onClick={e => { e.stopPropagation(); if (i !== 0) setNewPlanPhotos(prev => { const arr = [...prev]; arr.splice(i, 1); arr.unshift(img); return arr; }); }}>
-                <img src={img} className="w-full h-full object-cover" alt="" />
+                <TripImg src={img} className="w-full h-full object-cover" alt="" />
                 <button type="button" onClick={e => { e.stopPropagation(); setNewPlanPhotos(prev => prev.filter((_, idx) => idx !== i)); }} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] leading-none hover:bg-black/90"><X className="w-[1em] h-[1em] inline" /></button>
                 <div className={`absolute bottom-0 left-0 right-0 text-white text-[7px] text-center font-bold py-0.5 ${i === 0 ? 'bg-indigo-600/80' : 'bg-black/40'}`}>{i === 0 ? '대표' : '탭=대표'}</div>
               </div>

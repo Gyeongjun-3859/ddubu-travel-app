@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Check, Copy, Calendar, ArrowUpDown, Camera, Image as ImageIcon, Bookmark, MapPinPlus, Link as LinkIcon } from 'lucide-react';
 import { S, compressAndStoreImage, isExpenseRecord, findPinForPlan } from '../utils/helpers';
 import { usePlaceSearch } from '../hooks/usePlaceSearch';
+import TripImg from './TripImg';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -397,7 +398,7 @@ const AddPlaceModal = ({
                        setNewManualPhotos(prev => { const next = [...prev]; const [sel] = next.splice(i, 1); next.unshift(sel); setNewManualPhoto(next[0]); return next; });
                        showToast('⭐ 대표사진으로 설정했습니다!');
                      }}>
-                  <img src={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="" />
+                  <TripImg src={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="" />
                   {i === 0 && <span className="absolute top-1.5 left-1.5 bg-black/60 backdrop-blur-sm text-white text-[9px] px-1.5 py-0.5 rounded-md font-medium">대표</span>}
                   <button type="button" onClick={e => { e.stopPropagation(); setNewManualPhotos(prev => { const n = prev.filter((_, j) => j !== i); setNewManualPhoto(n[0] || ''); return n; }); }} className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-rose-500 transition-colors">
                     <X className="w-[14px] h-[14px]" />

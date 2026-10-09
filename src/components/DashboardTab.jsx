@@ -6,6 +6,7 @@ import { S, getAccommodationTransitFrom } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 import TransitRouteViewModal from './TransitRouteViewModal';
 import LanguageModal from './LanguageModal';
+import TripImg from './TripImg';
 
 const THEME_DEFAULT_PHOTO = {
   '식당': 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80',
@@ -149,7 +150,7 @@ const DashboardTab = ({
                   className={`group relative w-[220px] shrink-0 snap-start overflow-hidden rounded-xl border cursor-pointer transition-all ${isDarkMode ? 'bg-slate-800' : 'bg-white'} ${isActive ? 'border-[#007AFF] shadow-md' : (isDarkMode ? 'border-slate-700 md:hover:border-[#007AFF]/50' : 'border-slate-200/70 md:hover:shadow-md md:hover:border-[#007AFF]/40')}`}
                 >
                   <div className="relative h-28 bg-slate-100 dark:bg-slate-700">
-                    <img
+                    <TripImg
                       src={photo}
                       alt=""
                       className="h-full w-full object-cover transition-transform duration-500 md:group-hover:scale-105"

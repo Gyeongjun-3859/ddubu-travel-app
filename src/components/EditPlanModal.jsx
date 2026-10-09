@@ -4,6 +4,7 @@ import { REGIONS_BY_COUNTRY } from '../utils/constants';
 import { S, compressAndStoreImage, isExpenseRecord, findPinForPlan } from '../utils/helpers';
 import SelectOrInput from './SelectOrInput';
 import { usePlaceSearch } from '../hooks/usePlaceSearch';
+import TripImg from './TripImg';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -245,7 +246,7 @@ const EditPlanModal = ({
                   className={`relative aspect-square rounded-2xl overflow-hidden border ${border} group cursor-pointer`}
                   onClick={() => { if (i !== 0) setEditingPlan(prev => { const imgs = Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : []); const arr = [...imgs]; arr.splice(i, 1); arr.unshift(img); return { ...prev, photos: arr, photo: arr[0] }; }); }}
                 >
-                  <img src={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="" />
+                  <TripImg src={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="" />
                   {i === 0 && <span className="absolute top-1.5 left-1.5 bg-black/60 backdrop-blur-sm text-white text-[9px] px-1.5 py-0.5 rounded-md font-medium">대표</span>}
                   <button type="button" onClick={e => { e.stopPropagation(); setEditingPlan(prev => { const imgs = (Array.isArray(prev.photos) ? prev.photos : (prev.photo ? [prev.photo] : [])).filter((_, idx) => idx !== i); return { ...prev, photos: imgs, photo: imgs[0] || "" }; }); }} className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-rose-500 transition-colors">
                     <X className="w-[14px] h-[14px]" />

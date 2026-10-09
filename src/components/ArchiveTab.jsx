@@ -1,6 +1,7 @@
 import React from 'react';
 import { Camera, ArrowLeft, Trash2 } from 'lucide-react';
 import { S } from '../utils/helpers';
+import TripImg from './TripImg';
 
 const ArchiveTab = ({
   activeTab, trips, archiveFilterLocation, setArchiveFilterLocation,
@@ -76,7 +77,7 @@ const ArchiveTab = ({
                       {/* 대표 사진 (완료할 때 기록된 경우) */}
                       {trip.coverPhoto && (
                         <div className="-mx-4 -mt-4 mb-3 h-28 overflow-hidden rounded-t-3xl">
-                          <img src={trip.coverPhoto} alt="" className="w-full h-full object-cover" />
+                          <TripImg src={trip.coverPhoto} alt="" className="w-full h-full object-cover" />
                         </div>
                       )}
                       <div className="flex justify-between items-start mb-3">

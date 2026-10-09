@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, ShoppingBag } from 'lucide-react';
 import { S } from '../utils/helpers';
+import TripImg from './TripImg';
 
 const ShoppingDashboardModal = ({
   isOpen, onClose, isDarkMode, textMain, textMuted, inputBg,
@@ -75,7 +76,7 @@ const ShoppingDashboardModal = ({
                                 }} className={`cursor-pointer flex flex-col rounded-lg border shadow-sm overflow-hidden transition-all duration-300 ${item.isChecked ? (isDarkMode ? 'bg-slate-800 border-slate-700 opacity-50 grayscale' : 'bg-slate-100 border-slate-200 opacity-50 grayscale') : (isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200')}`}>
                                   <div className="w-full aspect-square relative bg-slate-100 dark:bg-slate-700/50 flex items-center justify-center overflow-hidden">
                                     {item.img && !S(item.img).includes("unsplash") ? (
-                                      <img src={item.img} alt={item.text} className="w-full h-full object-cover" />
+                                      <TripImg src={item.img} alt={item.text} className="w-full h-full object-cover" />
                                     ) : (
                                       <span className="text-xl opacity-40">{themeKey === '쇼핑' ? '🛍️' : themeKey === '식당' ? '🍽️' : themeKey === '관광지' ? '📸' : themeKey === '숙소' ? '🏠' : '🎁'}</span>
                                     )}

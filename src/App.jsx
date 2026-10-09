@@ -43,6 +43,7 @@ import { useMapSdkLoader } from './hooks/useMapSdkLoader';
 import { useUndoRedo } from './hooks/useUndoRedo';
 import { queuePhotoCleanup, runPhotoCleanup, extractPhotoPaths } from './utils/photoCleanup';
 import { createPersonalStore, clearPersonalCache, PERSONAL_FIELDS } from './sync/personalItems';
+import { setPhotoClient, clearSignedPhotoCache, prefetchPhotoPaths, resolvePhotoUrl, subscribePhotoUrls } from './utils/photoUrls';
 import { useAppSettings } from './hooks/useAppSettings';
 import { usePhotoViewer } from './hooks/usePhotoViewer';
 import { usePanelResize } from './hooks/usePanelResize';
@@ -438,6 +439,14 @@ const MainApp = () => {
       onChange: () => applyListViewsRef.current(),
     });
   }
+  // [사진 비공개] 로그인한 사람만 저장소 사진의 서명 주소를 받는다(utils/photoUrls)
+  useEffect(() => {
+    setPhotoClient(supabaseClient && appUserId && appUserId !== 'Guest' ? supabaseClient : null);
+  }, [supabaseClient, appUserId]);
+  // 서명 주소가 새로 도착하면 지도 마커(문자열 HTML이라 자동으로 안 바뀜)를 다시 그린다
+  const [photoUrlTick, setPhotoUrlTick] = useState(0);
+  useEffect(() => subscribePhotoUrls(() => setPhotoUrlTick(t => t + 1)), []);
+
   useEffect(() => {
     if (supabaseClient && appUserId && appUserId !== 'Guest') {
       personalRef.current.start(appUserId);
@@ -1447,6 +1456,7 @@ async function confirmDeleteTrip() {
     clearAccountTripCache();
     personalRef.current.stop();
     clearPersonalCache();
+    clearSignedPhotoCache();
     showToast("로그아웃 되었습니다.");
   }
 
@@ -3037,6 +3047,8 @@ function deletePackingItem(id) {
       setTravelStartDate(view.travel_start_date ? S(view.travel_start_date) : new Date().toISOString().split('T')[0]);
       setFlights(view.flights || { outbound: null, inbound: null });
       if (typeof view.max_day === 'number' && view.max_day >= 1) setMaxDay(view.max_day);
+      // 이 여행 사진들의 서명 주소를 한 번에 미리 받아 둔다
+      if (!isGuestUser) prefetchPhotoPaths(extractPhotoPaths(view));
       lastSharedRef.current = {
         tripId,
         packing_list: Array.isArray(view.packing_list) ? view.packing_list : [],
@@ -3262,9 +3274,9 @@ function deletePackingItem(id) {
 
       if (showMapPhotos && rest.img && !S(rest.img).includes("unsplash")) {
         if (isLand) {
-            html = `<div style="width:44px;height:44px;border-radius:50%;border:4px solid #fbbf24;background-image:url('${escapeHtml(rest.img)}');background-size:cover;background-position:center;position:relative;box-shadow:0 0 10px rgba(0,0,0,0.6);"><div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:white;border-radius:50%;font-size:14px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center; z-index:10;">👑</div><div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:10px solid #fbbf24;"></div></div>`;
+            html = `<div style="width:44px;height:44px;border-radius:50%;border:4px solid #fbbf24;background-image:url('${escapeHtml(resolvePhotoUrl(rest.img) || '')}');background-size:cover;background-position:center;position:relative;box-shadow:0 0 10px rgba(0,0,0,0.6);"><div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:white;border-radius:50%;font-size:14px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center; z-index:10;">👑</div><div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:10px solid #fbbf24;"></div></div>`;
         } else {
-            html = `<div style="width:34px;height:34px;border-radius:50%;border:3px solid ${pinColor};background-image:url('${escapeHtml(rest.img)}');background-size:cover;background-position:center;position:relative;box-shadow:0 0 6px rgba(0,0,0,0.5);">${isAcc?'<div style="position:absolute;bottom:-6px;right:-6px;background:white;border-radius:50%;font-size:12px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center;">🏠</div>':(primaryPlan?`<div style="position:absolute;top:-6px;left:-6px;background:${pinColor};color:white;border-radius:50%;font-size:8px;font-weight:bold;width:14px;height:14px;display:flex;align-items:center;justify-content:center;border:1px solid white;">${routeNumberStr}</div>`:'')}</div>`;
+            html = `<div style="width:34px;height:34px;border-radius:50%;border:3px solid ${pinColor};background-image:url('${escapeHtml(resolvePhotoUrl(rest.img) || '')}');background-size:cover;background-position:center;position:relative;box-shadow:0 0 6px rgba(0,0,0,0.5);">${isAcc?'<div style="position:absolute;bottom:-6px;right:-6px;background:white;border-radius:50%;font-size:12px;padding:2px;box-shadow:0 0 4px black;display:flex;align-items:center;justify-content:center;">🏠</div>':(primaryPlan?`<div style="position:absolute;top:-6px;left:-6px;background:${pinColor};color:white;border-radius:50%;font-size:8px;font-weight:bold;width:14px;height:14px;display:flex;align-items:center;justify-content:center;border:1px solid white;">${routeNumberStr}</div>`:'')}</div>`;
         }
       }
       try {
@@ -3274,7 +3286,7 @@ function deletePackingItem(id) {
         
         let popup = `
           <div style="text-align:center; cursor:pointer; padding: 2px; width: 110px;" onclick="window.openPinDetails('${escapeHtml(rest.id)}')">
-            ${rest.img && !S(rest.img).includes("unsplash") ? `<img src="${escapeHtml(rest.img)}" style="width:100%; height:60px; object-fit:cover; border-radius:6px; margin-bottom:4px;" alt=""/>` : ''}
+            ${rest.img && !S(rest.img).includes("unsplash") ? `<img src="${escapeHtml(resolvePhotoUrl(rest.img) || '')}" style="width:100%; height:60px; object-fit:cover; border-radius:6px; margin-bottom:4px;" alt=""/>` : ''}
             <b style="font-size:11px; display:block; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(rest.name)}</b>
             ${rest.localName ? `<span style="font-size:9px; color:#6b7280; display:block; margin-bottom:4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">(${escapeHtml(rest.localName)})</span>` : ''}
             <span style="font-size:9px; color:#4f46e5; font-weight:bold; background:#eef2ff; padding:2px 6px; border-radius:4px; display:inline-block;">상세보기 👆</span>
@@ -3284,7 +3296,7 @@ function deletePackingItem(id) {
         markersRef.current.push(marker);
       } catch (err) {}
     });
-  }, [isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, showMapRoute, isPinMode, movingPinId, mapActiveDays, getDayColor, myPinsThemeFilter, markerSearchQuery]);
+  }, [photoUrlTick, isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, showMapRoute, isPinMode, movingPinId, mapActiveDays, getDayColor, myPinsThemeFilter, markerSearchQuery]);
 
   // 수동 override: 'kakao' | 'leaflet' | null(자동)
   const [mapTypeOverride, setMapTypeOverride] = useState(null);

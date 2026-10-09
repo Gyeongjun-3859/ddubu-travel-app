@@ -1,6 +1,7 @@
 import React from 'react';
 import { X } from 'lucide-react';
 import { compressAndStoreImage } from '../utils/helpers';
+import TripImg from './TripImg';
 
 const initialTransState = { airline: '', flightNum: '', seatNum: '', dep: '', arr: '', depTime: '', arrTime: '', day: 1 };
 
@@ -135,7 +136,7 @@ const TransportModal = ({
               <div className="flex gap-1.5">
                 {(rentalCarData.photos || []).map((img, i) => (
                   <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 flex-shrink-0">
-                    <img src={img} className="w-full h-full object-cover" alt="" />
+                    <TripImg src={img} className="w-full h-full object-cover" alt="" />
                     <button type="button" onClick={() => setRentalCarData(prev => ({ ...prev, photos: prev.photos.filter((_, idx) => idx !== i) }))} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px]"><X className="w-[1em] h-[1em] inline" /></button>
                   </div>
                 ))}

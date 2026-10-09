@@ -1,5 +1,6 @@
 import React from 'react';
 import { S, openGoogleMapsNav } from '../utils/helpers';
+import TripImg from './TripImg';
 
 const PinDetailModal = ({
   selectedPinInfo, setSelectedPinInfo, cardBg, setViewPhoto, handleCopyLocalName, openEditPinModal,
@@ -12,7 +13,7 @@ const PinDetailModal = ({
       <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
         {selectedPinInfo.img && !S(selectedPinInfo.img).includes("unsplash") && (
           <div className="w-full h-48 relative cursor-pointer" onClick={e => { e.stopPropagation(); const imgs = Array.isArray(selectedPinInfo.imgs) && selectedPinInfo.imgs.length > 0 ? selectedPinInfo.imgs : (Array.isArray(selectedPinInfo.photos) && selectedPinInfo.photos.length > 0 ? selectedPinInfo.photos : [selectedPinInfo.img]); setViewPhoto({ imgs, idx: 0 }); }}>
-            <img src={selectedPinInfo.img} className="w-full h-full object-cover" alt="" />
+            <TripImg src={selectedPinInfo.img} className="w-full h-full object-cover" alt="" />
             {selectedPinInfo.isAccommodation && <div className="absolute top-3 left-3 bg-yellow-400 text-white text-xs font-bold px-2 py-1 rounded shadow-md">숙소</div>}
             <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors flex items-center justify-center">
               <span className="opacity-0 hover:opacity-100 text-white text-2xl drop-shadow">🔍</span>
