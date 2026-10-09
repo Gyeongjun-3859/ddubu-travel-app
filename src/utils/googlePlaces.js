@@ -12,12 +12,18 @@ export const newPlacesSessionToken = () => {
 };
 
 // 검색어(한국어·영어·러시아어·카자흐어 모두 가능) → 후보 최대 5개. 좌표는 후보를 고른 뒤 googlePlaceLocation으로 조회
-export async function googleAutocomplete(input, sessionToken, languageCode = 'ko') {
+// biasCenter({lat,lng})를 주면 그 근처(반경 50km) 결과를 먼저 보여 준다 — 다른 나라 결과를 막지는 않음.
+// (예전엔 오사카 여행에서 '유니버설 스튜디오'를 치면 할리우드 지점이 1순위로 나왔다)
+export async function googleAutocomplete(input, sessionToken, languageCode = 'ko', biasCenter = null) {
   if (!KEY) throw new Error('no-key');
+  const body = { input, languageCode, sessionToken };
+  if (biasCenter && isFinite(biasCenter.lat) && isFinite(biasCenter.lng)) {
+    body.locationBias = { circle: { center: { latitude: biasCenter.lat, longitude: biasCenter.lng }, radius: 50000 } };
+  }
   const res = await fetch(`${BASE}/places:autocomplete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': KEY },
-    body: JSON.stringify({ input, languageCode, sessionToken }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`places-autocomplete-${res.status}`);
   const data = await res.json();

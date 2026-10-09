@@ -81,6 +81,11 @@ export function isExpenseRecord(plan) {
 // 지도 마커/팝업/인포윈도우처럼 "HTML 문자열"로 만드는 곳에 사용자 입력(핀 이름, 메모, 사진 URL)이나
 // 외부 검색 결과(장소명)를 넣을 때 반드시 거친다. 안 거치면 이름에 넣은 <태그>가 코드로 실행되고,
 // 공유 여행에선 상대가 넣은 이름이 내 화면에서 실행될 수 있다.
+// 카카오 장소 분류 코드 → 핀 테마 (카테고리 검색에서 고른 장소를 핀으로 저장할 때 테마 자동 선택)
+export function themeFromKakaoCategory(code) {
+  return ({ FD6: '식당', CE7: '디저트', AT4: '관광지', CT1: '관광지', AD5: '숙소', CS2: '쇼핑', MT1: '쇼핑' })[code] || '기타';
+}
+
 export function escapeHtml(val) {
   return S(val)
     .replace(/&/g, '&amp;')

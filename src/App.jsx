@@ -5,7 +5,7 @@ import { Browser } from '@capacitor/browser';
 import { App as CapacitorApp } from '@capacitor/app';
 import { X, Menu, LayoutDashboard, Calendar, Map as MapIcon, Wallet, Plane, Backpack, ShoppingBag, Mail, Settings, ClipboardList, CloudSun, MapPin, Navigation, LogOut, Home, Compass, ListChecks, PenLine, Globe, Clock, Tag, Search, Camera, Pencil, FolderOpen, Trash2, Handshake, Undo2, Redo2, RefreshCw, Plus } from 'lucide-react';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTRY_FLAG, KAKAO_CAT_COLORS, CITY_NAME_TO_EN, COUNTRY_TIPS, COUNTRY_PACKING_SUGGESTIONS, REGION_PACKING_SUGGESTIONS } from './utils/constants';
-import { toAuthEmail, toAuthPassword, S, escapeHtml, isExpenseRecord, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
+import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, isExpenseRecord, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
 import { hasGooglePlacesKey, googleNearbyPlaceName } from './utils/googlePlaces';
@@ -3172,7 +3172,10 @@ function deletePackingItem(id) {
                     infowindow.close();
                     setClickedLocation({ lat: clickLat, lng: clickLng });
                     setNewManualPlaceName(placeName); setNewManualLocalName(""); setNewManualFeature("");
-                    setNewManualPhoto(""); setNewManualIsAccommodation(false);
+                    const nearTheme = themeFromKakaoCategory(nearby && nearby.category_group_code);
+                    setNewManualTheme(nearTheme);
+                    setNewManualPhoto(""); setNewManualPhotos([]); setNewManualIsLandmark(false);
+                    setNewManualIsAccommodation(nearTheme === '숙소'); setNewManualAccommodationDays([]);
                     setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
                     setIsAddPlaceModalOpen(true);
                   };
@@ -3384,7 +3387,11 @@ function deletePackingItem(id) {
           } else {
             setClickedLocation({ lat: parseFloat(place.y), lng: parseFloat(place.x) });
             setNewManualPlaceName(place.place_name); setNewManualLocalName(""); setNewManualFeature("");
-            setNewManualPhoto(""); setNewManualIsAccommodation(false);
+            // 고른 분류(카페 등)에 맞는 테마를 미리 골라 둔다 (예전엔 늘 '기타'). 이전 등록의 사진·연박도 비운다.
+            const catTheme = themeFromKakaoCategory(place.category_group_code || place._catCode);
+            setNewManualTheme(catTheme);
+            setNewManualPhoto(""); setNewManualPhotos([]); setNewManualIsLandmark(false);
+            setNewManualIsAccommodation(catTheme === '숙소'); setNewManualAccommodationDays([]);
             setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
             setIsAddPlaceModalOpen(true);
           }

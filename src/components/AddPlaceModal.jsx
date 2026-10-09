@@ -30,7 +30,7 @@ const AddPlaceModal = ({
 }) => {
   // 장소 자동완성은 일정 수정 창과 같은 훅을 쓴다. 해외 장소를 구글에서 고르면 현지어 이름도 (비어 있을 때) 채운다.
   const { suggestions: placeSuggestions, showSuggestions, setShowSuggestions, onQueryChange, select: selectSuggestion } = usePlaceSearch({
-    isKakaoMap, isKakaoMapLoaded, country, showToast,
+    isKakaoMap, isKakaoMapLoaded, country, showToast, biasPins: currentRestaurants,
     onPick: ({ name, lat, lng, localName }) => {
       setNewManualPlaceName(name);
       if (localName && !S(newManualLocalNameRef.current).trim()) setNewManualLocalName(localName);
@@ -166,7 +166,9 @@ const AddPlaceModal = ({
           </div>
         </div>
 
-      <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} w-full sm:w-auto sm:flex-1 min-w-0 max-w-sm max-h-[85vh] sm:max-h-[92vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
+      {/* 좁은 화면(세로로 쌓임)에선 '화면 높이 − 위쪽 미리보기 높이'까지만 커지게 해서, 저장 버튼이 항상 화면 안에 보이게 한다
+          (예전엔 미리보기 40vh + 입력창 85vh가 쌓여 버튼이 화면 밖으로 밀렸다). 입력 내용은 안에서 스크롤. */}
+      <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} w-full sm:w-auto sm:flex-1 min-w-0 max-w-sm ${isPreviewOpen ? 'max-h-[calc(100dvh-40vh-3rem)]' : 'max-h-[calc(100dvh-7.5rem)]'} sm:max-h-[92vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
 
         {/* Header */}
         <div className={`sticky top-0 z-10 ${isDarkMode ? 'bg-slate-800/95 border-slate-700' : 'bg-white/95 border-slate-100'} backdrop-blur-xl border-b px-4 pt-3.5 pb-3`}>

@@ -4,7 +4,14 @@ import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePl
 
 // 장소 이름 자동완성 (국내: 카카오 / 해외: 구글 → 실패하면 OSM). 일정 등록 창과 일정 수정 창이 같이 쓴다.
 // onPick({ name, lat, lng, localName })는 후보를 골랐을 때 한 번 불린다 (좌표가 없으면 lat/lng는 NaN).
-export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToast, onPick }) {
+// biasPins: 이 여행에 이미 등록된 핀들 — 가운데 좌표 근처 결과를 먼저 보여 주는 데 쓴다(해외 구글 검색)
+function centerOf(pins) {
+  const pts = (Array.isArray(pins) ? pins : []).filter(p => p && isFinite(parseFloat(p.lat)) && isFinite(parseFloat(p.lng)) && parseFloat(p.lat) !== 0);
+  if (pts.length === 0) return null;
+  return { lat: pts.reduce((a, p) => a + parseFloat(p.lat), 0) / pts.length, lng: pts.reduce((a, p) => a + parseFloat(p.lng), 0) / pts.length };
+}
+
+export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToast, onPick, biasPins }) {
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const timerRef = useRef(null);
@@ -45,7 +52,7 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
     };
     // 해외는 구글 Places 우선, 키가 없거나 실패/결과 없음이면 OSM 검색으로 대체
     if (!hasGooglePlacesKey()) { runNominatim(); return; }
-    googleAutocomplete(query.trim(), sessionRef.current)
+    googleAutocomplete(query.trim(), sessionRef.current, 'ko', centerOf(biasPins))
       .then(list => {
         if (reqId !== reqRef.current) return;
         if (list.length > 0) { setSuggestions(list); setShowSuggestions(true); }

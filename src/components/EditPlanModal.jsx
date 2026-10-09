@@ -28,7 +28,7 @@ const EditPlanModal = ({
   // 장소 자동완성 (등록 창과 같은 훅). 고르면 장소 이름과 함께 위치(좌표)도 바꾸고, 해외면 현지어 이름도 비어 있을 때 채운다.
   // 골라 둔 좌표는 저장 때 연결된 핀 위치에 반영한다(_pickedLat/_pickedLng는 화면 전용 — 일정 데이터엔 안 들어감).
   const placeSearch = usePlaceSearch({
-    isKakaoMap, isKakaoMapLoaded, country, showToast,
+    isKakaoMap, isKakaoMapLoaded, country, showToast, biasPins: currentRestaurants,
     onPick: ({ name, lat, lng, localName }) => {
       setEditingPlan(prev => prev ? ({
         ...prev, place: name,
