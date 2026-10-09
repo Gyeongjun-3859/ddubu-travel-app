@@ -1845,6 +1845,26 @@ function handleDeletePlan(id) {
     // 같은 장소명의 핀이 있는지 확인
     const linkedPin = targetPlan ? findPinForPlan(targetPlan, safeRests, safePlanTimeline) : null;
 
+    // 교통편 일정(출발/도착 한 쌍)은 한쪽만 지우면 다른 쪽이 혼자 남아서(예: 렌터카 대여만 지우면 반납만 남음)
+    // 항상 쌍으로 지운다.
+    const sid = S(id);
+    if (sid === 'trans_rental_dep' || sid === 'trans_rental_arr') {
+      showConfirm("렌터카 일정을 삭제할까요?\n대여와 반납 일정이 함께 삭제됩니다.", () => {
+        const pairIds = ['trans_rental_dep', 'trans_rental_arr'];
+        const updated = safePlanTimeline.filter(p => p && !pairIds.includes(S(p.id)));
+        setPlanTimeline(updated);
+        saveToDb({ plan_timeline: [...updated, ...pairIds.map(tid => tombstone(tid))] });
+        showToast("렌터카 일정이 삭제되었습니다.");
+        if (pairIds.includes(S(editingPlanId))) resetPlanForm();
+      });
+      return;
+    }
+    const transMatch = sid.match(/^trans_(flight|train|bus)_(outbound|inbound)_(dep|arr)$/);
+    if (transMatch) {
+      handleDeleteFlight(transMatch[2], transMatch[1]);
+      return;
+    }
+
     const doDeletePlanOnly = () => {
       const updated = safePlanTimeline.filter(p => p && S(p.id) !== S(id));
       // [삭제 표식] 배열에서 그냥 빼기만 하면, 공유 여행에서 아직 이 삭제를 모르는
@@ -2050,6 +2070,7 @@ function handleDeletePlan(id) {
     let updatedTimeline = [...(Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [])];
     let newFlights = { ...flights };
     let pendingRentalArrTombstoneId = null;
+    const staleTransportIds = []; // 종류를 바꿔 저장해서 지워진 예전 교통 일정 (DB엔 tombstone)
 
     const types = ['flight', 'train', 'bus'];
     const dirs = ['outbound', 'inbound'];
@@ -2079,6 +2100,16 @@ function handleDeletePlan(id) {
           const depId = `trans_${type}_${dir}_dep`;
           const arrId = `trans_${type}_${dir}_arr`;
           updatedTimeline = updatedTimeline.filter(p => p.id !== depId && p.id !== arrId);
+          // 한 방향(가는 편/오는 편)에는 교통편이 하나만 저장된다. 종류를 바꿔 저장하면(예: 항공 → 기차)
+          // 예전 종류의 출발/도착 일정이 일정표에 그대로 남던 문제 → 같은 방향의 다른 종류 일정은 지운다.
+          types.filter(t => t !== type).forEach(t => {
+            [`trans_${t}_${dir}_dep`, `trans_${t}_${dir}_arr`].forEach(oldId => {
+              if (updatedTimeline.some(p => p.id === oldId)) {
+                updatedTimeline = updatedTimeline.filter(p => p.id !== oldId);
+                staleTransportIds.push(oldId);
+              }
+            });
+          });
 
           // 1. 출발 스케줄 아이템 (출발 Day에 할당)
           updatedTimeline.push({ 
@@ -2159,9 +2190,11 @@ function handleDeletePlan(id) {
     setFlights(newFlights);
     updatedTimeline.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
     setPlanTimeline(updatedTimeline);
-    const savedTimeline = pendingRentalArrTombstoneId
-      ? [...updatedTimeline, tombstone(pendingRentalArrTombstoneId)]
-      : updatedTimeline;
+    const savedTimeline = [
+      ...updatedTimeline,
+      ...(pendingRentalArrTombstoneId ? [tombstone(pendingRentalArrTombstoneId)] : []),
+      ...staleTransportIds.map(tid => tombstone(tid)),
+    ];
     saveToDb({ flights: newFlights, plan_timeline: savedTimeline });
 
     showToast("교통편이 날짜별로 완벽하게 분리되어 등록되었습니다! ✨");
