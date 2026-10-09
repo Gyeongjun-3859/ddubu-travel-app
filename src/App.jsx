@@ -871,7 +871,7 @@ const saveToDb = useCallback((updates, explicitTripId) => {
         const insertPayload = {
           id: newId, display_city_name: newCityName, travel_start_date: newStartDate, max_day: newMaxDay,
           current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [],
-          owner_app_user_id: appUserId
+          shared_users: [], owner_app_user_id: appUserId
         };
         const { error: insErr } = await supabaseClient.from('travel_state').insert(insertPayload);
         if (insErr && insErr.code === '42703') {
@@ -2795,6 +2795,9 @@ function deletePackingItem(id) {
       setPlanTimeline(Array.isArray(view.plan_timeline) ? view.plan_timeline : []);
       setCurrentRestaurants(Array.isArray(view.current_restaurants) ? view.current_restaurants : []);
 
+      // 새로 만든 여행은 shared_users가 null로 저장돼 있어서, 예전엔 "배열일 때만" 바꾸다 보니
+      // 이전 여행의 참여자 목록이 새 여행 설정 화면에 그대로 남아 보였다 → 없으면 빈 목록으로.
+      if (isGuestUser || !Array.isArray(view.shared_users)) setSharedUsers([]);
       if (!isGuestUser && Array.isArray(view.shared_users)) {
         setSharedUsers(view.shared_users);
         const isOwner = tripId.startsWith(`trip_${appUserId}_`);
@@ -3855,7 +3858,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         fontScale={fontScale} handleFontScaleChange={handleFontScaleChange} elementScale={elementScale} handleElementScaleChange={handleElementScaleChange}
         appUserId={appUserId}
         inviteIdInput={inviteIdInput} setInviteIdInput={setInviteIdInput} handleSendInvite={handleSendInvite}
-        sentInvites={sentInvites} handleRevokeInvite={handleRevokeInvite}
+        sentInvites={(sentInvites || []).filter(i => i && S(i.trip_id) === S(activeTripId))} handleRevokeInvite={handleRevokeInvite}
         sharedUsers={sharedUsers} isTripOwner={isTripOwner}
         kickUserTarget={kickUserTarget} setKickUserTarget={setKickUserTarget}
         supabaseClient={supabaseClient} activeTripId={activeTripId} setSharedUsers={setSharedUsers} showToast={showToast}

@@ -112,7 +112,7 @@ const SettingsModal = ({
                        </div>
 
                        <div className={`p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
-                          <p className={`text-[10px] font-bold ${textMuted} mb-2`}>내가 보낸 초대장 (아직 수락 안 됨)</p>
+                          <p className={`text-[10px] font-bold ${textMuted} mb-2`}>이 여행으로 보낸 초대장 (아직 수락 안 됨)</p>
                           <div className="space-y-1.5">
                              {(sentInvites || []).map((invite, idx) => (
                                <div key={idx} className="flex items-center justify-between bg-white text-slate-600 dark:bg-slate-700 dark:text-slate-300 border dark:border-slate-600 px-2 py-1.5 rounded shadow-sm">
