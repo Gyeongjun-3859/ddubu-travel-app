@@ -128,7 +128,7 @@ export const ARRAY_FIELDS = {
 export const SCALAR_FIELDS = ['display_city_name', 'travel_start_date', 'flights', 'max_day'];
 
 // 동기화 엔진이 절대 쓰지 않는(보관함/공유 흐름 전용) 컬럼.
-export const NON_SYNC_FIELDS = ['shared_users', 'archived', 'finish_date', 'owner_app_user_id'];
+export const NON_SYNC_FIELDS = ['shared_users', 'viewer_users', 'archived', 'finish_date', 'owner_app_user_id'];
 
 export function isArrayField(field) {
   return Object.prototype.hasOwnProperty.call(ARRAY_FIELDS, field);

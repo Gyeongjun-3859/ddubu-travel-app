@@ -13,6 +13,7 @@ const SettingsModal = ({
   sentInvites, handleRevokeInvite,
   sharedUsers, isTripOwner,
   kickUserTarget, setKickUserTarget, purgeUserPersonalItems,
+  viewerUsers = [], setViewerUsers, inviteRole = 'editor', setInviteRole, onChangeMemberRole, isReadOnlyTrip,
   supabaseClient, activeTripId, setSharedUsers, showToast,
 }) => {
   return (
@@ -90,10 +91,14 @@ const SettingsModal = ({
                  <div className={`flex flex-col space-y-3 border-t pt-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
                     <label className={`text-xs font-bold ${textMuted}`}>🤝 일정 공유 및 관리</label>
                     <div className="space-y-3 animate-in fade-in duration-300">
-                       <div className="flex space-x-2">
+                       {!isReadOnlyTrip && <div className="flex space-x-2">
+                          <select value={inviteRole} onChange={e => setInviteRole && setInviteRole(e.target.value)} title="초대 권한" className={`${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} px-1.5 text-[10px] font-bold rounded-lg outline-none focus:border-indigo-500`}>
+                            <option value="editor">✏️ 편집</option>
+                            <option value="viewer">👀 보기 전용</option>
+                          </select>
                           <input type="text" value={inviteIdInput} onChange={e => setInviteIdInput(e.target.value)} placeholder="초대할 친구 아이디 입력" className={`flex-1 ${inputBg} border ${isDarkMode ? 'border-slate-600' : 'border-slate-200'} p-2 text-[11px] font-bold rounded-lg outline-none focus:border-indigo-500 transition-colors duration-300`} />
                           <button onClick={handleSendInvite} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-[10px] font-bold shadow-md hover:bg-indigo-700 active:scale-95 transition-all duration-300 whitespace-nowrap">초대 발송</button>
-                       </div>
+                       </div>}
 
                        <div className={`p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
                           <p className={`text-[10px] font-bold ${textMuted} mb-2`}>현재 이 일정을 함께 보는 사람</p>
@@ -101,7 +106,18 @@ const SettingsModal = ({
                              <span className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 px-2 py-1 rounded text-[9px] font-bold shadow-sm">👑 나 ({appUserId})</span>
                              {sharedUsers.filter(u => u !== appUserId).map((user, idx) => (
                                <div key={idx} className="flex items-center bg-white text-slate-600 dark:bg-slate-700 dark:text-slate-300 border dark:border-slate-600 px-2 py-1 rounded shadow-sm">
-                                 <span className="text-[9px] font-bold">👤 {user}</span>
+                                 <span className="text-[9px] font-bold">{viewerUsers.includes(user) ? '👀' : '👤'} {user}</span>
+                                 {isTripOwner ? (
+                                   <select
+                                     value={viewerUsers.includes(user) ? 'viewer' : 'editor'}
+                                     onChange={e => onChangeMemberRole && onChangeMemberRole(user, e.target.value)}
+                                     title="권한"
+                                     className="ml-1.5 bg-transparent text-[9px] font-bold outline-none text-indigo-600 dark:text-indigo-300"
+                                   >
+                                     <option value="editor">편집</option>
+                                     <option value="viewer">보기 전용</option>
+                                   </select>
+                                 ) : (viewerUsers.includes(user) && <span className="ml-1 text-[8px] text-slate-400">보기 전용</span>)}
                                  {isTripOwner && (
                                    <button onClick={() => setKickUserTarget(user)} className="ml-1.5 pl-1.5 border-l border-slate-200 dark:border-slate-500 text-rose-500 hover:text-rose-600 text-[9px] font-black transition-colors">강퇴</button>
                                  )}
@@ -145,7 +161,13 @@ const SettingsModal = ({
                  <button className="flex-1 py-2.5 bg-rose-500 text-white rounded-xl font-bold text-xs shadow-md hover:bg-rose-600 active:scale-95 transition-all duration-300" onClick={async () => {
                     const newShared = sharedUsers.filter(u => u !== kickUserTarget);
                     setSharedUsers(newShared);
-                    if(supabaseClient) await supabaseClient.from('travel_state').update({ shared_users: newShared }).eq('id', activeTripId);
+                    const newViewers = (viewerUsers || []).filter(u => u !== kickUserTarget);
+                    if(supabaseClient) {
+                      // 버전을 올려야 다른 화면에 실시간으로 반영된다
+                      const { data: cur } = await supabaseClient.from('travel_state').select('version').eq('id', activeTripId).single();
+                      await supabaseClient.from('travel_state').update({ shared_users: newShared, viewer_users: newViewers, version: ((cur && cur.version) || 0) + 1 }).eq('id', activeTripId);
+                    }
+                    if (setViewerUsers) setViewerUsers(newViewers);
                     // 내보낸 사람이 예전 방식으로 여행에 남긴 개인 항목도 지운다 (I6)
                     if (purgeUserPersonalItems) purgeUserPersonalItems(kickUserTarget);
                     showToast(`${kickUserTarget} 님을 여행에서 내보냈습니다.`);

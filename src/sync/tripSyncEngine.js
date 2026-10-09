@@ -83,7 +83,7 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
     if (typeof row.version === 'number') state.version = row.version;
 
     // 1) 스칼라 필드 먼저 반영 (배열 정제 시 display_city_name을 기준으로 삼기 때문에 순서 중요)
-    [...SCALAR_FIELDS, 'shared_users', 'archived', 'finish_date', 'owner_app_user_id', 'trip_name'].forEach(field => {
+    [...SCALAR_FIELDS, 'shared_users', 'viewer_users', 'archived', 'finish_date', 'owner_app_user_id', 'trip_name'].forEach(field => {
       if (Object.prototype.hasOwnProperty.call(row, field)) state.scalars[field] = row[field];
     });
 

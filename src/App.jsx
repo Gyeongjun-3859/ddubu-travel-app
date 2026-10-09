@@ -159,6 +159,11 @@ const MainApp = () => {
   const [pendingInvite, setPendingInvite] = useState(null);
   const [inviteIdInput, setInviteIdInput] = useState("");
   const [sharedUsers, setSharedUsers] = useState([]);
+  // [보기 전용] 이 여행의 보기 전용 참여자 목록, 내가 보기 전용인지, 초대할 때 고른 권한
+  const [viewerUsers, setViewerUsers] = useState([]);
+  const [isReadOnlyTrip, setIsReadOnlyTrip] = useState(false);
+  const readOnlyRef = useRef(false);
+  const [inviteRole, setInviteRole] = useState('editor');
   const [sentInvites, setSentInvites] = useState([]);
   const [isSubmittingTrip, setIsSubmittingTrip] = useState(false); 
   const [kickUserTarget, setKickUserTarget] = useState(null); 
@@ -408,6 +413,16 @@ const MainApp = () => {
     });
   }
   useEffect(() => { engineRef.current.setActiveTrip(activeTripId); }, [activeTripId]);
+  // 여행을 바꾸면 권한은 새 여행 데이터가 올 때 다시 정한다
+  useEffect(() => { readOnlyRef.current = false; setIsReadOnlyTrip(false); setViewerUsers([]); }, [activeTripId]);
+  // 보기 전용이면 일정·핀 등록/수정 창과 교통편 창은 열리지 않게 닫는다 (어디서 열었든 한 곳에서 처리)
+  useEffect(() => {
+    if (!isReadOnlyTrip) return;
+    if (isAddPlaceModalOpen || isTransportModalOpen || editingPlan) {
+      setIsAddPlaceModalOpen(false); setIsTransportModalOpen(false); setEditingPlan(null);
+      showToast('👀 보기 전용 여행이라 일정을 추가하거나 고칠 수 없어요.');
+    }
+  }, [isReadOnlyTrip, isAddPlaceModalOpen, isTransportModalOpen, editingPlan]);
 
   // [개인 항목] 내 개인용(🔒) 준비물·쇼핑은 여행 데이터가 아니라 내 계정 행에만 저장한다(sync/personalItems).
   // 화면 목록 = 여행 데이터의 공동 항목 + 내 개인 항목. lastSharedRef는 여행 데이터 쪽 최근 값(정리 전 원본).
@@ -844,6 +859,31 @@ const saveToDb = useCallback((updates, explicitTripId) => {
     const tripId = explicitTripId || engineRef.current.getActiveTrip();
     if (!tripId) return;
 
+    // [보기 전용] 내 개인 준비물·쇼핑만 저장하고 나머지는 막는다. 화면에 먼저 반영된 변경은 서버 값으로 되돌린다.
+    // (서버 보안 규칙에서도 막히지만, 앱에서 먼저 막아야 저장 재시도·경고가 쌓이지 않는다)
+    if (readOnlyRef.current && tripId === engineRef.current.getActiveTrip()) {
+      const uid = appUserIdRef.current;
+      let blocked = false;
+      Object.keys(updates).forEach(field => {
+        if (!PERSONAL_FIELDS.includes(field)) { blocked = true; return; }
+        const arr = Array.isArray(updates[field]) ? updates[field] : [];
+        const { realItems, tombstoneIds } = splitTombstones(arr);
+        const sharedNow = new Map(((lastSharedRef.current.tripId === tripId && lastSharedRef.current[field]) || []).map(it => [S(it && it.id), JSON.stringify(it)]));
+        const personalUpserts = realItems.filter(it => isPersonalOf(it, uid));
+        // 공동 항목은 바뀐 게 없으면 그냥 넘어가고(목록 전체를 넘기는 호출이 많음), 바뀌었으면 막는다
+        if (realItems.some(it => !isPersonalOf(it, uid) && sharedNow.get(S(it.id)) !== JSON.stringify(it))) blocked = true;
+        const personalDeletes = Array.from(tombstoneIds).filter(id => personalRef.current.hasItem(tripId, field, id));
+        if (personalDeletes.length < tombstoneIds.size) blocked = true;
+        if (personalUpserts.length > 0 || personalDeletes.length > 0) writeListFieldRef.current(tripId, field, personalUpserts, personalDeletes);
+      });
+      if (blocked) {
+        // 저장 뒤에 "삭제되었습니다" 같은 안내를 띄우는 곳이 많아서, 이 안내가 덮이지 않게 조금 늦게 띄운다
+        setTimeout(() => showToastRef.current('👀 보기 전용 여행이라 고칠 수 없어요. (내 개인 준비물·쇼핑만 추가할 수 있어요)'), 60);
+        engineRef.current.reload(tripId);
+      }
+      return;
+    }
+
     // [섞임 방지] 화면의 배열 state(planTimeline 등)가 아직 이 여행 것으로 확정되지 않았으면
     // 배열 저장을 건너뛴다. 여행 전환/생성 직후 짧은 틈에 이전 여행의 목록이 통째로 새 여행에
     // upsert되어 영구히 쌓이던 사고를 차단한다. (explicitTripId를 넘긴 호출은 대상을 이미
@@ -1171,6 +1211,11 @@ async function confirmDeleteTrip() {
   function applyUndoRedoSnapshot(prev, next) {
     const tripId = engineRef.current.getActiveTrip();
     if (!tripId) return;
+    if (readOnlyRef.current) {
+      showToast('👀 보기 전용 여행이라 되돌릴 수 없어요.');
+      engineRef.current.reload(tripId);
+      return;
+    }
 
     const ARRAY_KEY_TO_FIELD = { planTimeline: 'plan_timeline', currentRestaurants: 'current_restaurants', packingList: 'packing_list' };
     Object.entries(ARRAY_KEY_TO_FIELD).forEach(([key, field]) => {
@@ -1422,14 +1467,28 @@ async function confirmDeleteTrip() {
     showToast(`${invite.target_id}님에게 보낸 초대장을 회수했습니다.`);
   }
 
+  // [보기 전용] 주인이 참여자 권한을 바꾼다 (보기 전용 목록에 넣거나 빼기)
+  async function handleChangeMemberRole(userId, role) {
+    if (!supabaseClient || !activeTripId) return;
+    const current = Array.isArray(viewerUsers) ? viewerUsers : [];
+    const next = role === 'viewer' ? Array.from(new Set([...current, userId])) : current.filter(u => u !== userId);
+    // 버전을 올려야 참여자 화면에 실시간으로 반영된다(엔진은 버전이 오른 변경만 적용)
+    const { data: cur } = await supabaseClient.from('travel_state').select('version').eq('id', activeTripId).single();
+    const { error } = await supabaseClient.from('travel_state').update({ viewer_users: next, version: ((cur && cur.version) || 0) + 1 }).eq('id', activeTripId);
+    if (error) { console.error(error); showToast('권한 변경에 실패했어요.'); return; }
+    setViewerUsers(next);
+    showToast(role === 'viewer' ? `${userId}님을 보기 전용으로 바꿨어요.` : `${userId}님이 이제 편집할 수 있어요.`);
+  }
+
   async function sendInviteNow(targetId, currentTrip) {
     const { error } = await supabaseClient.rpc('send_invite', {
       p_target_id: targetId,
       p_trip_id: activeTripId,
       p_trip_name: S(currentTrip?.name) || "여행",
+      p_role: inviteRole === 'viewer' ? 'viewer' : 'editor',
     });
     if (error) { showToast("초대장 전송에 실패했습니다."); return; }
-    showToast(`초대장을 보냈습니다.`); setInviteIdInput("");
+    showToast(inviteRole === 'viewer' ? `보기 전용 초대장을 보냈습니다.` : `초대장을 보냈습니다.`); setInviteIdInput("");
     fetchSentInvites();
   }
 
@@ -1892,6 +1951,7 @@ async function confirmDeleteTrip() {
   }
   
   function handleEditPlanClick(p) { 
+    if (readOnlyRef.current) { showToast('👀 보기 전용 여행이라 고칠 수 없어요.'); return; }
     if (!p) return;
 
     // [버그 수정] 구버전/신버전 상관없이 테마가 교통편이면 무조건 전용 모달 띄우기
@@ -2040,6 +2100,7 @@ async function confirmDeleteTrip() {
   }
   
 function handleDeletePlan(id) {
+    if (readOnlyRef.current) { showToast('👀 보기 전용 여행이라 삭제할 수 없어요.'); return; }
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     const targetPlan = safePlanTimeline.find(p => p && S(p.id) === S(id));
     const safeRests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
@@ -2428,6 +2489,7 @@ function handleDeletePlan(id) {
   }
 
   function handleDeleteFlight(dir, type) {
+    if (readOnlyRef.current) { showToast('👀 보기 전용 여행이라 삭제할 수 없어요.'); return; }
     const dirLabel = dir === 'outbound' ? '가는 편' : '오는 편';
     showConfirm(`${dirLabel} 교통편을 삭제하시겠습니까?\n오늘의 계획에 등록된 해당 일정도 함께 삭제됩니다.`, () => {
       const updates = {};
@@ -2988,6 +3050,15 @@ function deletePackingItem(id) {
       // 새로 만든 여행은 shared_users가 null로 저장돼 있어서, 예전엔 "배열일 때만" 바꾸다 보니
       // 이전 여행의 참여자 목록이 새 여행 설정 화면에 그대로 남아 보였다 → 없으면 빈 목록으로.
       if (isGuestUser || !Array.isArray(view.shared_users)) setSharedUsers([]);
+      // [보기 전용] 주인이 아니고 보기 전용 목록에 있으면 이 여행은 보기만 가능
+      {
+        const viewers = (!isGuestUser && Array.isArray(view.viewer_users)) ? view.viewer_users.map(S) : [];
+        setViewerUsers(viewers);
+        const ownerOfTrip = S(view.owner_app_user_id) === S(appUserId) || tripId.startsWith(`trip_${appUserId}_`);
+        const ro = !isGuestUser && !ownerOfTrip && viewers.includes(S(appUserId));
+        readOnlyRef.current = ro;
+        setIsReadOnlyTrip(ro);
+      }
       if (!isGuestUser && Array.isArray(view.shared_users)) {
         setSharedUsers(view.shared_users);
         const isOwner = tripId.startsWith(`trip_${appUserId}_`);
@@ -3046,6 +3117,7 @@ function deletePackingItem(id) {
           if (!isPinModeRef.current) {
             return; 
           }
+          if (readOnlyRef.current) { showToastRef.current('👀 보기 전용 여행이라 핀을 추가할 수 없어요.'); return; }
           setClickedLocation(e.latlng);
           setNewManualPlaceName("");
           setNewManualLocalName("");
@@ -4072,6 +4144,8 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         sentInvites={(sentInvites || []).filter(i => i && S(i.trip_id) === S(activeTripId))} handleRevokeInvite={handleRevokeInvite}
         sharedUsers={sharedUsers} isTripOwner={isTripOwner}
         kickUserTarget={kickUserTarget} setKickUserTarget={setKickUserTarget} purgeUserPersonalItems={purgeUserPersonalItems}
+        viewerUsers={viewerUsers} setViewerUsers={setViewerUsers} inviteRole={inviteRole} setInviteRole={setInviteRole}
+        onChangeMemberRole={handleChangeMemberRole} isReadOnlyTrip={isReadOnlyTrip}
         supabaseClient={supabaseClient} activeTripId={activeTripId} setSharedUsers={setSharedUsers} showToast={showToast}
       />
 
@@ -4219,6 +4293,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
       />
 
       <MyPinsModal
+        isReadOnly={isReadOnlyTrip}
         isOpen={isMyPinsModalOpen} onClose={() => setIsMyPinsModalOpen(false)}
         cardBg={cardBg} isDarkMode={isDarkMode} isDomesticTrip={isDomesticTrip}
         myPinsFilter={myPinsFilter} setMyPinsFilter={setMyPinsFilter} tripDays={tripDays}
@@ -4432,6 +4507,11 @@ if (currentRestaurants && currentRestaurants.length > 0) {
             </div>
           </div>
         </header>
+        {isReadOnlyTrip && (
+          <div className={`flex-shrink-0 px-3 py-1.5 text-center text-[11px] font-bold ${isDarkMode ? 'bg-amber-900/40 text-amber-200' : 'bg-amber-50 text-amber-700'} border-b ${isDarkMode ? 'border-amber-800/60' : 'border-amber-200'}`}>
+            👀 보기 전용 여행이에요 — 일정은 볼 수만 있고, 내 개인 준비물·쇼핑은 추가할 수 있어요
+          </div>
+        )}
 
         <div className="flex-1 w-full flex flex-col relative z-0 min-h-max">
           
@@ -4568,8 +4648,8 @@ if (currentRestaurants && currentRestaurants.length > 0) {
                       </button>
                     );
                   })}
-                  <button onClick={addDay} className={`rounded-lg px-2 py-1.5 text-[11px] font-bold shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-[#f4f3f8] text-slate-500 hover:bg-slate-200'}`}>+ Day</button>
-                  {maxDay > 1 && <button onClick={removeDay} className={`rounded-lg px-2 py-1.5 text-[11px] font-bold shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-[#f4f3f8] text-slate-500 hover:bg-slate-200'}`}>- Day</button>}
+                  {!isReadOnlyTrip && <button onClick={addDay} className={`rounded-lg px-2 py-1.5 text-[11px] font-bold shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-[#f4f3f8] text-slate-500 hover:bg-slate-200'}`}>+ Day</button>}
+                  {maxDay > 1 && !isReadOnlyTrip && <button onClick={removeDay} className={`rounded-lg px-2 py-1.5 text-[11px] font-bold shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-[#f4f3f8] text-slate-500 hover:bg-slate-200'}`}>- Day</button>}
                 </div>
               </div>
 
@@ -4634,7 +4714,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         ))}
       </div>
 
-      {activeTab === 'plan' && (
+      {activeTab === 'plan' && !isReadOnlyTrip && (
         <button
           onClick={openQuickAddPlace}
           style={{ fontFamily: "'Be Vietnam Pro', system-ui, -apple-system, sans-serif" }}

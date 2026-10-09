@@ -155,6 +155,7 @@ return (
               <h3 className="text-[10px] font-black text-indigo-600 mb-1 flex items-center gap-1"><Mail className="w-3 h-3" /> 새 초대장 도착!</h3>
               {/* 어떤 여행 초대인지 보여준다 (예전엔 보낸 사람만 보였다) */}
               {pendingInvite.trip_name && <p className="text-[10px] font-black text-indigo-700 dark:text-indigo-300 truncate">✈️ {S(pendingInvite.trip_name)}</p>}
+              {pendingInvite.role === 'viewer' && <p className="text-[9px] font-bold text-amber-600 dark:text-amber-300">👀 보기 전용으로 초대받았어요</p>}
               <p className="text-[9px] text-indigo-500 mb-2 truncate">From: {S(pendingInvite.from_id)}</p>
               <div className="flex space-x-1.5">
                 <button onClick={handleAcceptInvite} className="flex-1 bg-indigo-600 text-white py-1.5 rounded text-[10px] font-bold shadow-sm hover:bg-indigo-700 transition-colors">수락</button>

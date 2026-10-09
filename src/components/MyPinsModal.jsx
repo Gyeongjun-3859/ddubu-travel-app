@@ -4,7 +4,7 @@ import { S, openGoogleMapsNav, findPlansForPin } from '../utils/helpers';
 import { tombstone } from '../sync/tripDataModel';
 
 const MyPinsModal = ({
-  isOpen, onClose, cardBg, isDarkMode,
+  isReadOnly, isOpen, onClose, cardBg, isDarkMode,
   myPinsFilter, setMyPinsFilter, tripDays, myPinsThemeFilter, setMyPinsThemeFilter,
   filteredMyPins, planTimeline,
   setClickedLocation, setNewManualPlaceName, setNewManualLocalName, setNewManualFeature,
@@ -128,7 +128,8 @@ const MyPinsModal = ({
                         )}
                       </div>
 
-                      <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-700">
+                      {/* 보기 전용 여행이면 위치 지정·수정·삭제 버튼 숨김 */}
+                      <div className={`${isReadOnly ? 'hidden' : 'flex'} gap-1 mt-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-700`}>
                         <button onClick={(e) => {
                           e.stopPropagation();
                           setMovingPinId(pin.id);
