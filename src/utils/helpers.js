@@ -1,6 +1,23 @@
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
-import { AUTH_EMAIL_DOMAIN, REGIONS_BY_COUNTRY, COUNTRY_FLAG } from './constants';
+import { AUTH_EMAIL_DOMAIN, REGIONS_BY_COUNTRY, COUNTRY_FLAG, COUNTRY_CURRENCY } from './constants';
+
+// 나라 → 통화 { code, sym }. 대시보드 환율 계산기와 같은 표(COUNTRY_CURRENCY)를 쓴다.
+// 예전엔 정산 창/일정 상세가 각자 몇 나라만 따로 적어 둬서, 일정 상세에선 태국·베트남·대만이 달러로 계산됐다.
+export function currencyForCountry(country) {
+  if (country === '한국') return { code: 'KRW', sym: '₩' };
+  const c = COUNTRY_CURRENCY[country];
+  return c ? { code: c.code, sym: c.symbol } : { code: 'USD', sym: '$' };
+}
+
+// 현지 금액 → 원화. 환율을 아직 못 받았으면 0 (엉뚱한 고정 환율로 계산하지 않음)
+export function localToKrw(amount, curCode, rates) {
+  const n = Number(amount);
+  if (!amount || isNaN(n)) return 0;
+  if (curCode === 'KRW') return Math.round(n);
+  if (!rates || !rates.KRW || !rates[curCode]) return 0;
+  return Math.round(n * (rates.KRW / rates[curCode]));
+}
 
 export function toAuthEmail(appUserId) {
   return `${appUserId}${AUTH_EMAIL_DOMAIN}`;

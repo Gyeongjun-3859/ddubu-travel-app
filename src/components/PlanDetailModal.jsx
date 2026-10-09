@@ -1,6 +1,6 @@
 import React from 'react';
 import { Trash2 } from 'lucide-react';
-import { S, findPinForPlan } from '../utils/helpers';
+import { S, findPinForPlan, currencyForCountry, localToKrw } from '../utils/helpers';
 
 const PlanDetailModal = ({
   selectedPlanInfo, setSelectedPlanInfo, cardBg, isDarkMode, openPhotoViewer, handleCopyLocalName,
@@ -257,19 +257,9 @@ const PlanDetailModal = ({
                   if (raw !== '' && !/^\d*$/.test(raw)) return;
                   setSettleLocal(raw);
                   if(raw && !isNaN(raw)) {
-                    let curCode = 'USD';
-                    const c = selectedPlanInfo.country;
-                    if (c === '한국') curCode = 'KRW';
-                    else if (c === '일본') curCode = 'JPY';
-                    else if (['프랑스', '이탈리아', '스페인', '독일'].includes(c)) curCode = 'EUR';
-                    else if (c === '중국') curCode = 'CNY';
-                    else if (c === '영국') curCode = 'GBP';
-                    else if (c === '호주') curCode = 'AUD';
-
-                    const rate = rates[curCode] || 1;
-                    const krwRate = rates['KRW'] || 1350;
-                    const krwVal = raw * (krwRate / rate);
-                    setSettleKrw(Math.round(krwVal));
+                    const curCode = currencyForCountry(selectedPlanInfo.country).code;
+                    const krwVal = localToKrw(raw, curCode, rates);
+                    setSettleKrw(krwVal || "");
                   } else { setSettleKrw(""); }
                 }} className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 p-2 text-xs font-bold rounded-md outline-none focus:border-rose-400" />
               </div>

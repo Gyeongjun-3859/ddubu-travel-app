@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Wallet, ClipboardList } from 'lucide-react';
 import { REGIONS_BY_COUNTRY, COUNTRY_FLAG } from '../utils/constants';
-import { S, getFlagForCity, isExpenseRecord } from '../utils/helpers';
+import { S, getFlagForCity, isExpenseRecord, currencyForCountry, localToKrw } from '../utils/helpers';
 import { tombstone } from '../sync/tripDataModel';
 
 const ExpenseModal = ({
@@ -19,7 +19,7 @@ const ExpenseModal = ({
   expenseFilterTheme, setExpenseFilterTheme,
   cardBg, textMain, textMuted, inputBg, isDarkMode,
   planTimeline, setPlanTimeline, basicExpenses, setBasicExpenses,
-  rates, tripDays, globalPlanCountry, globalPlanRegion, globalManualCountry,
+  rates, tripDays, globalPlanCountry, globalPlanRegion, globalManualCountry, globalManualRegion,
   travelStartDate, safeMaxDay, showToast, saveToDb, showConfirm,
 }) => {
   return (
@@ -37,21 +37,11 @@ const ExpenseModal = ({
         };
         const getCountryCurrency = (country, region) => {
           const c = resolveCountry(country, region);
-          if (c === '한국') return { code: 'KRW', sym: '₩' };
-          if (c === '일본') return { code: 'JPY', sym: '¥' };
-          if (c === '중국') return { code: 'CNY', sym: '元' };
-          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
-          if (c === '영국') return { code: 'GBP', sym: '£' };
-          if (c === '태국') return { code: 'THB', sym: '฿' };
-          if (c === '베트남') return { code: 'VND', sym: '₫' };
-          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
-          if (c === '호주') return { code: 'AUD', sym: 'A$' };
-          return { code: 'USD', sym: '$' };
+          return currencyForCountry(c);
         };
         const toKrw = (localAmt, curCode) => {
           if (!localAmt || isNaN(Number(localAmt))) return 0;
-          const r = rates && rates['KRW'] && rates[curCode] ? (rates['KRW'] / rates[curCode]) : 1350;
-          return Math.round(Number(localAmt) * r);
+          return localToKrw(localAmt, curCode, rates);
         };
 
         // 일정 일정 목록: 교통편·숙소 제외, D1→ 오름차순
@@ -307,27 +297,20 @@ const ExpenseModal = ({
         };
         const getCurModal = (country, region) => {
           const c = resolveCountryAmt(country, region);
-          if (c === '한국') return { code: 'KRW', sym: '₩' };
-          if (c === '일본') return { code: 'JPY', sym: '¥' };
-          if (c === '중국') return { code: 'CNY', sym: '元' };
-          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
-          if (c === '영국') return { code: 'GBP', sym: '£' };
-          if (c === '태국') return { code: 'THB', sym: '฿' };
-          if (c === '베트남') return { code: 'VND', sym: '₫' };
-          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
-          if (c === '호주') return { code: 'AUD', sym: 'A$' };
-          return { code: 'USD', sym: '$' };
+          return currencyForCountry(c);
         };
         // 전역 여행 국가 기준으로 화폐 결정
         const basePlan = isGrouped ? (plan._groupedTransport.depPlan || plan) : plan;
-        const cur = getCurModal(globalPlanCountry || basePlan.country, globalPlanRegion || basePlan.region);
+        // '수동입력'이면 실제로 적은 나라/지역으로 통화를 정한다
+        const gCountry = globalPlanCountry === '수동입력' ? globalManualCountry : globalPlanCountry;
+        const gRegion = globalPlanRegion === '수동입력' ? globalManualRegion : globalPlanRegion;
+        const cur = getCurModal(gCountry || basePlan.country, gRegion || basePlan.region);
         const isLocalCurrency = !expenseAmtIsKrw && cur.code !== 'KRW';
         const activeSym = expenseAmtIsKrw ? '₩' : cur.sym;
         const activeCode = expenseAmtIsKrw ? 'KRW' : cur.code;
         const toKrwModal = (amt, code) => {
           if (!amt || isNaN(Number(amt))) return 0;
-          const r = rates && rates['KRW'] && rates[code] ? (rates['KRW'] / rates[code]) : 1350;
-          return Math.round(Number(amt) * r);
+          return localToKrw(amt, code, rates);
         };
         const krwPreview = expenseAmtIsKrw ? Number(expenseAmtValue) : toKrwModal(expenseAmtValue, cur.code);
         const closeModal = () => { setExpenseAmtModalPlan(null); setExpenseAmtValue(""); setExpenseAmtIsKrw(false); };
@@ -401,23 +384,13 @@ const ExpenseModal = ({
       {isBasicExpAddOpen && (() => {
         const globalCur = (() => {
           const c = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : globalManualCountry;
-          if (c === '한국') return { code: 'KRW', sym: '₩' };
-          if (c === '일본') return { code: 'JPY', sym: '¥' };
-          if (c === '중국') return { code: 'CNY', sym: '元' };
-          if (['프랑스','이탈리아','스페인','독일'].includes(c)) return { code: 'EUR', sym: '€' };
-          if (c === '영국') return { code: 'GBP', sym: '£' };
-          if (c === '태국') return { code: 'THB', sym: '฿' };
-          if (c === '베트남') return { code: 'VND', sym: '₫' };
-          if (c === '대만') return { code: 'TWD', sym: 'NT$' };
-          if (c === '호주') return { code: 'AUD', sym: 'A$' };
-          return { code: 'USD', sym: '$' };
+          return currencyForCountry(c);
         })();
         const activeSym = basicExpAddIsKrw ? '₩' : globalCur.sym;
         const toKrwAdd = (amt) => {
           if (!amt || isNaN(Number(amt))) return 0;
           if (basicExpAddIsKrw) return Number(amt);
-          const r = rates && rates['KRW'] && rates[globalCur.code] ? (rates['KRW'] / rates[globalCur.code]) : 1350;
-          return Math.round(Number(amt) * r);
+          return localToKrw(amt, globalCur.code, rates);
         };
         const cats = ['항공권', '숙소', '교통', '투어', '기타'];
         const closeAdd = () => { setIsBasicExpAddOpen(false); setBasicExpAddName(''); setBasicExpAddAmt(''); setBasicExpAddCat('기타'); setBasicExpAddIsKrw(false); };
@@ -430,7 +403,7 @@ const ExpenseModal = ({
           const newPlan = {
             id: newId, day: basicExpAddDay, time: '99:99', // 시간 없이 맨 하단 정렬용
             place: basicExpAddName.trim(), localName: '', features: basicExpAddCat,
-            photo: '', photos: [], country: S(globalPlanCountry), region: S(globalPlanRegion),
+            photo: '', photos: [], country: S(globalPlanCountry === '수동입력' ? globalManualCountry : globalPlanCountry), region: S(globalPlanRegion === '수동입력' ? globalManualRegion : globalPlanRegion),
             isAccommodation: false, isTransport: false, theme: basicExpAddCat,
             expenseLocal: localAmt, expenseKrw: String(krwAmt),
             sym: basicExpAddIsKrw ? '₩' : globalCur.sym, isBasicExp: true

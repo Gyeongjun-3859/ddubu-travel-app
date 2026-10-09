@@ -200,6 +200,8 @@ const MainApp = () => {
   const [globalManualRegion, setGlobalManualRegion] = useState("");
   // 국가별 특화 UI(꿀팁 버튼, 준비물 추천, 국내 전용 기능 숨김 등)에서 쓸 확정 국가명
   const resolvedGlobalCountry = globalPlanCountry === '수동입력' ? globalManualCountry : globalPlanCountry;
+  // '수동입력'을 고른 경우 실제로 적은 지역명 (교통편 등 저장할 때 '수동입력'이라는 글자가 들어가지 않게)
+  const resolvedGlobalRegion = globalPlanRegion === '수동입력' ? globalManualRegion : globalPlanRegion;
   const isDomesticTrip = resolvedGlobalCountry === '한국';
 
   const {
@@ -2122,7 +2124,7 @@ function handleDeletePlan(id) {
             // 자정을 넘겨 다음 날 도착이면 출발 카드에서도 바로 알 수 있게 "(+1일)" 표시
             // (특히 마지막 날 밤 출발편은 도착 항목이 여행 기간 밖 Day에 놓여 출발 카드에서만 보인다)
             features: `[${dirLabel}] ${typeLabel}: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} | 도착: ${arrTime} (${data.arr})${arrDay > parseInt(data.day) ? ' (+1일)' : ''}`, 
-            photo: "", country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false, isTransport: true, theme: '교통편'
+            photo: "", country: S(resolvedGlobalCountry), region: S(resolvedGlobalRegion), isAccommodation: false, isTransport: true, theme: '교통편'
           });
 
           // 2. 도착 스케줄 아이템 (도착 Day에 할당)
@@ -2134,7 +2136,7 @@ function handleDeletePlan(id) {
             localName: S(data.airline), 
             // 파싱 호환성을 위해 형식을 엄격히 맞춤
             features: `[${dirLabel}] ${typeLabel}: ${data.flightNum}${data.seatNum ? ` | 좌석: ${data.seatNum}` : ''} | 출발: ${depTime} (${data.dep})`, 
-            photo: "", country: S(globalPlanCountry), region: S(globalPlanRegion), isAccommodation: false, isTransport: true, theme: '교통편'
+            photo: "", country: S(resolvedGlobalCountry), region: S(resolvedGlobalRegion), isAccommodation: false, isTransport: true, theme: '교통편'
           });
         }
       });
@@ -2159,7 +2161,7 @@ function handleDeletePlan(id) {
         place: `🚗 렌터카 대여`, localName: r.company || '',
         features: `대여장소: ${r.depPlace || ''}${r.carType ? ` | ${r.carType}` : ''}`,
         photo: rentalPhoto, photos: r.photos || [],
-        country: S(globalPlanCountry), region: S(globalPlanRegion),
+        country: S(resolvedGlobalCountry), region: S(resolvedGlobalRegion),
         isAccommodation: false, isTransport: true, theme: '교통편',
         rentalMeta,
       });
@@ -2170,7 +2172,7 @@ function handleDeletePlan(id) {
           place: `🏁 렌터카 반납`, localName: r.company || '',
           features: `반납장소: ${r.arrPlace || ''}${r.carType ? ` | ${r.carType}` : ''}`,
           photo: rentalPhoto, photos: r.photos || [],
-          country: S(globalPlanCountry), region: S(globalPlanRegion),
+          country: S(resolvedGlobalCountry), region: S(resolvedGlobalRegion),
           isAccommodation: false, isTransport: true, theme: '교통편',
           rentalMeta,
         });
@@ -3866,7 +3868,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         cardBg={cardBg} textMain={textMain} textMuted={textMuted} inputBg={inputBg} isDarkMode={isDarkMode}
         planTimeline={planTimeline} setPlanTimeline={setPlanTimeline} basicExpenses={basicExpenses} setBasicExpenses={setBasicExpenses}
         showConfirm={showConfirm}
-        rates={rates} tripDays={tripDays} globalPlanCountry={globalPlanCountry} globalPlanRegion={globalPlanRegion} globalManualCountry={globalManualCountry}
+        rates={rates} tripDays={tripDays} globalPlanCountry={globalPlanCountry} globalPlanRegion={globalPlanRegion} globalManualCountry={globalManualCountry} globalManualRegion={globalManualRegion}
         travelStartDate={travelStartDate} safeMaxDay={safeMaxDay} showToast={showToast} saveToDb={saveToDb}
       />
 
