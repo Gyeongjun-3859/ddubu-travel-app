@@ -4514,6 +4514,8 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         isDarkMode={isDarkMode} textMain={textMain}
         packingList={packingList.filter(item => !item.isPersonal || item.userId === appUserId)} onToggleItem={togglePackingItem}
         onAddItem={handleAddPackingItem}
+        suggestions={[...new Set([...(REGION_PACKING_SUGGESTIONS[S(displayCityName)] || []), ...(COUNTRY_PACKING_SUGGESTIONS[resolvedGlobalCountry] || [])])]}
+        onAddSuggestedItem={handleAddPackingItemSuggestion}
       />
       <ShoppingEditModal
         isOpen={isShoppingModalOpen}

@@ -104,7 +104,8 @@ const ExpenseModal = ({
           .map(p => ({ id: p.id, name: p.place.replace(/^\[기타\]\s*/, ''), amtKrw: Number(p.expenseKrw) || 0, category: '기타', isFromTimeline: true, planId: p.id }));
         const basicExpItems = timelinePlans
           .filter(p => p.id && String(p.id).startsWith('basic-exp-') && !basicRentalIds.has(p.id))
-          .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, amtLocal: p.expenseLocal || '', sym: p.sym || '', category: S(p.theme || '기타'), isFromTimeline: true, planId: p.id, dayLabel: `D${p.day}` }));
+          .map(p => ({ id: p.id, name: S(p.place), amtKrw: Number(p.expenseKrw) || 0, amtLocal: p.expenseLocal || '', sym: p.sym || (p.expenseLocal ? currencyForCountry(S(p.country)).sym : ''), category: S(p.theme || '기타'), isFromTimeline: true, planId: p.id, dayLabel: `D${p.day}` }));
+        // sym(통화 기호)은 일정 데이터 저장 때 걸러지는 칸이라, 없으면 그 지출의 나라 통화로 (현지 금액 같이 보여 주기 — 6차 I7-2)
         const basicItems = [...basicExpenses, ...transportItems, ...accomItems, ...manualItems, ...basicExpItems];
         const basicTotalKrw = basicItems.reduce((sum, b) => sum + (Number(b.amtKrw) || 0), 0);
 
@@ -182,8 +183,10 @@ const ExpenseModal = ({
                       };
                       const canOpen = item.isFromTimeline;
                       // 수동 추가 항목은 현지화로 표시 (amtLocal/sym 있으면)
-                      const displayBasicAmt = (!item.isFromTimeline && item.amtLocal && item.sym)
-                        ? `${item.sym}${Number(item.amtLocal).toLocaleString()}`
+                      // 현지 화폐로 넣은 기본지출은 '2,000₸ · ₩5,965'처럼 둘 다 (예전엔 원화만 보여 영수증과 맞춰 보기 어려웠다 — 6차 I7-2)
+                      const hasLocalAmt = item.amtLocal && Number(item.amtLocal) > 0 && item.sym && item.sym !== '₩';
+                      const displayBasicAmt = hasLocalAmt
+                        ? `${item.sym}${Number(item.amtLocal).toLocaleString()} · ₩${Number(item.amtKrw).toLocaleString()}`
                         : `₩${Number(item.amtKrw).toLocaleString()}`;
                       return (
                       <div key={item.id} onClick={canOpen ? openModal : undefined} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 ${canOpen ? 'cursor-pointer active:scale-[0.98]' : ''} ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 shadow-sm hover:border-slate-300'}`}>

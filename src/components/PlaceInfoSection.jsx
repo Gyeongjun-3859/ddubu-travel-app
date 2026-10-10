@@ -103,6 +103,10 @@ const PlaceInfoSection = ({ pin, autoLoad = false }) => {
           {info.openNow !== null && <span className={`font-bold ${info.openNow ? 'text-emerald-600' : 'text-rose-500'}`}>{info.openNow ? '● 영업 중' : '● 영업 종료'}</span>}
         </div>
         {info.summary && <p className="text-slate-600 leading-relaxed">{info.summary}</p>}
+        {/* 구글에 정보가 거의 없는 곳 — 빈 창 대신 안내 (6차 I7-3) */}
+        {info.rating === null && info.openNow === null && info.hours.length === 0 && !info.phone && !info.website && !info.summary && info.reviews.length === 0 && photos.length === 0 && (
+          <p className="text-slate-500 bg-slate-50 rounded-lg p-2.5 leading-relaxed">구글에 등록된 영업시간·평점·리뷰가 없는 곳이에요. 구글 지도에서 직접 확인해 보세요.</p>
+        )}
         {info.hours.length > 0 && (
           <div>
             <button onClick={() => setShowHours(v => !v)} className="font-bold text-slate-600 text-left">🕒 {S(info.hours[ti]) || '영업시간'} <span className="text-slate-400">{showHours ? '▴' : '▾'}</span></button>
