@@ -3066,12 +3066,28 @@ function deletePackingItem(id) {
                 const { data } = await client.rpc('verify_login', { p_app_user_id: S(id), p_password: S(pw) });
                 profile = Array.isArray(data) && data.length > 0 ? data[0] : null;
                 if (profile) {
-                  const { data: migrateAuthData, error: migrateAuthError } = await client.auth.signUp({
+                  // 로그인 세션 만들기: 이미 전환된 계정이면 저장된 아이디·비밀번호로 다시 로그인해 새 세션을 받는다.
+                  // 예전엔 세션이 만료된 채 이 확인만 통과시켜, 여행 목록은 보이는데 여행 내용(세션이 있어야 서버가 줌)은
+                  // 비어 보였다 (폰 앱에서 '목록은 나오는데 눌러도 내용이 없어' — 2026-10-10 사용자 제보)
+                  const { data: signInData, error: signInErr } = await client.auth.signInWithPassword({
                     email: toAuthEmail(S(id)),
                     password: toAuthPassword(S(pw)),
                   });
-                  if (!migrateAuthError && migrateAuthData?.user) {
-                    await client.rpc('link_auth_account', { p_app_user_id: S(id), p_password: S(pw) });
+                  if (signInErr || !signInData?.session) {
+                    // 아직 전환 전인 계정이면 조용히 전환 (가입 + 연결)
+                    const { data: migrateAuthData, error: migrateAuthError } = await client.auth.signUp({
+                      email: toAuthEmail(S(id)),
+                      password: toAuthPassword(S(pw)),
+                    });
+                    if (!migrateAuthError && migrateAuthData?.user) {
+                      await client.rpc('link_auth_account', { p_app_user_id: S(id), p_password: S(pw) });
+                    }
+                  }
+                  // 그래도 세션이 없으면 로그인된 척하지 않는다 → 로그인 화면 + 안내 (빈 여행 화면보다 낫다)
+                  const { data: afterData } = await client.auth.getSession();
+                  if (!afterData?.session) {
+                    profile = null;
+                    setTimeout(() => showToastRef.current('🔐 로그인이 만료됐어요. 다시 로그인해 주세요.'), 600);
                   }
                 }
               }
