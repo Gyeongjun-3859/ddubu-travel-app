@@ -1695,8 +1695,11 @@ async function confirmDeleteTrip() {
     if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
     if (storefrontSavingRef.current) return; // 두 번 누름 방지
     let sf = newManualStorefront;
+    // 직접 올린 사진이 있으면 자동 사진은 넣지 않는다 (사용자가 눌러서 고른 건 그대로)
+    const hasUserPhotos = Array.isArray(newManualPhotos) && newManualPhotos.length > 0;
+    if (hasUserPhotos && sf && sf.auto && !sf.url) sf = null;
     // 장소를 고르자마자 누르면 대표 사진을 아직 찾는 중이다 → 끝날 때까지(최대 6초) 기다렸다가 자동으로 고른 사진을 넣는다
-    if (!sf && storefrontPendingRef.current) {
+    if (!sf && !hasUserPhotos && storefrontPendingRef.current) {
       storefrontSavingRef.current = true;
       showToast("🖼️ 대표 사진 찾는 중…");
       for (let i = 0; i < 2 && !sf && storefrontPendingRef.current; i++) { // 찾는 도중 다시 시작됐으면 새 작업을 한 번 더 기다림

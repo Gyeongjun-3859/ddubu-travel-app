@@ -62,6 +62,16 @@ const EditPlanModal = ({
 
   const photos = Array.isArray(editingPlan.photos) ? editingPlan.photos : (editingPlan.photo ? [editingPlan.photo] : []);
   const photoCount = photos.length;
+  // 연결된 핀과 그 핀의 자동 대표 사진 — 사진을 다시 불러올지 정하는 데 쓴다
+  const linkedPinNow = findPinForPlan(openedRef.current.baseline || openedRef.current.snapshot || editingPlan, Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [], Array.isArray(planTimeline) ? planTimeline : []);
+  const pinSfUrl = linkedPinNow && linkedPinNow.storefront && linkedPinNow.storefront.url;
+  const hasUserPhotos = photos.some(u => u && u !== pinSfUrl); // 직접 올린 사진 (자동 대표 사진 말고)
+  const hasAutoPhoto = Boolean(pinSfUrl) && photos.includes(pinSfUrl);
+  // 사진 기능이 생기기 전에 등록한 일정처럼 사진이 하나도 없으면, 장소를 바꾸지 않아도 대표 사진을 다시 불러온다
+  const refetchPhoto = editingPlan._pickedLat == null && !hasUserPhotos && !hasAutoPhoto
+    && linkedPinNow && isFinite(Number(linkedPinNow.lat)) && isFinite(Number(linkedPinNow.lng)) && Number(linkedPinNow.lat) !== 0;
+  const pickerLat = editingPlan._pickedLat != null ? editingPlan._pickedLat : (refetchPhoto ? Number(linkedPinNow.lat) : null);
+  const pickerLng = editingPlan._pickedLat != null ? editingPlan._pickedLng : (refetchPhoto ? Number(linkedPinNow.lng) : null);
   const emptySlotCount = Math.max(0, 3 - photoCount - (photoCount < 3 ? 1 : 0));
 
   const dayOtherPlans = (Array.isArray(planTimeline) ? planTimeline : [])
@@ -181,13 +191,14 @@ const EditPlanModal = ({
               {editingPlan._pickedLat != null && <p className="text-[10px] font-semibold text-[#007AFF]">📍 새 위치로 바뀌어요 (저장하면 지도 핀도 이동)</p>}
             </div>
             {/* 장소를 새로 골랐으면 대표 사진도 새 장소 것으로 자동 (등록 창과 같은 칸) */}
-            {editingPlan._pickedLat != null && (
+            {pickerLat != null && (
               <div className="col-span-3 pt-1">
                 <StorefrontPicker
-                  lat={editingPlan._pickedLat} lng={editingPlan._pickedLng}
+                  lat={pickerLat} lng={pickerLng}
                   name={S(editingPlan.place)} localName={S(editingPlan.localName)}
                   localLang={LOCAL_LANG_BY_COUNTRY[country] || (country && country !== '한국' ? 'en' : '')}
-                  googlePlaceId={editingPlan._googlePlaceId}
+                  googlePlaceId={editingPlan._googlePlaceId || (refetchPhoto ? S(linkedPinNow.googlePlaceId) : '')}
+                  autoPick={!hasUserPhotos}
                   value={editingPlan._storefront || null}
                   onChange={(v) => setEditingPlan(prev => prev ? ({ ...prev, _storefront: v }) : prev)}
                   isDarkMode={isDarkMode} textMuted={textMuted} pendingRef={sfPendingRef} kakaoPhotos={country === '한국'}
@@ -383,14 +394,17 @@ const EditPlanModal = ({
             }
             // 새 장소를 골랐으면: 이전 장소의 대표 사진은 빼고, 새로 고른 대표 사진을 (직접 올린 사진 뒤에) 넣는다
             let ep = editingRef.current || editingPlan;
-            if (ep._pickedLat != null) {
+            // 장소를 새로 골랐거나, 사진 없는 일정이라 대표 사진 칸이 떠 있으면(찾는 중이거나 골라 둠) 사진을 넣는다
+            if (ep._pickedLat != null || ep._storefront || sfPendingRef.current) {
               const rests0 = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
               const linked0 = findPinForPlan(openedRef.current.baseline || openedRef.current.snapshot || ep, rests0, Array.isArray(planTimeline) ? planTimeline : []);
               const oldSfUrl = linked0 && linked0.storefront && linked0.storefront.url;
               const userPhotos = (Array.isArray(ep.photos) ? ep.photos : (ep.photo ? [ep.photo] : [])).filter(u => u && u !== oldSfUrl);
               let sf = ep._storefront;
+              // 직접 올린 사진이 있으면 자동 사진은 넣지 않는다 (사용자가 눌러서 고른 건 그대로)
+              if (userPhotos.length > 0 && sf && sf.auto && !sf.url) sf = null;
               // 장소를 고르자마자 저장하면 사진을 아직 찾는 중 → 끝날 때까지(최대 6초) 기다렸다가 자동으로 고른 사진을 넣는다
-              if (!sf && sfPendingRef.current) {
+              if (!sf && userPhotos.length === 0 && sfPendingRef.current) {
                 setSfSaving(true);
                 showToast("🖼️ 대표 사진 찾는 중…");
                 for (let i = 0; i < 2 && !sf && sfPendingRef.current; i++) {

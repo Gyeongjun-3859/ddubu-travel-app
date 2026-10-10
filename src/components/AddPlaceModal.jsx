@@ -437,7 +437,7 @@ const AddPlaceModal = ({
           {typeof setNewManualStorefront === 'function' && (
             <StorefrontPicker
               lat={clickedLocation?.lat} lng={clickedLocation?.lng}
-              name={newManualPlaceName} localName={newManualLocalName} googlePlaceId={newManualExt && newManualExt.googlePlaceId} pendingRef={storefrontPendingRef} kakaoPhotos={country === '한국'}
+              name={newManualPlaceName} localName={newManualLocalName} googlePlaceId={newManualExt && newManualExt.googlePlaceId} pendingRef={storefrontPendingRef} kakaoPhotos={country === '한국'} autoPick={!(Array.isArray(newManualPhotos) && newManualPhotos.length > 0)}
               localLang={LOCAL_LANG_BY_COUNTRY[country] || (country && country !== '한국' ? 'en' : '')}
               value={newManualStorefront} onChange={setNewManualStorefront}
               isDarkMode={isDarkMode} textMuted={textMuted}

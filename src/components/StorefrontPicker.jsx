@@ -19,7 +19,8 @@ const badgeOf = (c) => c.source === 'kakao' ? (c.kind === 'menu' ? '메뉴' : '�
 // pendingRef: 찾는 중이면 { promise } — 결과(자동으로 고른 사진, 없으면 null)로 끝난다. 장소를 고르자마자 [등록]을 누르면
 //   사진을 찾기 전에 저장돼 사진이 빠졌다(사용자 제보: 콕토베·젠코프 성당) → 저장하는 쪽이 이걸 기다렸다가 넣는다.
 // kakaoPhotos: 국내 장소면 카카오 이미지 검색의 음식·메뉴판 사진도 후보로 (가게 앞 → 음식 → 메뉴판 순 — 사용자 요청)
-const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId, value, onChange, isDarkMode, textMuted, pendingRef, kakaoPhotos = false }) => {
+// autoPick=false: 직접 올린 사진이 있는 일정 — 자동으로 고르지 않고 후보만 보여 준다(누르면 추가). 이미 자동으로 골라져 있던 것도 뺀다
+const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId, value, onChange, isDarkMode, textMuted, pendingRef, kakaoPhotos = false, autoPick = true }) => {
   const [cands, setCands] = React.useState([]);
   const [status, setStatus] = React.useState('idle'); // idle | loading | done
   const [browsing, setBrowsing] = React.useState(!(value && value.url)); // 저장된 사진이 있으면 [다른 사진]을 누를 때만 찾는다
@@ -28,6 +29,13 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
   nameRef.current = { name, localName, googlePlaceId, kakaoPhotos };
   const valueRef = React.useRef(value);
   valueRef.current = value;
+  const autoPickRef = React.useRef(autoPick);
+  autoPickRef.current = autoPick;
+  // 직접 사진을 올리는 순간, 자동으로 골라 둔(아직 저장 안 된) 사진은 뺀다
+  React.useEffect(() => {
+    if (!autoPick && value && value.auto && !value.url) onChange(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPick]);
   const hasPos = lat !== null && lng !== null && isFinite(lat) && isFinite(lng);
 
   React.useEffect(() => {
@@ -56,7 +64,11 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
       setStatus('done');
       // 자동 선택: 아직 아무것도 안 골랐거나, 전에 자동으로 고른 것(위치를 바꾸기 전 것)이면 새 1순위로
       const cur = valueRef.current;
-      if (!cur || (cur.auto && !cur.url)) {
+      if (!autoPickRef.current) {
+        // 직접 올린 사진이 있으면 자동으로 고르지 않는다 (자동으로 골라 둔 게 있으면 뺀다)
+        if (cur && cur.auto && !cur.url) onChange(null);
+        done(cur && !(cur.auto && !cur.url) ? cur : null);
+      } else if (!cur || (cur.auto && !cur.url)) {
         // 자동으로는 위키백과·구글(그 장소 사진)·거리 사진만. '근처'(위키미디어) 사진은 다른 건물일 수 있어 후보로만 둔다
         // (국내 가게에 길거리 자동차 사진이 자동으로 들어갔다 — 6차 B7-2)
         // 카카오(블로그) 사진도 다른 가게일 수 있어 자동으로는 고르지 않는다
@@ -112,6 +124,19 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
       {browsing && (
         !hasPos ? (
           <p className={`text-[11px] ${textMuted}`}>위치를 정하면 그 장소 사진을 찾아 자동으로 넣어 드려요.</p>
+        ) : !autoPick && !value && status === 'done' && cands.length > 0 ? (
+          <>
+            <p className={`text-[11px] ${textMuted}`}>직접 올린 사진이 있어서 자동으로는 넣지 않아요. 대표 사진을 더하고 싶으면 눌러 주세요.</p>
+            <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+              {cands.map(c => (
+                <button key={keyOf(c)} type="button" onClick={() => onChange({ ...c, auto: false })}
+                  className={`relative shrink-0 w-20 h-20 rounded-xl overflow-hidden border-2 transition-all ${isDarkMode ? 'border-slate-700' : 'border-transparent'}`}>
+                  <img src={c.thumb} className="w-full h-full object-cover" alt="" loading="lazy" />
+                  <span className="absolute bottom-0 inset-x-0 bg-black/55 text-white text-[9px] font-bold py-0.5">{badgeOf(c)}</span>
+                </button>
+              ))}
+            </div>
+          </>
         ) : status === 'loading' ? (
           <div className="flex gap-2 overflow-hidden">
             {[0, 1, 2, 3].map(i => <div key={i} className={`shrink-0 w-20 h-20 rounded-xl animate-pulse ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`} />)}
