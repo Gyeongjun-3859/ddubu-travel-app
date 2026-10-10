@@ -53,7 +53,8 @@ export async function googlePlaceLocation(placeId, sessionToken, languageCode = 
   if (!KEY) throw new Error('no-key');
   const lang = localLanguageCode || languageCode;
   // addressComponents: 나라 코드·도시 이름 — 지역을 안 정한 여행에 첫 장소 기준으로 국가·지역을 채울 때 씀(I2)
-  const fields = localLanguageCode ? 'location,formattedAddress,addressComponents,displayName' : 'location,formattedAddress,addressComponents';
+  // types: 장소 분류 — 검색으로 고른 장소의 테마(식당·카페·숙소…)를 자동으로 고르는 데 씀
+  const fields = localLanguageCode ? 'location,formattedAddress,addressComponents,types,displayName' : 'location,formattedAddress,addressComponents,types';
   const url = `${BASE}/places/${encodeURIComponent(placeId)}?languageCode=${lang}&sessionToken=${encodeURIComponent(sessionToken)}`;
   const res = await fetch(url, { headers: { 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': fields } });
   if (!res.ok) throw new Error(`places-details-${res.status}`);
@@ -71,6 +72,7 @@ export async function googlePlaceLocation(placeId, sessionToken, languageCode = 
     localName: (localLanguageCode && data.displayName && data.displayName.text) ? data.displayName.text : '',
     countryCode: countryComp ? (countryComp.shortText || '') : '',
     areaNames,
+    types: Array.isArray(data.types) ? data.types : [],
   };
 }
 

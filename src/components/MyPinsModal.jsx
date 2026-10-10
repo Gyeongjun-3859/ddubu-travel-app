@@ -5,6 +5,7 @@ import { tombstone } from '../sync/tripDataModel';
 import TripImg from './TripImg';
 
 const MyPinsModal = ({
+  showConfirm, setNewManualStorefront, setNewManualPhotos,
   isReadOnly, isOpen, onClose, cardBg, isDarkMode,
   myPinsFilter, setMyPinsFilter, tripDays, myPinsThemeFilter, setMyPinsThemeFilter,
   filteredMyPins, planTimeline,
@@ -30,7 +31,7 @@ const MyPinsModal = ({
                  {tripDays.map(d => (
                     <button key={d} onClick={() => setMyPinsFilter(d)} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors ${myPinsFilter === d ? 'bg-indigo-600 text-white shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-200 text-slate-500 hover:bg-slate-300')}`}>Day {d}</button>
                  ))}
-                 <button onClick={() => setMyPinsFilter('unlinked')} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors border ${myPinsFilter === 'unlinked' ? 'bg-slate-600 text-white border-slate-600 shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400 border-transparent' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50')}`}>미지정 핀</button>
+                 <button onClick={() => setMyPinsFilter('unlinked')} className={`px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors border ${myPinsFilter === 'unlinked' ? 'bg-slate-600 text-white border-slate-600 shadow' : (isDarkMode ? 'bg-slate-700 text-slate-400 border-transparent' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50')}`}>📦 보관함</button>
                  <select value={Array.isArray(myPinsThemeFilter) ? myPinsThemeFilter[0] : myPinsThemeFilter} onChange={e => setMyPinsThemeFilter([e.target.value])} className={`ml-2 px-2 py-1 rounded-full text-[10px] font-bold outline-none cursor-pointer transition-colors border ${isDarkMode ? 'bg-slate-700 text-slate-300 border-slate-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>                    <option value="all">테마 전체</option>
                     <option value="교통편">교통편 🚌</option>
                     <option value="식당">식당 🍽️</option>
@@ -50,6 +51,8 @@ const MyPinsModal = ({
                   setNewManualLocalName("");
                   setNewManualFeature("");
                   setNewManualPhoto("");
+                  if (typeof setNewManualStorefront === 'function') setNewManualStorefront(null);
+                  if (typeof setNewManualPhotos === 'function') setNewManualPhotos([]);
                   setNewManualIsAccommodation(false);
                   setPinLinkDay("");
                   setPinLinkPlanId("");
@@ -146,11 +149,22 @@ const MyPinsModal = ({
                         </button>
                         <button onClick={(e) => {
                            e.stopPropagation();
-                           const updated = safeCurrentRestaurants.filter(r => r && S(r.id) !== S(pin.id));
-                           setCurrentRestaurants(updated);
-                           // [삭제 표식] 배열에서 그냥 빼기만 하면 공유 여행에서 되살아날 수 있어, DB에는 tombstone을 남긴다.
-                           saveToDb({ current_restaurants: [...updated, tombstone(pin.id)] });
-                           showToast("핀이 삭제되었습니다.");
+                           const doDelete = () => {
+                             const updated = safeCurrentRestaurants.filter(r => r && S(r.id) !== S(pin.id));
+                             setCurrentRestaurants(updated);
+                             // [삭제 표식] 배열에서 그냥 빼기만 하면 공유 여행에서 되살아날 수 있어, DB에는 tombstone을 남긴다.
+                             saveToDb({ current_restaurants: [...updated, tombstone(pin.id)] });
+                             showToast("핀이 삭제되었습니다.");
+                           };
+                           // 바로 지우지 않고 한 번 묻는다 (예전엔 누르는 즉시 삭제됐다). 연결된 일정은 지우지 않고 남긴다.
+                           const linkedCount = findPlansForPin(pin, planTimeline).filter(p => p && !p.isTransport).length;
+                           if (typeof showConfirm === 'function') {
+                             showConfirm(
+                               `'${S(pin.name)}' 핀을 삭제할까요?` + (linkedCount > 0 ? `
+(연결된 일정 ${linkedCount}개는 그대로 남아요)` : ''),
+                               doDelete, null, { okLabel: '삭제' }
+                             );
+                           } else doDelete();
                         }} className="w-6 flex items-center justify-center bg-rose-50 text-rose-500 dark:bg-rose-900/30 dark:text-rose-400 py-1 rounded hover:bg-rose-100 transition-colors duration-300">
                            <span className="text-[10px]"><Trash2 className="w-[1em] h-[1em] inline" /></span>
                         </button>

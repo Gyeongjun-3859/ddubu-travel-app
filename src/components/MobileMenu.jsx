@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Plane, MapPin, Handshake, LogOut, Trash2, Camera, FolderOpen, Pencil, Mail, Undo2, Redo2, Settings } from 'lucide-react';
-import { S } from '../utils/helpers';
+import { S, planDayNum } from '../utils/helpers';
 
 const MobileMenu = ({
   isOpen, onClose, isDarkMode, appUserId,
@@ -39,7 +39,7 @@ const MobileMenu = ({
 
                   if (isActive && travelStartDate) {
                     const safePlans = Array.isArray(planTimeline) ? planTimeline.filter(p => p && !p.isAccommodation) : [];
-                    const lastDay = safePlans.length > 0 ? Math.max(...safePlans.map(p => parseInt(p.day || 1))) : maxDay;
+                    const lastDay = safePlans.length > 0 ? Math.max(...safePlans.map(p => planDayNum(p))) : maxDay;
                     const lastTime = safePlans.filter(p => parseInt(p.day) === lastDay).sort((a,b) => S(b.time).localeCompare(S(a.time)))[0]?.time || "23:59";
 
                     const endDate = new Date(travelStartDate);

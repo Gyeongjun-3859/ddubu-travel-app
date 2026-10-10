@@ -34,10 +34,15 @@ const TripModal = ({
               </select>
             </label>
             <label className="col-span-1 flex flex-col gap-1 text-[10px] font-bold text-slate-400">지역
-              <select value={S(tripModal.region)} onChange={e => setTripModal({ ...tripModal, region: e.target.value })} disabled={!tripModal.country} className={`${inputBg} p-2 text-xs font-bold outline-none rounded disabled:opacity-50`}>
-                <option value="">나중에</option>
-                {(REGIONS_BY_COUNTRY[tripModal.country] || []).map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
+              {/* 앱에 지역 목록이 없는 나라(예전 카자흐스탄 등)는 직접 입력 — 예전엔 '나중에'밖에 고를 수 없었다 */}
+              {tripModal.country && (REGIONS_BY_COUNTRY[tripModal.country] || []).length === 0 ? (
+                <input type="text" value={S(tripModal.region)} onChange={e => setTripModal({ ...tripModal, region: e.target.value })} placeholder="도시 이름 입력" className={`${inputBg} p-2 text-xs font-bold outline-none rounded`} />
+              ) : (
+                <select value={S(tripModal.region)} onChange={e => setTripModal({ ...tripModal, region: e.target.value })} disabled={!tripModal.country} className={`${inputBg} p-2 text-xs font-bold outline-none rounded disabled:opacity-50`}>
+                  <option value="">나중에</option>
+                  {(REGIONS_BY_COUNTRY[tripModal.country] || []).map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              )}
             </label>
             <label className="col-span-1 flex flex-col gap-1 text-[10px] font-bold text-slate-400">시작일
               <input type="date" value={S(tripModal.startDate)} onChange={e => setTripModal({ ...tripModal, startDate: e.target.value })} className={`${inputBg} p-2 text-xs font-bold outline-none rounded`} />

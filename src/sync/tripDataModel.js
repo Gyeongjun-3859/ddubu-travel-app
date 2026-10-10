@@ -104,6 +104,10 @@ export function cleanRestaurantItem(r) {
     country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng,
     isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark),
     theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "",
+    // 가게 앞 사진(Mapillary 거리 사진을 우리 저장소에 복사한 것) — 출처 표시(찍은 사람·날짜)에 필요. 사진 자체는 imgs에도 들어 있다.
+    ...(r.storefront && r.storefront.url ? { storefront: {
+      url: S(r.storefront.url), mapillaryId: S(r.storefront.mapillaryId), author: S(r.storefront.author), capturedAt: r.storefront.capturedAt || 0,
+    } } : {}),
     // [신규] 예전엔 핀에 updatedAt이 아예 없어서 충돌 해결(누구 수정이 최신인지 비교)이 불가능했다.
     updatedAt: r.updatedAt || 0,
   };
@@ -125,7 +129,8 @@ export const ARRAY_FIELDS = {
   shopping_list: { clean: null },                 // pass-through, 정제 매퍼 없음
 };
 
-export const SCALAR_FIELDS = ['display_city_name', 'travel_start_date', 'flights', 'max_day'];
+// trip_country: 여행 국가(012 SQL로 추가). 예전엔 저장하지 않고 지역 이름으로 짐작해서, 목록에 없는 지역(알마티 등)은 이전 여행 국가가 따라왔다
+export const SCALAR_FIELDS = ['display_city_name', 'travel_start_date', 'flights', 'max_day', 'trip_country'];
 
 // 동기화 엔진이 절대 쓰지 않는(보관함/공유 흐름 전용) 컬럼.
 export const NON_SYNC_FIELDS = ['shared_users', 'viewer_users', 'archived', 'finish_date', 'owner_app_user_id'];

@@ -3,6 +3,7 @@ import { X, Check, Copy, Calendar, ArrowUpDown, Camera, Image as ImageIcon, Book
 import { S, compressAndStoreImage, isExpenseRecord, findPinForPlan } from '../utils/helpers';
 import { usePlaceSearch } from '../hooks/usePlaceSearch';
 import TripImg from './TripImg';
+import StorefrontPicker from './StorefrontPicker';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -28,14 +29,40 @@ const AddPlaceModal = ({
   newManualAccommodationDays, setNewManualAccommodationDays,
   manualFileInputRef, supabaseClient, appUserId, activeTripId,
   handleManualPlaceAdd, currentRestaurants, showConfirm, country, onPickArea,
+  newManualStorefront, setNewManualStorefront,
 }) => {
   // 장소 자동완성은 일정 수정 창과 같은 훅을 쓴다. 해외 장소를 구글에서 고르면 현지어 이름도 (비어 있을 때) 채운다.
   const { suggestions: placeSuggestions, showSuggestions, setShowSuggestions, onQueryChange, select: selectSuggestion } = usePlaceSearch({
     isKakaoMap, isKakaoMapLoaded, country, showToast, biasPins: currentRestaurants,
-    onPick: ({ name, lat, lng, localName, area }) => {
+    myPins: currentRestaurants, excludePinId: clickedLocation?.id,
+    onPick: ({ name, lat, lng, localName, area, pin, theme }) => {
+      if (pin) {
+        // 저장해 둔 내 핀을 골랐으면 그 핀의 내용을 채우고, 저장하면 새 핀 대신 이 핀에 일정이 연결되게 한다
+        const pinSf = pin.storefront && pin.storefront.url ? pin.storefront : null;
+        const pinImgs = (Array.isArray(pin.imgs) && pin.imgs.length > 0 ? pin.imgs : (pin.img && !S(pin.img).includes('unsplash') ? [S(pin.img)] : []))
+          .filter(u => !pinSf || u !== pinSf.url);
+        setNewManualPlaceName(S(pin.name));
+        setNewManualLocalName(S(pin.localName));
+        setNewManualFeature(pin.signature && S(pin.signature) !== "직접 추가한 장소" ? S(pin.signature) : "");
+        setNewManualTheme(S(pin.theme) || "기타");
+        setNewManualIsAccommodation(Boolean(pin.isAccommodation));
+        setNewManualPhotos(pinImgs);
+        setNewManualPhoto(pinImgs[0] || "");
+        if (typeof setNewManualStorefront === 'function') setNewManualStorefront(pinSf);
+        if (typeof onPickArea === 'function') onPickArea(null);
+        if (typeof setClickedLocation === 'function') setClickedLocation({ id: pin.id, lat: pin.lat, lng: pin.lng });
+        showToast("📍 저장해 둔 핀을 불러왔어요. 저장하면 이 핀에 일정이 연결돼요.");
+        return;
+      }
       setNewManualPlaceName(name);
       if (typeof onPickArea === 'function') onPickArea(area || null);
-      if (localName && !S(newManualLocalNameRef.current).trim()) setNewManualLocalName(localName);
+      // 다른 장소를 골랐으면 현지어 이름도 그 장소 것으로 (예전엔 비어 있을 때만 채워서 이전 장소 이름이 남았다 — 4차 A)
+      setNewManualLocalName(localName || '');
+      // 테마는 아직 '기타'일 때만 고른 장소 분류로 (사용자가 직접 고른 테마는 그대로)
+      if (theme && theme !== '기타' && (!newManualThemeRef.current || newManualThemeRef.current === '기타')) {
+        setNewManualTheme(theme);
+        if (theme === '숙소') setNewManualIsAccommodation(true);
+      }
       if (!isNaN(lat) && !isNaN(lng) && typeof setClickedLocation === 'function') {
         setClickedLocation(prev => ({ ...(prev || {}), lat, lng }));
       }
@@ -44,6 +71,8 @@ const AddPlaceModal = ({
   const [isPreviewOpen, setIsPreviewOpen] = React.useState(false); // 좁은 화면에서 "등록된 일정" 미리보기 펼침 여부
   const newManualLocalNameRef = React.useRef(newManualLocalName);
   newManualLocalNameRef.current = newManualLocalName;
+  const newManualThemeRef = React.useRef(newManualTheme);
+  newManualThemeRef.current = newManualTheme;
   // 기존 일정을 불러오기 직전의 위치(지도 클릭 좌표 등) — "새 일정으로"로 되돌릴 때 복원용
   const locationBeforeLoadRef = React.useRef(null);
 
@@ -82,12 +111,19 @@ const AddPlaceModal = ({
     setNewManualTheme(S(matched.theme) || "기타");
     setNewManualIsAccommodation(Boolean(matched.isAccommodation));
     setNewManualAccommodationDays(Array.isArray(matched.accommodationDays) ? matched.accommodationDays : []);
-    const matchedImgs = Array.isArray(matched.photos) && matched.photos.length > 0 ? matched.photos : (matched.photo ? [matched.photo] : []);
+    const linkedPin = findPinForPlan(matched, currentRestaurants, planTimeline);
+    // 연결된 핀에 가게 앞 사진이 있으면 그 칸에 따로 두고, 직접 올린 사진 목록에서는 뺀다(저장할 때 중복 방지)
+    const linkedSf = linkedPin && linkedPin.storefront && linkedPin.storefront.url ? linkedPin.storefront : null;
+    const matchedImgs = (Array.isArray(matched.photos) && matched.photos.length > 0 ? matched.photos : (matched.photo ? [matched.photo] : []))
+      .filter(u => !linkedSf || u !== linkedSf.url);
     setNewManualPhotos(matchedImgs);
     setNewManualPhoto(matchedImgs[0] || "");
-    const linkedPin = findPinForPlan(matched, currentRestaurants, planTimeline);
+    if (typeof setNewManualStorefront === 'function') setNewManualStorefront(linkedSf);
     if (typeof setClickedLocation === 'function') {
-      setClickedLocation(linkedPin ? { id: linkedPin.id, lat: linkedPin.lat, lng: linkedPin.lng } : null);
+      // 불러온 일정에 연결된 핀이 있으면 그 핀을 고친다. 없으면 지금 창의 위치를 그대로 쓴다 —
+      // 핀 수정 창에서 연결 안 된 일정을 불러오면 지금 고치던 핀에 그 일정을 연결하고, 지도를 눌러 연 창이면
+      // 그 좌표로 핀을 만든다. (예전엔 null로 비워서 좌표 없는 핀이 새로 생기고 고치던 핀은 따로 남았다 — 4차 F)
+      setClickedLocation(linkedPin ? { id: linkedPin.id, lat: linkedPin.lat, lng: linkedPin.lng } : (clickedLocation || null));
     }
     showToast("✨ 선택한 일정을 불러왔어요. 고친 뒤 등록하면 이 일정이 수정돼요.");
   };
@@ -117,6 +153,7 @@ const AddPlaceModal = ({
     setNewManualAccommodationDays([]);
     setNewManualPhotos([]);
     setNewManualPhoto("");
+    if (typeof setNewManualStorefront === 'function') setNewManualStorefront(null);
     if (typeof setClickedLocation === 'function') setClickedLocation(locationBeforeLoadRef.current);
     locationBeforeLoadRef.current = null;
   };
@@ -292,7 +329,7 @@ const AddPlaceModal = ({
                 >
                   <option value="">-- 연동 안 함 --</option>
                   {tripDays.map(d => <option key={d} value={d}>Day {d}</option>)}
-                  <option value="0">미지정 핀 (보관함)</option>
+                  <option value="0">📦 보관함 (Day 미정)</option>
                 </select>
               </div>
               <div>
@@ -366,6 +403,15 @@ const AddPlaceModal = ({
               className={`${inputCls} font-mono`}
             />
           </section>
+
+          {/* 5-1. 가게 앞 사진 (근처 거리 사진 중 고르기) — 직접 올린 사진이 없으면 이게 대표 사진 */}
+          {typeof setNewManualStorefront === 'function' && (
+            <StorefrontPicker
+              lat={clickedLocation?.lat} lng={clickedLocation?.lng}
+              value={newManualStorefront} onChange={setNewManualStorefront}
+              isDarkMode={isDarkMode} textMuted={textMuted}
+            />
+          )}
 
           {/* 6. 사진 첨부 */}
           <section className="space-y-2">

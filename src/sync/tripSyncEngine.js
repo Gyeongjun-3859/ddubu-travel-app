@@ -397,6 +397,19 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
         .select('id');
 
       if (updErr) {
+        // 서버에 아직 없는 칸(새 칸을 만드는 SQL을 실행하기 전)을 보내서 실패했으면, 그 칸만 빼고 바로 다시 보낸다.
+        // 안 그러면 실패 → 재시도가 끝없이 반복돼 다른 변경까지 전부 저장되지 않는다(009 사고와 같은 유형).
+        const missingCol = (updErr.code === '42703' || updErr.code === 'PGRST204')
+          ? (String(updErr.message || '').match(/'([a-z_]+)' column|column "?([a-z_]+)"?/) || []).slice(1).find(Boolean)
+          : null;
+        if (missingCol && Object.prototype.hasOwnProperty.call(batch.scalars, missingCol)) {
+          console.warn(`[동기화] 서버에 '${missingCol}' 칸이 없어 이 칸만 빼고 다시 저장합니다`);
+          delete batch.scalars[missingCol];
+          const idx = touchedScalarKeys.indexOf(missingCol);
+          if (idx >= 0) touchedScalarKeys.splice(idx, 1);
+          if (touchedScalarKeys.length === 0 && touchedArrayFields.length === 0) return;
+          continue;
+        }
         console.error('❌ [동기화] 저장 실패', updErr);
         failAndRetryLater(tripId, state, batch);
         return;

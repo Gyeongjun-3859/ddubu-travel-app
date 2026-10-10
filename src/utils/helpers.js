@@ -52,14 +52,16 @@ export function findPinForPlan(plan, pins, plans) {
   if (!plan) return null;
   const list = (Array.isArray(pins) ? pins : []).filter(Boolean);
   if (plan.pinId != null && plan.pinId !== '') {
-    const byId = list.find(r => S(r.id) === S(plan.pinId));
-    if (byId) return byId;
+    // 번호로 연결된 핀이 지워졌으면 "연결된 핀 없음"이다. 이름으로 다시 찾으면 이름이 같은
+    // 다른 일정의 핀을 가져가 고쳐 버렸다(4차 테스트 H: 두 일정이 한 핀을 같이 쓰게 됨).
+    return list.find(r => S(r.id) === S(plan.pinId)) || null;
   }
   const name = S(plan.place).trim();
   if (!name) return null;
   const claimed = new Set((Array.isArray(plans) ? plans : []).filter(p => p && S(p.id) !== S(plan.id) && p.pinId).map(p => S(p.pinId)));
   const candidates = list.filter(r => S(r.name).trim() === name);
-  return candidates.find(r => !claimed.has(S(r.id))) || candidates[0] || null;
+  // 다른 일정이 번호로 연결해 둔 핀은 절대 가져가지 않는다 (예전엔 남는 게 없으면 그 핀이라도 잡았다)
+  return candidates.find(r => !claimed.has(S(r.id))) || null;
 }
 
 // 이 핀에 연결된 일정들 — 핀 번호로 연결된 일정 + (번호 없는 옛 일정 중) 이름이 같은 일정
@@ -69,6 +71,20 @@ export function findPlansForPin(pin, plans) {
   return (Array.isArray(plans) ? plans : []).filter(Boolean).filter(p =>
     (p.pinId != null && p.pinId !== '') ? S(p.pinId) === S(pin.id) : (name !== '' && S(p.place).trim() === name)
   );
+}
+
+// 일정의 Day 번호. 0 = 보관함(Day 미정). 예전엔 `parseInt(p.day || 1)`로 읽어서 0(보관함)이 1로 바뀌어
+// 보관함에 넣은 장소가 D1 목록에 줄줄이 섞였다(4차 E). day가 아예 없는 옛 일정만 1로 본다.
+export function planDayNum(plan) {
+  if (!plan) return 1;
+  if (plan.day === 0 || plan.day === '0') return 0;
+  const n = parseInt(plan.day);
+  return isNaN(n) ? 1 : n;
+}
+
+// 보관함 핀 — 어느 Day(1 이상)에도 들어가지 않은 핀 (연결된 일정이 없거나, 보관함(Day 0) 일정에만 연결됨)
+export function isArchivedPin(pin, plans) {
+  return !findPlansForPin(pin, plans).some(p => planDayNum(p) >= 1 && !isExpenseRecord(p));
 }
 
 // 여행정산에서 넣은 지출 기록인지 — 지출 기록은 일정 목록(plan_timeline)에 일정 모양으로 저장되지만

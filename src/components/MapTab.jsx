@@ -128,7 +128,7 @@ const MapTab = ({
           <button
             onClick={() => toggleMapDay('unlinked')}
             className={`px-3.5 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap shrink-0 border transition-all ${mapActiveDays.includes('unlinked') ? 'bg-slate-500 text-white border-slate-500' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-300')}`}
-          >미지정 핀</button>
+          >📦 보관함</button>
         </div>
 
         {/* 카테고리 칩 (단일 선택) */}

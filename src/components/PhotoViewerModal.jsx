@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import TripImg from './TripImg';
+import { getStorefrontByUrl, storefrontCredit, mapillaryPhotoLink } from '../utils/mapillary';
 
 const PhotoViewerModal = ({
   viewPhoto, setViewPhoto, setViewPhotoAnim,
@@ -184,6 +185,8 @@ const PhotoViewerModal = ({
       cursor: absOff === 0 ? 'default' : 'pointer', pointerEvents: 'none',
     };
   };
+  // 지금 보는 사진이 가게 앞 사진(Mapillary)이면 출처 표시 (CC BY-SA 조건)
+  const curSf = getStorefrontByUrl(imgs[idx]);
   const offsets = [-2, -1, 0, 1, 2].filter(o => { const ci = idx + o; return ci >= 0 && ci < n; });
 
   return (
@@ -221,6 +224,13 @@ const PhotoViewerModal = ({
           );
         })}
       </div>
+      {curSf && (
+        <a href={mapillaryPhotoLink(curSf.mapillaryId)} target="_blank" rel="noopener noreferrer"
+           onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}
+           className="text-white/80 text-[11px] pb-2 hover:text-white" style={{ zIndex: 30 }}>
+          🏪 가게 앞 · 📷 {storefrontCredit(curSf)}
+        </a>
+      )}
       {/* 하단 미니 썸네일 */}
       {n > 1 && (
         <div className="flex gap-2 pb-6 pt-2 px-4 flex-shrink-0" style={{ zIndex: 30 }}

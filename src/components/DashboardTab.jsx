@@ -44,6 +44,7 @@ const DashboardTab = ({
   handleEditPlanClick, handleDeletePlan, changeTab, displayCityName, openPhotoViewer,
   currentRestaurants, setIsSettingsOpen,
   isDomesticTrip, countryTips = [], resolvedGlobalCountry,
+  archivedPins = [], onOpenArchive,
 }) => {
   const [transitView, setTransitView] = useState(null);
   const [isTipsOpen, setIsTipsOpen] = useState(false);
@@ -271,6 +272,23 @@ const DashboardTab = ({
             })}
           </div>
         </div>
+
+        {/* 📦 보관함 — 날짜를 아직 정하지 않은 장소 (누르면 일정 탭의 보관함 목록) */}
+        {archivedPins.length > 0 && (
+          <div onClick={() => onOpenArchive && onOpenArchive()}
+            className={`rounded-2xl border p-3.5 cursor-pointer transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:bg-slate-700/60' : 'bg-white border-slate-200 shadow-sm hover:bg-slate-50'}`}>
+            <div className="flex items-center justify-between">
+              <span className={`text-sm font-bold ${textMain}`}>📦 보관함 <span className="text-[#007AFF]">{archivedPins.length}곳</span></span>
+              <span className={`text-[11px] font-semibold ${textMuted}`}>일정에 넣기 ›</span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {archivedPins.slice(0, 6).map(pin => (
+                <span key={pin.id} className={`max-w-[10rem] truncate rounded-full px-2.5 py-1 text-[11px] font-semibold ${isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-[#f4f3f8] text-slate-600'}`}>{S(pin.name)}</span>
+              ))}
+              {archivedPins.length > 6 && <span className={`px-1 py-1 text-[11px] font-semibold ${textMuted}`}>외 {archivedPins.length - 6}곳</span>}
+            </div>
+          </div>
+        )}
 
         {/* 2열: 실시간 환율 / 빠른 도구 (국내 여행이면 환율 계산기는 숨김) */}
         <div className={`grid grid-cols-1 ${isDomesticTrip ? '' : 'sm:grid-cols-2'} gap-3`}>

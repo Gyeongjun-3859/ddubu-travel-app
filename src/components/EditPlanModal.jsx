@@ -30,10 +30,13 @@ const EditPlanModal = ({
   // 골라 둔 좌표는 저장 때 연결된 핀 위치에 반영한다(_pickedLat/_pickedLng는 화면 전용 — 일정 데이터엔 안 들어감).
   const placeSearch = usePlaceSearch({
     isKakaoMap, isKakaoMapLoaded, country, showToast, biasPins: currentRestaurants,
-    onPick: ({ name, lat, lng, localName }) => {
+    onPick: ({ name, lat, lng, localName, theme }) => {
       setEditingPlan(prev => prev ? ({
         ...prev, place: name,
-        ...(localName && !S(prev.localName).trim() ? { localName } : {}),
+        // 다른 장소를 골랐으면 현지어 이름도 그 장소 것으로 (예전엔 비어 있을 때만 채워 이전 장소 이름이 남았다 — 4차 A)
+        localName: localName || '',
+        // 테마는 '기타'일 때만 고른 장소 분류로
+        ...(theme && theme !== '기타' && (!prev.theme || prev.theme === '기타') ? { theme, ...(theme === '숙소' ? { isAccommodation: true } : {}) } : {}),
         ...(!isNaN(lat) && !isNaN(lng) ? { _pickedLat: lat, _pickedLng: lng } : {}),
       }) : prev);
     },
@@ -402,7 +405,30 @@ const EditPlanModal = ({
                 isLandmark: Boolean(editingPlan.isLandmark),
                 theme: editingPlan.theme || "기타"
               };
+              // 일정 사진에서 가게 앞 사진을 지웠으면 핀의 출처 정보도 같이 지운다
+              const sf = updatedRests[matchedIndex].storefront;
+              if (sf && !(updatedRests[matchedIndex].imgs || []).includes(sf.url)) delete updatedRests[matchedIndex].storefront;
               setCurrentRestaurants(updatedRests);
+              dbUpdates.current_restaurants = updatedRests;
+            } else if (editingPlan._pickedLat != null && !planData.isTransport) {
+              // 연결된 핀이 없는 일정(핀을 지웠거나 예전 일정)에서 검색으로 장소를 골랐으면 그 자리에 핀을 새로 만들어
+              // 연결한다 — 예전엔 고른 좌표를 버려서 "저장하면 지도 핀도 이동" 안내와 달리 지도에 아무것도 안 생겼다.
+              const newPinId = `manual-${Date.now()}`;
+              const newPin = {
+                id: newPinId, lat: editingPlan._pickedLat, lng: editingPlan._pickedLng,
+                country: S(finalCountry), city: S(finalRegion),
+                name: S(planData.place), localName: S(planData.localName),
+                signature: planData.features ? S(planData.features) : "직접 추가한 장소",
+                img: S(planData.photo) || "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
+                imgs: Array.isArray(planData.photos) ? planData.photos : [],
+                rating: 0, isAccommodation: Boolean(planData.isAccommodation), isLandmark: Boolean(editingPlan.isLandmark),
+                theme: S(planData.theme) || "기타",
+              };
+              planData.pinId = newPinId;
+              updatedTimeline = updatedTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p);
+              const updatedRests = [newPin, ...safeCurrentRestaurants];
+              setCurrentRestaurants(updatedRests);
+              dbUpdates.plan_timeline = updatedTimeline;
               dbUpdates.current_restaurants = updatedRests;
             }
 

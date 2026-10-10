@@ -5,10 +5,11 @@ import { Browser } from '@capacitor/browser';
 import { App as CapacitorApp } from '@capacitor/app';
 import { X, Menu, LayoutDashboard, Calendar, Map as MapIcon, Wallet, Plane, Backpack, ShoppingBag, Mail, Settings, ClipboardList, CloudSun, MapPin, Navigation, LogOut, Home, Compass, ListChecks, PenLine, Globe, Clock, Tag, Search, Camera, Pencil, FolderOpen, Trash2, Handshake, Undo2, Redo2, RefreshCw, Plus } from 'lucide-react';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTRY_FLAG, KAKAO_CAT_COLORS, CITY_NAME_TO_EN, COUNTRY_TIPS, COUNTRY_PACKING_SUGGESTIONS, REGION_PACKING_SUGGESTIONS } from './utils/constants';
-import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, themeFromGoogleTypes, isExpenseRecord, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
+import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, themeFromGoogleTypes, isExpenseRecord, planDayNum, isArchivedPin, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
 import { hasGooglePlacesKey, googleNearbyPlace } from './utils/googlePlaces';
+import { copyStorefrontPhoto, setStorefrontCredits } from './utils/mapillary';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
 import PackingDashboardModal from './components/PackingDashboardModal';
@@ -33,6 +34,7 @@ import Toast from './components/Toast';
 import ConfirmModal from './components/ConfirmModal';
 import DashboardTab from './components/DashboardTab';
 import PlanTimelinePanel from './components/PlanTimelinePanel';
+import ArchivePinsPanel from './components/ArchivePinsPanel';
 import MapTab from './components/MapTab';
 import LoginScreen from './components/LoginScreen';
 import DynamicStyles from './components/DynamicStyles';
@@ -190,6 +192,8 @@ const MainApp = () => {
 
   const [planTimeline, setPlanTimeline] = useState([]);
   const [currentRestaurants, setCurrentRestaurants] = useState([]);
+  // 사진 크게 보기 화면에서 가게 앞 사진 출처를 찾을 수 있게 핀 목록이 바뀔 때마다 모아 둔다
+  useEffect(() => { setStorefrontCredits(currentRestaurants); }, [currentRestaurants]);
   const currentRestaurantsRef = useRef(currentRestaurants); 
   const [displayCityName, setDisplayCityName] = useState("선택된 지역 없음");
   const [travelStartDate, setTravelStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -310,6 +314,7 @@ const MainApp = () => {
     applyZoomTransform, resetZoom, openPhotoViewer, goPhotoNext, goPhotoPrev,
   } = usePhotoViewer();
   const [newManualPhotos, setNewManualPhotos] = useState([]); // 핀 등록 다중 사진
+  const [newManualStorefront, setNewManualStorefront] = useState(null); // 핀 '가게 앞 사진'(Mapillary) — 고른 후보 또는 저장된 사진
   const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
   const pendingMapFlyRef = useRef(null); // 핀 이동 버튼 클릭 시 탭 전환 후 flyTo 대기 좌표
   
@@ -385,7 +390,8 @@ const MainApp = () => {
   useEffect(() => {
     return () => { if (manualRegionSaveTimer.current) clearTimeout(manualRegionSaveTimer.current); };
   }, [activeTripId]);
-  const lastCitySyncRef = useRef({ tripId: null, cName: null });
+  const lastCitySyncRef = useRef({ tripId: null, cName: null, country: "" });
+  const manualCountrySaveTimer = useRef(null);
   const nearbyNameReqRef = useRef(0); // 지도 클릭 → 근처 장소 이름 조회 요청 번호(늦게 온 응답 무시용) // 국가/지역 칸을 마지막으로 맞춘 여행·지역
   const loadedTripIdRef = useRef(null);
   // 화면 state가 어느 여행 것으로 "로드 완료"됐는지(state 버전) — 실행취소 기록을 로드 완료 후부터 시작하는 데 사용
@@ -682,6 +688,17 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
     return () => { window.removeEventListener('paste', handlePaste); window.removeEventListener('ddubu-photo-failed', handlePhotoFailed); };
   }, []);
 
+  // 여행에 저장된 국가(trip_country)로 국가·지역 칸을 맞춘다. 지역이 앱 목록에 없으면(알마티 등) 직접 입력으로.
+  const applyTripCountry = useCallback((country, cityName) => {
+    const c = S(country);
+    if (Object.keys(REGIONS_BY_COUNTRY).includes(c)) { setGlobalPlanCountry(c); setGlobalManualCountry(""); }
+    else { setGlobalPlanCountry("수동입력"); setGlobalManualCountry(c); }
+    const hasCity = cityName && cityName !== "선택된 지역 없음";
+    if (!hasCity) { setGlobalPlanRegion(""); setGlobalManualRegion(""); }
+    else if ((REGIONS_BY_COUNTRY[c] || []).includes(cityName)) { setGlobalPlanRegion(cityName); setGlobalManualRegion(""); }
+    else { setGlobalPlanRegion("수동입력"); setGlobalManualRegion(cityName); }
+  }, []);
+
   const syncCountryRegionFromCityName = useCallback((cityName, timeline = []) => {
     if (!cityName || cityName === "선택된 지역 없음") return;
     let matchedCountry = "";
@@ -711,14 +728,9 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
             setGlobalPlanCountry("수동입력");
             setGlobalManualCountry(plan.country);
         } else {
-            // 이 트립에 국가 정보 자체가 없을 때만(완전히 새 트립) 마지막으로 썼던 국가로 폴백
-            try {
-              const savedCountry = localStorage.getItem('my_travel_global_country');
-              if (savedCountry && Object.keys(REGIONS_BY_COUNTRY).includes(savedCountry)) {
-                setGlobalPlanCountry(savedCountry);
-                setGlobalManualCountry("");
-              }
-            } catch(e){}
+            // 국가를 알 수 없으면 비워서 사용자가 고르게 한다. 예전엔 기기에 남은 '마지막 국가'로 채우거나
+            // 이전 여행 국가를 그대로 둬서, 알마티 여행에 '일본'이 저장되고 현지어 이름이 일본어로 채워졌다(4차 K).
+            setGlobalPlanCountry(""); setGlobalManualCountry("");
         }
     }
   }, []);
@@ -831,9 +843,13 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
     setNewManualPlaceName(S(pin.name));
     setNewManualLocalName(S(pin.localName));
     setNewManualFeature(pin.signature === "직접 추가한 장소" ? "" : S(pin.signature));
-    const pinImgs = Array.isArray(pin.imgs) && pin.imgs.length > 0 ? pin.imgs : (pin.img && !S(pin.img).includes("unsplash") ? [S(pin.img)] : []);
+    // 가게 앞 사진은 '가게 앞 사진' 칸에 따로 두고, 직접 올린 사진 목록에서는 뺀다 (저장할 때 다시 합침)
+    const pinSf = pin.storefront && pin.storefront.url ? pin.storefront : null;
+    const pinImgs = (Array.isArray(pin.imgs) && pin.imgs.length > 0 ? pin.imgs : (pin.img && !S(pin.img).includes("unsplash") ? [S(pin.img)] : []))
+      .filter(u => !pinSf || u !== pinSf.url);
     setNewManualPhoto(pinImgs[0] || "");
     setNewManualPhotos(pinImgs);
+    setNewManualStorefront(pinSf);
     setNewManualIsAccommodation(Boolean(pin.isAccommodation));
     setNewManualIsLandmark(Boolean(pin.isLandmark));
     setNewManualTheme(pin.theme ? S(pin.theme) : "기타");
@@ -966,6 +982,7 @@ const saveToDb = useCallback((updates, explicitTripId) => {
         plan_timeline: planTimeline,
         flights: flights,
         max_day: maxDay,
+        trip_country: S(globalPlanCountry === '수동입력' ? globalManualCountry : globalPlanCountry),
         // 내 개인 항목은 복사본 여행 데이터가 아니라 내 계정의 개인 저장소로 (I5)
         packing_list: (Array.isArray(packingList) ? packingList : []).filter(it => isMineOrShared(it) && !(it && it.isPersonal)),
         shopping_list: (Array.isArray(shoppingList) ? shoppingList : []).filter(it => isMineOrShared(it) && !(it && it.isPersonal)),
@@ -1050,7 +1067,7 @@ const saveToDb = useCallback((updates, explicitTripId) => {
         const insertPayload = {
           id: newId, display_city_name: newCityName, travel_start_date: newStartDate, max_day: newMaxDay,
           current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [],
-          shared_users: [], owner_app_user_id: appUserId
+          shared_users: [], owner_app_user_id: appUserId, trip_country: newCountry
         };
         const { error: insErr } = await supabaseClient.from('travel_state').insert(insertPayload);
         if (insErr && insErr.code === '42703') {
@@ -1061,7 +1078,7 @@ const saveToDb = useCallback((updates, explicitTripId) => {
         try {
           const allStr = localStorage.getItem('my_travel_states') || '{}';
           const all = JSON.parse(allStr);
-          all[newId] = { display_city_name: newCityName, travel_start_date: newStartDate, max_day: newMaxDay, current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [] };
+          all[newId] = { display_city_name: newCityName, travel_start_date: newStartDate, max_day: newMaxDay, trip_country: newCountry, current_restaurants: [], plan_timeline: [], flights: { outbound: null, inbound: null }, packing_list: [] };
           localStorage.setItem('my_travel_states', JSON.stringify(all));
           localStorage.setItem('my_travel_guest_trips', JSON.stringify(updatedTrips));
           localStorage.setItem('my_travel_guest_active_trip', newId);
@@ -1085,8 +1102,9 @@ const saveToDb = useCallback((updates, explicitTripId) => {
       setPackingList([]);
       setShoppingList([]);
       // 국가/지역 칸: 만들기 창에서 고른 값으로, 안 골랐으면 비운다 (이전 여행 값이 남아 새 일정에 저장되던 문제)
-      setGlobalPlanCountry(newCountry); setGlobalPlanRegion(newRegion); setGlobalManualCountry(""); setGlobalManualRegion("");
-      lastCitySyncRef.current = { tripId: newId, cName: newCityName };
+      if (newCountry) applyTripCountry(newCountry, newCityName);
+      else { setGlobalPlanCountry(""); setGlobalPlanRegion(newRegion); setGlobalManualCountry(""); setGlobalManualRegion(""); }
+      lastCitySyncRef.current = { tripId: newId, cName: newCityName, country: newCountry };
       loadedTripIdRef.current = newId; setLoadedTripId(newId);
       if (appUserId !== "Guest") setTripNameOnServer(newId, S(tripModal.name));
 
@@ -1570,45 +1588,86 @@ async function confirmDeleteTrip() {
     window.addEventListener('blur', () => clearTimeout(fallback), { once: true });
   }
 
-  function handleManualPlaceAdd(isFromMap = true) {
+  // 핀 저장 버튼: 가게 앞 사진을 새로 골랐으면 먼저 우리 저장소로 복사한 뒤 저장한다.
+  // (고를 때마다 복사하면 고르다 바꾼 사진 파일이 저장소에 버려진 채 남는다)
+  const storefrontSavingRef = useRef(false);
+  async function savePlaceWithStorefront(isFromMap = true) {
+    if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
+    let sf = newManualStorefront;
+    if (sf && !sf.url && sf.full) {
+      if (storefrontSavingRef.current) return; // 두 번 누름 방지
+      storefrontSavingRef.current = true;
+      showToast("🏪 가게 앞 사진을 저장하는 중이에요…");
+      try {
+        sf = await copyStorefrontPhoto(supabaseClient, appUserId, activeTripId, sf);
+      } catch (err) {
+        console.warn('[가게 앞 사진 저장 실패]', err && err.message);
+        showToast("가게 앞 사진은 저장하지 못했어요. 장소만 저장할게요.");
+        sf = null;
+      } finally {
+        storefrontSavingRef.current = false;
+      }
+    }
+    handleManualPlaceAdd(isFromMap, sf && sf.url ? sf : null);
+  }
+
+  function handleManualPlaceAdd(isFromMap = true, storefront = null) {
     if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
     // 검색으로 고른 장소의 국가·지역(I2). 여행에 국가·지역이 없을 때 이 값으로 채운다.
     const area = pickedAreaRef.current;
     pickedAreaRef.current = null;
     const tripAreaUnset = !displayCityName || displayCityName === '선택된 지역 없음';
     
-    let pLat = clickedLocation?.lat || null;
-    let pLng = clickedLocation?.lng || null;
-
     const safeCurrentRestaurants = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
-
-    if (clickedLocation?.id) {
-      // 기존 핀 수정: 창에서 장소 검색으로 새 위치를 골랐으면 그 좌표를, 아니면 기존 핀 좌표를 쓴다.
-      // (예전엔 항상 기존 좌표로 덮어써서, 검색으로 위치를 바꿔도 반영되지 않았다)
-      const existing = safeCurrentRestaurants.find(r => r && S(r.id) === S(clickedLocation.id));
-      pLat = clickedLocation.lat ?? existing?.lat ?? null;
-      pLng = clickedLocation.lng ?? existing?.lng ?? null;
+    // 위치를 정하지 않았는데(검색·지도 클릭 안 함) 이름이 똑같은 핀이 이미 있으면 그 핀에 저장한다.
+    // 예전엔 좌표 없는 같은 이름 핀이 하나 더 생겼다(4차 C).
+    let loc = clickedLocation;
+    let reusedPin = null; // 이름만 같아서 기존 핀을 쓰는 경우 — 창에서 비워 둔 칸은 그 핀 값을 유지해야 한다
+    if (!loc?.id && !(loc?.lat && loc?.lng)) {
+      const same = safeCurrentRestaurants.find(r => r && S(r.name).trim() === S(newManualPlaceName).trim());
+      if (same) { loc = { id: same.id, lat: same.lat, lng: same.lng }; reusedPin = same; }
     }
 
-    const placeId = clickedLocation?.id || `manual-${Date.now()}`;
-    const finalImgs = newManualPhotos.length > 0 ? newManualPhotos : (newManualPhoto ? [newManualPhoto] : []);
+    let pLat = loc?.lat || null;
+    let pLng = loc?.lng || null;
+
+    if (loc?.id) {
+      // 기존 핀 수정: 창에서 장소 검색으로 새 위치를 골랐으면 그 좌표를, 아니면 기존 핀 좌표를 쓴다.
+      // (예전엔 항상 기존 좌표로 덮어써서, 검색으로 위치를 바꿔도 반영되지 않았다)
+      const existing = safeCurrentRestaurants.find(r => r && S(r.id) === S(loc.id));
+      pLat = loc.lat ?? existing?.lat ?? null;
+      pLng = loc.lng ?? existing?.lng ?? null;
+    }
+
+    const placeId = loc?.id || `manual-${Date.now()}`;
+    let userImgs = newManualPhotos.length > 0 ? newManualPhotos : (newManualPhoto ? [newManualPhoto] : []);
+    if (reusedPin && userImgs.length === 0) {
+      // 기존 핀의 사진 유지 (가게 앞 사진은 아래에서 따로 붙임)
+      userImgs = (Array.isArray(reusedPin.imgs) ? reusedPin.imgs : []).filter(u => !(reusedPin.storefront && u === reusedPin.storefront.url));
+      if (!storefront && reusedPin.storefront && reusedPin.storefront.url) storefront = reusedPin.storefront;
+    }
+    // 사진 순서: 직접 올린 사진 → 가게 앞 사진 (직접 올린 게 없으면 가게 앞 사진이 대표)
+    const finalImgs = storefront ? [...userImgs.filter(u => u !== storefront.url), storefront.url] : userImgs;
     // country는 실제 국가명(globalPlanCountry), city는 지역명(displayCityName)으로 올바르게 저장
     // (여행 국가가 없을 때 예전엔 '선택된 지역 없음'이 국가로 저장됐다 → 고른 장소의 국가로)
     const pinCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || area?.country || (tripAreaUnset ? '' : S(displayCityName)));
     const pinCity = !tripAreaUnset ? displayCityName : (S(globalPlanRegion === '수동입력' ? globalManualRegion : globalPlanRegion) || (area && (!pinCountry || pinCountry === area.country) ? area.region : ''));
     const newPlace = {
       id: S(placeId), lat: pLat, lng: pLng, country: pinCountry, city: pinCity,
-      name: S(newManualPlaceName), localName: S(newManualLocalName), signature: newManualFeature ? S(newManualFeature) : "직접 추가한 장소",
+      name: S(newManualPlaceName), localName: S(newManualLocalName) || S(reusedPin?.localName),
+      signature: newManualFeature ? S(newManualFeature) : (reusedPin?.signature ? S(reusedPin.signature) : "직접 추가한 장소"),
       img: finalImgs[0] || "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
       imgs: finalImgs,
-      rating: 0, isAccommodation: Boolean(newManualIsAccommodation), isLandmark: Boolean(newManualIsLandmark), theme: S(newManualTheme) || "기타"
+      ...(storefront ? { storefront: { url: storefront.url, mapillaryId: S(storefront.mapillaryId), author: S(storefront.author), capturedAt: storefront.capturedAt || 0 } } : {}),
+      rating: 0, isAccommodation: Boolean(newManualIsAccommodation) || Boolean(reusedPin?.isAccommodation), isLandmark: Boolean(newManualIsLandmark) || Boolean(reusedPin?.isLandmark),
+      theme: ((reusedPin && (!newManualTheme || newManualTheme === '기타')) ? S(reusedPin.theme) : S(newManualTheme)) || "기타"
     };
 
     let updatedRests;
-    if (clickedLocation?.id) {
+    if (loc?.id) {
       // 기존 핀 수정: 이 창에 없는 값(일기 별점·소감 등)은 기존 핀 것을 그대로 유지한다.
       // (예전엔 새 객체로 통째 교체하면서 별점을 5점으로 박고 소감을 날려버렸다)
-      updatedRests = safeCurrentRestaurants.map(r => r && S(r.id) === S(clickedLocation.id)
+      updatedRests = safeCurrentRestaurants.map(r => r && S(r.id) === S(loc.id)
         ? { ...newPlace, rating: r.rating ?? 0, review: r.review ?? "" }
         : r);
     } else {
@@ -1629,28 +1688,35 @@ async function confirmDeleteTrip() {
         if (!targetCountry && area.country) targetCountry = area.country;
       }
 
-      const pinFinalImgs = newManualPhotos.length > 0 ? newManualPhotos : (newManualPhoto ? [newManualPhoto] : []);
+      const pinFinalImgs = finalImgs;
       if (pinLinkPlanId && pinLinkPlanId !== 'manual') {
         updatedTimeline = updatedTimeline.map(p => p && String(p.id) === String(pinLinkPlanId) ? {
           ...p, day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
-          localName: S(newManualLocalName), features: S(newManualFeature), photo: pinFinalImgs[0] || S(newManualPhoto),
+          localName: S(newPlace.localName), features: newManualFeature ? S(newManualFeature) : (reusedPin?.signature && S(reusedPin.signature) !== '직접 추가한 장소' ? S(reusedPin.signature) : ''), photo: pinFinalImgs[0] || S(newManualPhoto),
           photos: pinFinalImgs,
           isAccommodation: Boolean(newManualIsAccommodation),
-          accommodationDays: newManualIsAccommodation ? newManualAccommodationDays : [],
-          theme: S(newManualTheme) || "기타",
+          accommodationDays: newManualIsAccommodation ? (newManualAccommodationDays.length > 0 ? newManualAccommodationDays : (parseInt(pinLinkDay) >= 1 ? [parseInt(pinLinkDay)] : [])) : [],
+          theme: S(newPlace.theme),
           country: targetCountry, region: targetRegion,
           pinId: S(placeId) // 이 일정과 핀을 번호로 연결 (이름이 바뀌어도 연결 유지)
         } : p).sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
       } else {
+        // 이 핀이 보관함(Day 0) 일정에 들어 있었으면 새로 만들지 않고 그 일정을 이 Day로 옮긴다
+        // (안 그러면 같은 장소 일정이 보관함과 Day에 하나씩 생긴다)
+        const archivedPlan = parseInt(pinLinkDay) >= 1
+          ? updatedTimeline.find(p => p && S(p.pinId) === S(placeId) && planDayNum(p) === 0)
+          : null;
+        if (archivedPlan) updatedTimeline = updatedTimeline.filter(p => p !== archivedPlan);
         const newPlan = {
-          id: Date.now().toString() + "_plan",
+          ...(archivedPlan || {}),
+          id: archivedPlan ? archivedPlan.id : Date.now().toString() + "_plan",
           day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
-          localName: S(newManualLocalName), features: S(newManualFeature), photo: pinFinalImgs[0] || S(newManualPhoto),
+          localName: S(newPlace.localName), features: newManualFeature ? S(newManualFeature) : (reusedPin?.signature && S(reusedPin.signature) !== '직접 추가한 장소' ? S(reusedPin.signature) : ''), photo: pinFinalImgs[0] || S(newManualPhoto),
           photos: pinFinalImgs,
           country: targetCountry, region: targetRegion,
           isAccommodation: Boolean(newManualIsAccommodation),
-          accommodationDays: newManualIsAccommodation ? newManualAccommodationDays : [],
-          theme: S(newManualTheme) || "기타",
+          accommodationDays: newManualIsAccommodation ? (newManualAccommodationDays.length > 0 ? newManualAccommodationDays : (parseInt(pinLinkDay) >= 1 ? [parseInt(pinLinkDay)] : [])) : [],
+          theme: S(newPlace.theme),
           pinId: S(placeId) // 이 일정과 핀을 번호로 연결
         };
         updatedTimeline = [...updatedTimeline, newPlan].sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
@@ -1673,8 +1739,16 @@ async function confirmDeleteTrip() {
        setIsAddPlaceModalOpen(false);
     }
     
-    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualAccommodationDays([]); setNewManualIsLandmark(false); setNewManualTheme("기타");
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualAccommodationDays([]); setNewManualIsLandmark(false); setNewManualTheme("기타");
     setPinLinkDay(""); setPinLinkPlanId(""); 
+
+    // 여행 국가가 비어 있으면(지역만 정했거나 옛 여행) 고른 장소의 국가로 채운다 — 다음부터 현지어 이름·통화가 맞게
+    const curTripCountry = S(globalPlanCountry === '수동입력' ? globalManualCountry : globalPlanCountry);
+    if (!curTripCountry && area && area.country && !tripAreaUnset) {
+      lastCitySyncRef.current = { ...lastCitySyncRef.current, country: area.country };
+      applyTripCountry(area.country, displayCityName);
+      saveToDb({ trip_country: area.country });
+    }
 
     // 지역을 안 정한 여행이면 이 장소의 지역으로 여행 지역을 설정할지 물어본다(I2)
     if (tripAreaUnset && area && area.region) {
@@ -1683,8 +1757,10 @@ async function confirmDeleteTrip() {
 (현지어 이름·통화·날씨가 이 지역 기준으로 맞춰져요)`,
         () => {
           // 지역 이름이 앱 목록에 없을 때 국가를 맞추는 데 쓰이는 값
-          if (area.country && Object.keys(REGIONS_BY_COUNTRY).includes(area.country)) {
-            try { localStorage.setItem('my_travel_global_country', area.country); } catch (e) {}
+          if (area.country) {
+            // 이 여행의 국가로 저장 (예전엔 기기 전체의 '마지막 국가'에만 적어서 다른 여행에 섞였다)
+            lastCitySyncRef.current = { ...lastCitySyncRef.current, country: area.country };
+            saveToDb({ trip_country: area.country });
           }
           fetchCityRestaurants(area.region);
           showToast(`🌏 여행 지역을 '${area.region}'(으)로 설정했어요.`);
@@ -2898,12 +2974,7 @@ function deletePackingItem(id) {
       }
     })();
 
-    try {
-      const savedGlobalCountry = localStorage.getItem('my_travel_global_country');
-      if (savedGlobalCountry && Object.keys(REGIONS_BY_COUNTRY).includes(savedGlobalCountry)) {
-        setGlobalPlanCountry(savedGlobalCountry);
-      }
-    } catch(e){}
+    // (예전엔 여기서 기기에 남은 '마지막 국가'를 채웠다 — 여행마다 국가를 저장하면서 제거. 여행을 열 때 그 여행 국가로 맞춘다)
   }, []);
 
   // Effect A: 프로필(trips 목록) + 초대장 — 여행(activeTripId)과 무관하게 계정 단위로 한 번만 구독.
@@ -3032,9 +3103,13 @@ function deletePackingItem(id) {
       // 국가/지역 칸은 "여행이 바뀌었거나 대표 지역이 바뀌었을 때만" 다시 맞춘다. 저장할 때마다
       // 다시 맞추면, 국가만 고르고 지역은 아직 안 고른 상태에서 일정을 추가할 때 고른 국가가 지워진다.
       const lastSync = lastCitySyncRef.current;
-      if (lastSync.tripId !== tripId || lastSync.cName !== cName) {
-        lastCitySyncRef.current = { tripId, cName };
-        if (cName === "선택된 지역 없음") {
+      const tripCountry = view.trip_country ? S(view.trip_country) : "";
+      if (lastSync.tripId !== tripId || lastSync.cName !== cName || S(lastSync.country) !== tripCountry) {
+        lastCitySyncRef.current = { tripId, cName, country: tripCountry };
+        if (tripCountry) {
+          // 여행에 국가가 저장돼 있으면 그대로 (짐작하지 않음)
+          applyTripCountry(tripCountry, cName);
+        } else if (cName === "선택된 지역 없음") {
           // 지역이 정해지지 않은 여행: 이전 여행의 국가/지역이 화면에 남아 새 일정에 그대로
           // 저장되던 문제 대응 — 비워서 사용자가 직접 고르게 한다.
           setGlobalPlanCountry(""); setGlobalPlanRegion(""); setGlobalManualCountry(""); setGlobalManualRegion("");
@@ -3099,7 +3174,7 @@ function deletePackingItem(id) {
     });
 
     return unsubscribe;
-  }, [supabaseClient, appUserId, activeTripId, syncCountryRegionFromCityName, refreshTrigger]); // [NEW] refreshTrigger 의존성 추가
+  }, [supabaseClient, appUserId, activeTripId, syncCountryRegionFromCityName, applyTripCountry, refreshTrigger]); // [NEW] refreshTrigger 의존성 추가
 
   // (기존 전역 PTR 이벤트 리스너 제거 완료 - 메인 컨테이너 인라인 터치 이벤트로 이관됨)
 
@@ -3157,7 +3232,7 @@ function deletePackingItem(id) {
                 setNewManualFeature("");
                 // 직전에 수정한 핀의 사진·랜드마크·테마가 새 핀에 따라오지 않게 같이 비운다
                 setNewManualPhoto("");
-                setNewManualPhotos([]);
+                setNewManualPhotos([]); setNewManualStorefront(null);
                 setNewManualIsLandmark(false);
                 setNewManualTheme(theme);
                 setNewManualIsAccommodation(theme === '숙소');
@@ -3275,7 +3350,8 @@ function deletePackingItem(id) {
       let mapPassDay = true;
       if (!mapActiveDays.includes('all')) {
          // [버그 수정] 미지정 핀(unlinked)과 일반 Day 복수 선택 가능하도록 조건 병합
-         const hasUnlinked = mapActiveDays.includes('unlinked') && mapLinkedPlans.length === 0;
+         // 'unlinked' 칩 = 📦 보관함: 연결된 일정이 없거나 보관함(Day 0) 일정에만 연결된 핀
+         const hasUnlinked = mapActiveDays.includes('unlinked') && isArchivedPin(rest, mapSafeTimeline);
          const hasDay = mapLinkedPlans.some(p => mapActiveDays.some(d => d !== 'unlinked' && planCoversDay(p, d)));
          mapPassDay = hasUnlinked || hasDay;
       }
@@ -3465,7 +3541,7 @@ function deletePackingItem(id) {
                     setNewManualPlaceName(placeName); setNewManualLocalName(""); setNewManualFeature("");
                     const nearTheme = themeFromKakaoCategory(nearby && nearby.category_group_code);
                     setNewManualTheme(nearTheme);
-                    setNewManualPhoto(""); setNewManualPhotos([]); setNewManualIsLandmark(false);
+                    setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualIsLandmark(false);
                     setNewManualIsAccommodation(nearTheme === '숙소'); setNewManualAccommodationDays([]);
                     setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
                     setIsAddPlaceModalOpen(true);
@@ -3532,7 +3608,7 @@ function deletePackingItem(id) {
         // "미지정 핀"을 골랐고 연결된 일정이 없는 핀만 표시. 연박 숙소는 숙박 Day 전부에 해당.
         // (예전엔 Day 필터를 켜도 미지정 핀이 항상 보였고, 연결된 첫 일정만 봤다)
         if (activeDayNums) {
-          const hasUnlinked = mapActiveDays.includes('unlinked') && linkedPlans.length === 0;
+          const hasUnlinked = mapActiveDays.includes('unlinked') && isArchivedPin(rest, planTimeline); // 📦 보관함
           const hasDay = linkedPlans.some(p => activeDayNums.some(d => planCoversDay(p, d)));
           if (!hasUnlinked && !hasDay) return;
         }
@@ -3681,7 +3757,7 @@ function deletePackingItem(id) {
             // 고른 분류(카페 등)에 맞는 테마를 미리 골라 둔다 (예전엔 늘 '기타'). 이전 등록의 사진·연박도 비운다.
             const catTheme = themeFromKakaoCategory(place.category_group_code || place._catCode);
             setNewManualTheme(catTheme);
-            setNewManualPhoto(""); setNewManualPhotos([]); setNewManualIsLandmark(false);
+            setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualIsLandmark(false);
             setNewManualIsAccommodation(catTheme === '숙소'); setNewManualAccommodationDays([]);
             setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
             setIsAddPlaceModalOpen(true);
@@ -3839,7 +3915,7 @@ const filteredMyPins = filteredMarkers.filter(pin => {
   // 1. [Day 필터]
   let passDay = true;
   if (myPinsFilter !== 'all') {
-    if (myPinsFilter === 'unlinked') passDay = linkedPlans.length === 0;
+    if (myPinsFilter === 'unlinked') passDay = isArchivedPin(pin, safeTimeline); // 📦 보관함
     else passDay = linkedPlans.some(p => planCoversDay(p, myPinsFilter));
   }
 
@@ -3872,17 +3948,18 @@ if (currentRestaurants && currentRestaurants.length > 0) {
   // [NEW] 데일리 일정 필터링 방식 혁신: 숙소 연박 무조건 포함 + 일반일정 시간순 정렬
   const dayAccoms = safePlanTimeline.filter(p => {
     if (!p || !p.isAccommodation) return false;
-    // accommodationDays가 비어있으면 모든 Day에 표시 (하위호환)
+    if (planDayNum(p) === 0) return false; // 보관함 숙소는 오늘의 일정에 넣지 않음
+    // 숙박 Day를 따로 안 골랐으면 그 일정의 Day에만 표시 (예전엔 모든 Day에 떴다 — 4차 G)
     const days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
-    if (days.length === 0) return true;
-    return days.includes(safeDashboardDay);
+    if (days.length === 0) return planDayNum(p) === safeDashboardDay;
+    return days.map(Number).includes(safeDashboardDay);
   });
   // trans_rental_ 아이템이 있으면 place에 '렌터카'가 포함된 비-trans_rental_ 항목(여행정산 중복) 숨기기
   const hasRentalTransItems = safePlanTimeline.some(p => p && (p.id === 'trans_rental_dep' || p.id === 'trans_rental_arr'));
   const dayPlans = safePlanTimeline.filter(p => {
     if (!p || p.isAccommodation) return false;
     if (isExpenseRecord(p)) return false; // 정산에서 넣은 지출 기록은 오늘의 일정에 끼우지 않음
-    if (parseInt(p.day || 1) !== safeDashboardDay) return false;
+    if (planDayNum(p) !== safeDashboardDay) return false;
     // 렌터카 교통권 아이템이 있으면 여행정산에서 별도 저장된 렌터카 일정 숨기기
     if (hasRentalTransItems && !String(p.id).startsWith('trans_rental_') && S(p.place).includes('렌터카')) return false;
     return true;
@@ -3891,6 +3968,41 @@ if (currentRestaurants && currentRestaurants.length > 0) {
   
   const safeMaxDay = (typeof maxDay === 'number' && maxDay > 0 && maxDay < 100) ? maxDay : 4;
   const tripDays = Array.from({length: safeMaxDay}, (_, i) => i + 1);
+  // 📦 보관함 — 어느 Day에도 넣지 않은 핀 (일정 탭 보관함 칩·대시보드 카드·지도 '보관함' 필터가 같은 기준)
+  const archivedPins = (Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : []).filter(r => isArchivedPin(r, safePlanTimeline));
+
+  // 보관함 핀을 그날 일정으로 넣기 — 보관함(Day 0) 일정이 있으면 그 일정을 옮기고, 없으면 일정을 새로 만든다
+  const addPinToDay = (pin, day) => {
+    if (isReadOnlyTrip || !pin) return;
+    const d = parseInt(day);
+    const archivedPlan = findPlansForPin(pin, safePlanTimeline).find(p => planDayNum(p) === 0);
+    let updated;
+    if (archivedPlan) {
+      updated = safePlanTimeline.map(p => p && S(p.id) === S(archivedPlan.id)
+        ? { ...p, day: d, pinId: S(pin.id), accommodationDays: p.isAccommodation ? [d] : [] }
+        : p);
+    } else {
+      const imgs = Array.isArray(pin.imgs) ? pin.imgs : [];
+      updated = [...safePlanTimeline, {
+        id: Date.now().toString() + "_plan", day: d, time: "", place: S(pin.name),
+        localName: S(pin.localName), features: pin.signature && S(pin.signature) !== "직접 추가한 장소" ? S(pin.signature) : "",
+        photo: imgs[0] || "", photos: imgs, country: S(pin.country), region: S(pin.city),
+        isAccommodation: Boolean(pin.isAccommodation), accommodationDays: pin.isAccommodation ? [d] : [],
+        theme: S(pin.theme) || "기타", pinId: S(pin.id),
+      }];
+    }
+    updated = updated.sort((a, b) => S(a?.time).localeCompare(S(b?.time)));
+    setPlanTimeline(updated);
+    saveToDb({ plan_timeline: updated });
+    showToast(`📅 '${S(pin.name)}'을(를) D${d} 일정에 넣었어요`);
+  };
+
+  // 지도 탭으로 가서 그 핀 보여 주기 (핀 목록의 '이동'과 같은 방식)
+  const showPinOnMap = (pin) => {
+    if (!pin || !pin.lat || !pin.lng) return;
+    pendingMapFlyRef.current = { lat: pin.lat, lng: pin.lng, id: pin.id };
+    setActiveTab('map');
+  };
 
   // 현재 dashboardDay + 현재 시각 기준으로 "지금 있어야 할 지역" 계산
   // 시간순 일정 중 현재 시각 이전 마지막 일정의 지역 (없으면 첫 일정 지역, 없으면 displayCityName)
@@ -4130,9 +4242,10 @@ if (currentRestaurants && currentRestaurants.length > 0) {
 
   const openQuickAddPlace = () => {
     setClickedLocation(null);
-    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]);
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null);
     setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualAccommodationDays([]); setNewManualIsLandmark(false); setNewManualTheme("기타");
-    setPinLinkDay(planViewDay); setPinLinkPlanId("");
+    // 문자열로 — 숫자 0(보관함)을 그대로 넘기면 창에서 `{pinLinkDay && …}`가 '0' 글자를 찍었다
+    setPinLinkDay(String(planViewDay)); setPinLinkPlanId("");
     setIsAddPlaceModalOpen(true);
   };
 
@@ -4323,12 +4436,14 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         newManualIsAccommodation={newManualIsAccommodation} setNewManualIsAccommodation={setNewManualIsAccommodation}
         newManualAccommodationDays={newManualAccommodationDays} setNewManualAccommodationDays={setNewManualAccommodationDays}
         manualFileInputRef={manualFileInputRef} supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId}
-        handleManualPlaceAdd={handleManualPlaceAdd} handleCopyLocalName={handleCopyLocalName}
+        handleManualPlaceAdd={savePlaceWithStorefront} handleCopyLocalName={handleCopyLocalName}
+        newManualStorefront={newManualStorefront} setNewManualStorefront={setNewManualStorefront}
         currentRestaurants={currentRestaurants} showConfirm={showConfirm} country={resolvedGlobalCountry}
         onPickArea={(area) => { pickedAreaRef.current = area; }}
       />
 
       <MyPinsModal
+        showConfirm={showConfirm} setNewManualStorefront={setNewManualStorefront} setNewManualPhotos={setNewManualPhotos}
         isReadOnly={isReadOnlyTrip}
         isOpen={isMyPinsModalOpen} onClose={() => setIsMyPinsModalOpen(false)}
         cardBg={cardBg} isDarkMode={isDarkMode} isDomesticTrip={isDomesticTrip}
@@ -4565,6 +4680,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
             handleEditPlanClick={handleEditPlanClick} handleDeletePlan={handleDeletePlan} changeTab={changeTab} displayCityName={displayCityName} openPhotoViewer={openPhotoViewer}
             currentRestaurants={currentRestaurants}
             isDomesticTrip={isDomesticTrip} countryTips={COUNTRY_TIPS[resolvedGlobalCountry] || []} resolvedGlobalCountry={resolvedGlobalCountry}
+            archivedPins={archivedPins} onOpenArchive={() => { setPlanViewDay(0); changeTab('plan'); }}
           />
 
           {/* --- Plan Tab --- */}
@@ -4609,10 +4725,22 @@ if (currentRestaurants && currentRestaurants.length > 0) {
                       onChangeSelect={e => {
                          const val = e.target.value;
                          setGlobalPlanCountry(val); setGlobalPlanRegion(""); setGlobalManualCountry(""); setGlobalManualRegion("");
-                         try { localStorage.setItem('my_travel_global_country', val); } catch(e){}
+                         // 여행 국가로 저장 ('수동입력'은 직접 입력 칸을 여는 것뿐이라 저장 안 함)
+                         if (val !== '수동입력') {
+                           lastCitySyncRef.current = { ...lastCitySyncRef.current, country: val };
+                           saveToDb({ trip_country: val });
+                         }
                       }}
-                      onChangeManual={val => setGlobalManualCountry(val)}
-                      onCancelManual={() => { setGlobalPlanCountry(""); setGlobalManualCountry(""); }}
+                      onChangeManual={val => {
+                         setGlobalManualCountry(val);
+                         if (manualCountrySaveTimer.current) clearTimeout(manualCountrySaveTimer.current);
+                         const tid = activeTripId; // 타이머가 도는 사이 여행을 바꿔도 이 여행에 저장
+                         manualCountrySaveTimer.current = setTimeout(() => {
+                           if (tid === activeTripId) lastCitySyncRef.current = { ...lastCitySyncRef.current, country: S(val) };
+                           saveToDb({ trip_country: S(val) }, tid);
+                         }, 600);
+                      }}
+                      onCancelManual={() => { setGlobalPlanCountry(""); setGlobalManualCountry(""); saveToDb({ trip_country: "" }); }}
                     />
                   </div>
                 </div>
@@ -4684,12 +4812,28 @@ if (currentRestaurants && currentRestaurants.length > 0) {
                       </button>
                     );
                   })}
+                  <button
+                    onClick={() => setPlanViewDay(0)}
+                    title="날짜를 정하지 않은 장소"
+                    className={`flex flex-col items-center rounded-lg px-2.5 py-1.5 text-[11px] font-semibold shrink-0 transition-colors ${planViewDay === 0 ? 'bg-[#007AFF] text-white' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-[#f4f3f8] text-slate-500')}`}
+                  >
+                    <span>📦 {archivedPins.length}</span>
+                    <span className="mt-0.5 text-[10px] leading-none">보관함</span>
+                  </button>
                   {!isReadOnlyTrip && <button onClick={addDay} className={`rounded-lg px-2 py-1.5 text-[11px] font-bold shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-[#f4f3f8] text-slate-500 hover:bg-slate-200'}`}>+ Day</button>}
                   {maxDay > 1 && !isReadOnlyTrip && <button onClick={removeDay} className={`rounded-lg px-2 py-1.5 text-[11px] font-bold shrink-0 transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-[#f4f3f8] text-slate-500 hover:bg-slate-200'}`}>- Day</button>}
                 </div>
               </div>
 
-              {/* 스마트 타임라인 */}
+              {/* 스마트 타임라인 (📦 보관함 칩을 고르면 보관함 목록) */}
+              {planViewDay === 0 ? (
+                <ArchivePinsPanel
+                  pins={archivedPins} tripDays={tripDays}
+                  onAddToDay={addPinToDay} onEdit={openEditPinModal} onShowOnMap={showPinOnMap}
+                  onAddPlace={openQuickAddPlace} isReadOnly={isReadOnlyTrip}
+                  isDarkMode={isDarkMode} textMuted={textMuted}
+                />
+              ) : (
               <PlanTimelinePanel
                 isDarkMode={isDarkMode} textMuted={textMuted} textMain={textMain}
                 currentDay={planViewDay} getDayDateString={getDayDateString} planTimeline={planTimeline}
@@ -4700,6 +4844,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
                 onAddPlace={openQuickAddPlace}
                 isDomesticTrip={isDomesticTrip}
               />
+              )}
             </div>
           </div>
 

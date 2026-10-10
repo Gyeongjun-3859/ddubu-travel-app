@@ -1,18 +1,23 @@
 import { useRef, useState } from 'react';
-import { S } from '../utils/helpers';
+import { S, themeFromGoogleTypes, themeFromKakaoCategory } from '../utils/helpers';
 import { resolvePlaceArea } from '../utils/placeArea';
-import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation, LOCAL_LANG_BY_COUNTRY } from '../utils/googlePlaces';
+import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation, LOCAL_LANG_BY_COUNTRY, translateToKorean } from '../utils/googlePlaces';
+
+const HANGUL_RE = /[가-힣]/;
 
 // 장소 이름 자동완성 (국내: 카카오 / 해외: 구글 → 실패하면 OSM). 일정 등록 창과 일정 수정 창이 같이 쓴다.
 // onPick({ name, lat, lng, localName })는 후보를 골랐을 때 한 번 불린다 (좌표가 없으면 lat/lng는 NaN).
 // biasPins: 이 여행에 이미 등록된 핀들 — 가운데 좌표 근처 결과를 먼저 보여 주는 데 쓴다(해외 구글 검색)
+// myPins: 넘기면 이름이 맞는 '내 핀'을 후보 맨 위에 보여 준다(고르면 onPick의 pin으로 그 핀이 넘어감).
+//   일정 쪽에서 지도에 먼저 찍어 둔 핀을 불러오는 길이 없어서, 같은 이름을 치면 좌표 없는 핀이 또 생겼다(4차 C).
+// excludePinId: 지금 고치고 있는 핀은 후보에서 뺀다
 function centerOf(pins) {
   const pts = (Array.isArray(pins) ? pins : []).filter(p => p && isFinite(parseFloat(p.lat)) && isFinite(parseFloat(p.lng)) && parseFloat(p.lat) !== 0);
   if (pts.length === 0) return null;
   return { lat: pts.reduce((a, p) => a + parseFloat(p.lat), 0) / pts.length, lng: pts.reduce((a, p) => a + parseFloat(p.lng), 0) / pts.length };
 }
 
-export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToast, onPick, biasPins }) {
+export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToast, onPick, biasPins, myPins, excludePinId }) {
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const timerRef = useRef(null);
@@ -22,18 +27,29 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
   const run = (query) => {
     const reqId = ++reqRef.current; // 늦게 도착한 이전 검색 결과가 덮어쓰지 않게 구분
     if (!query || query.trim().length < 2) { setSuggestions([]); return; }
+    // 이름(또는 현지어 이름)에 검색어가 든 내 핀 — 최대 3개, 바깥 검색 결과보다 위에
+    const q = query.trim().toLowerCase();
+    const pinHits = (Array.isArray(myPins) ? myPins : [])
+      .filter(p => p && S(p.id) !== S(excludePinId) && (S(p.name).toLowerCase().includes(q) || S(p.localName).toLowerCase().includes(q)))
+      .slice(0, 3)
+      .map(p => ({ name: S(p.name), address: `📍 내 핀${p.localName ? ` · ${S(p.localName)}` : ''}`, lat: parseFloat(p.lat), lng: parseFloat(p.lng), source: 'pin', pin: p }));
+    const show = (list) => {
+      const merged = [...pinHits, ...(Array.isArray(list) ? list : [])];
+      setSuggestions(merged);
+      if (merged.length > 0) setShowSuggestions(true);
+    };
+    if (pinHits.length > 0) show([]); // 바깥 검색이 오기 전에 내 핀부터 바로 보여 줌
     if (isKakaoMap && isKakaoMapLoaded && window.kakao && window.kakao.maps && window.kakao.maps.services) {
       const kakao = window.kakao;
       const ps = new kakao.maps.services.Places();
       ps.keywordSearch(query, (data, status) => {
         if (reqId !== reqRef.current) return;
         if (status === kakao.maps.services.Status.OK && Array.isArray(data)) {
-          setSuggestions(data.slice(0, 5).map(d => ({
+          show(data.slice(0, 5).map(d => ({
             name: d.place_name, address: d.road_address_name || d.address_name || '',
-            lat: parseFloat(d.y), lng: parseFloat(d.x), source: 'kakao',
+            lat: parseFloat(d.y), lng: parseFloat(d.x), source: 'kakao', kakaoCategory: d.category_group_code || '',
           })));
-          setShowSuggestions(true);
-        } else { setSuggestions([]); }
+        } else { show([]); }
       }, { size: 5 });
       return;
     }
@@ -43,20 +59,19 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
         .then(data => {
           if (reqId !== reqRef.current) return;
           if (Array.isArray(data)) {
-            setSuggestions(data.map(d => ({
+            show(data.map(d => ({
               name: S(d.display_name).split(',')[0], address: S(d.display_name),
               lat: parseFloat(d.lat), lng: parseFloat(d.lon),
             })));
-            setShowSuggestions(true);
           }
-        }).catch(() => { if (reqId === reqRef.current) setSuggestions([]); });
+        }).catch(() => { if (reqId === reqRef.current) show([]); });
     };
     // 해외는 구글 Places 우선, 키가 없거나 실패/결과 없음이면 OSM 검색으로 대체
     if (!hasGooglePlacesKey()) { runNominatim(); return; }
     googleAutocomplete(query.trim(), sessionRef.current, 'ko', centerOf(biasPins))
       .then(list => {
         if (reqId !== reqRef.current) return;
-        if (list.length > 0) { setSuggestions(list); setShowSuggestions(true); }
+        if (list.length > 0) show(list);
         else runNominatim();
       })
       .catch(e => {
@@ -74,8 +89,15 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
   const select = async (s) => {
     setSuggestions([]); setShowSuggestions(false);
     reqRef.current++; // 선택 직후 도착하는 검색 결과 무시
+    if (s.source === 'pin') {
+      if (typeof onPick === 'function') onPick({ name: s.name, lat: s.lat, lng: s.lng, localName: S(s.pin.localName), area: null, pin: s.pin });
+      return;
+    }
     let { lat, lng } = s;
     let localName = '';
+    let name = s.name;
+    // 고른 장소의 분류로 테마 추천 (카카오: 분류 코드 / 구글: 상세 요청의 types) — 창에서 테마가 '기타'일 때만 바뀜
+    let theme = s.source === 'kakao' ? themeFromKakaoCategory(s.kakaoCategory) : '기타';
     // 장소의 국가·지역(I2) — 카카오는 주소로, 구글은 상세 요청의 주소 구성요소로
     let area = s.source === 'kakao' ? resolvePlaceArea({ kakaoAddress: s.address }) : null;
     // 구글 후보는 좌표가 없어서 선택 시점에 조회 (세션 종료 → 새 토큰). 해외면 같은 요청으로 현지어 이름도 받음
@@ -85,13 +107,22 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
         const loc = await googlePlaceLocation(s.placeId, sessionRef.current, 'ko', localLang);
         lat = loc.lat; lng = loc.lng; localName = loc.localName || '';
         area = resolvePlaceArea({ countryCode: loc.countryCode, names: loc.areaNames });
+        theme = themeFromGoogleTypes('', loc.types);
       } catch (e) {
         console.warn('[구글 좌표 조회 실패]', e && e.message);
         if (typeof showToast === 'function') showToast("위치를 가져오지 못했어요. 지도를 눌러 직접 지정해주세요.");
       }
       sessionRef.current = newPlacesSessionToken();
     }
-    if (typeof onPick === 'function') onPick({ name: s.name, lat, lng, localName: localName && localName !== s.name ? localName : '', area });
+    // 구글에 한국어 이름이 없는 해외 장소(예: 'Kok-Tobe Hill')는 한국어로 번역해 이름에 쓰고, 원래 이름은 현지어 칸으로
+    // (지도를 눌러 고를 때 하던 처리(I3)를 검색으로 고를 때도)
+    if (s.source !== 'kakao' && hasGooglePlacesKey() && name && !HANGUL_RE.test(name)) {
+      try {
+        const ko = await translateToKorean(name);
+        if (ko && ko !== name) { if (!localName) localName = name; name = ko; }
+      } catch (e) { console.warn('[장소 이름 번역 실패]', e && e.message); }
+    }
+    if (typeof onPick === 'function') onPick({ name, lat, lng, localName: localName && localName !== name ? localName : '', area, theme });
   };
 
   return { suggestions, showSuggestions, setShowSuggestions, onQueryChange, select };

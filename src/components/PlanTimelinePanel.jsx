@@ -1,6 +1,6 @@
 import React from 'react';
 import { Trash2, Navigation, Star } from 'lucide-react';
-import { S, getAccommodationTransitFrom, openGoogleMapsNav, openExternalUrl, isExpenseRecord, findPinForPlan } from '../utils/helpers';
+import { S, getAccommodationTransitFrom, openGoogleMapsNav, openExternalUrl, isExpenseRecord, findPinForPlan, planDayNum } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 import TripImg from './TripImg';
 
@@ -22,8 +22,10 @@ const PlanTimelinePanel = ({
 
   const accomsForDay = safePT.filter(p => {
     if (!p.isAccommodation) return false;
+    if (planDayNum(p) === 0) return false; // 보관함 숙소는 어느 Day에도 표시하지 않음
     const days = Array.isArray(p.accommodationDays) ? p.accommodationDays : [];
-    return days.length === 0 || days.includes(currentDay);
+    // 숙박 Day를 따로 안 골랐으면 그 일정의 Day에만 (예전엔 모든 Day에 떠서 D3 숙소가 D1·D2에도 보였다 — 4차 G)
+    return days.length === 0 ? planDayNum(p) === currentDay : days.map(Number).includes(currentDay);
   });
 
   const hasRental = safePT.some(p => p.id === 'trans_rental_dep' || p.id === 'trans_rental_arr');
@@ -31,7 +33,7 @@ const PlanTimelinePanel = ({
     .filter(p => {
       if (p.isAccommodation) return false;
       if (isExpenseRecord(p)) return false; // 정산에서 넣은 지출 기록은 일정 카드로 보여주지 않음
-      if (parseInt(p.day || 1) !== currentDay) return false;
+      if (planDayNum(p) !== currentDay) return false;
       if (hasRental && !String(p.id).startsWith('trans_rental_') && S(p.place).includes('렌터카')) return false;
       return true;
     })
