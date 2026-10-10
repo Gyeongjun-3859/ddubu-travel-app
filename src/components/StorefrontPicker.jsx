@@ -3,7 +3,7 @@ import { Check, RefreshCw, X } from 'lucide-react';
 import TripImg from './TripImg';
 import { hasMapillaryToken, findStorefrontCandidates, storefrontCredit, photoSourceLink, prefetchStorefront, storefrontPrefix } from '../utils/mapillary';
 import { findWikiPhoto, findCommonsPhotos } from '../utils/wikiPhoto';
-import { googlePlacePhotos } from '../utils/googlePlaces';
+import { googlePlacePhotos, googleFindPlaceId, hasGooglePlacesKey } from '../utils/googlePlaces';
 import { findKakaoFoodMenuPhotos } from '../utils/kakaoImages';
 
 const BADGE = { wiki: '대표', google: '구글', commons: '근처', mapillary: '거리' };
@@ -20,7 +20,8 @@ const badgeOf = (c) => c.source === 'kakao' ? (c.kind === 'menu' ? '메뉴' : '�
 //   사진을 찾기 전에 저장돼 사진이 빠졌다(사용자 제보: 콕토베·젠코프 성당) → 저장하는 쪽이 이걸 기다렸다가 넣는다.
 // kakaoPhotos: 국내 장소면 카카오 이미지 검색의 음식·메뉴판 사진도 후보로 (가게 앞 → 음식 → 메뉴판 순 — 사용자 요청)
 // autoPick=false: 직접 올린 사진이 있는 일정 — 자동으로 고르지 않고 후보만 보여 준다(누르면 추가). 이미 자동으로 골라져 있던 것도 뺀다
-const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId, value, onChange, isDarkMode, textMuted, pendingRef, kakaoPhotos = false, autoPick = true }) => {
+// onFoundPlaceId: 구글 장소 번호가 없던 옛 핀이라 이름·위치로 찾았으면 알려 준다 (저장할 때 핀에 남겨 다음부터 바로 씀)
+const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId, value, onChange, isDarkMode, textMuted, pendingRef, kakaoPhotos = false, autoPick = true, onFoundPlaceId }) => {
   const [cands, setCands] = React.useState([]);
   const [status, setStatus] = React.useState('idle'); // idle | loading | done
   const [browsing, setBrowsing] = React.useState(!(value && value.url)); // 저장된 사진이 있으면 [다른 사진]을 누를 때만 찾는다
@@ -36,7 +37,12 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
     if (!autoPick && value && value.auto && !value.url) onChange(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPick]);
-  const hasPos = lat !== null && lng !== null && isFinite(lat) && isFinite(lng);
+  // 아주 예전 핀은 좌표가 글자("43.26")로 저장돼 있어 숫자로 바꿔 쓴다 (거리 사진 범위 계산이 글자 이어 붙이기로 틀어졌다)
+  const nLat = lat === null || lat === undefined || lat === '' ? NaN : Number(lat);
+  const nLng = lng === null || lng === undefined || lng === '' ? NaN : Number(lng);
+  const hasPos = isFinite(nLat) && isFinite(nLng) && !(nLat === 0 && nLng === 0);
+  const foundRef = React.useRef(onFoundPlaceId);
+  foundRef.current = onFoundPlaceId;
 
   React.useEffect(() => {
     if (!hasPos || !browsing) { if (pendingRef) pendingRef.current = null; return; }
@@ -48,12 +54,22 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
     const done = (pick) => { finish(pick); if (pendingRef && pendingRef.current === job) pendingRef.current = null; };
     // 위치를 고른 직후 이름·현지어 이름이 채워질 시간을 잠깐 준다(검색 선택과 같은 순간에 바뀜)
     const t = setTimeout(async () => {
-      const { name: nm, localName: ln, googlePlaceId: gid, kakaoPhotos: useKakao } = nameRef.current;
+      const { name: nm, localName: ln, googlePlaceId: gid0, kakaoPhotos: useKakao } = nameRef.current;
+      // 구글 장소 번호가 없는 옛 핀(오늘 전에 만든 핀·카카오로 찾은 국내 장소): 이름·위치(300m 안)로 구글에서 찾아 구글 사진을 쓴다
+      // (보관함 옛 핀을 수정해도 사진이 안 뜨던 문제 — 호텔·식당 사진은 구글이 가장 많다)
+      const findGid = async () => {
+        if (gid0) return gid0;
+        if (!hasGooglePlacesKey() || !(ln || nm)) return '';
+        let id = await googleFindPlaceId(ln || nm, nLat, nLng).catch(() => '');
+        if (!id && ln && nm && ln !== nm) id = await googleFindPlaceId(nm, nLat, nLng).catch(() => '');
+        if (id && typeof foundRef.current === 'function') foundRef.current(id);
+        return id;
+      };
       const [wiki, google, commons, streets, kakao] = await Promise.all([
-        findWikiPhoto({ name: nm, localName: ln, lat, lng, localLang }).catch(() => null),
-        gid ? googlePlacePhotos(gid).catch(() => []) : Promise.resolve([]),
-        findCommonsPhotos(lat, lng).catch(() => []),
-        hasMapillaryToken() ? findStorefrontCandidates(lat, lng).catch(() => []) : Promise.resolve([]),
+        findWikiPhoto({ name: nm, localName: ln, lat: nLat, lng: nLng, localLang }).catch(() => null),
+        findGid().then(id => (id ? googlePlacePhotos(id) : [])).catch(() => []),
+        findCommonsPhotos(nLat, nLng).catch(() => []),
+        hasMapillaryToken() ? findStorefrontCandidates(nLat, nLng).catch(() => []) : Promise.resolve([]),
         useKakao ? findKakaoFoodMenuPhotos(nm).catch(() => []) : Promise.resolve([]),
       ]);
       if (reqId !== reqRef.current) { done(undefined); return; }

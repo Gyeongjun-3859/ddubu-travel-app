@@ -199,6 +199,7 @@ const EditPlanModal = ({
                   localLang={LOCAL_LANG_BY_COUNTRY[country] || (country && country !== '한국' ? 'en' : '')}
                   googlePlaceId={editingPlan._googlePlaceId || (refetchPhoto ? S(linkedPinNow.googlePlaceId) : '')}
                   autoPick={!hasUserPhotos}
+                  onFoundPlaceId={(id) => setEditingPlan(prev => prev ? ({ ...prev, _googlePlaceId: prev._googlePlaceId || id }) : prev)}
                   value={editingPlan._storefront || null}
                   onChange={(v) => setEditingPlan(prev => prev ? ({ ...prev, _storefront: v }) : prev)}
                   isDarkMode={isDarkMode} textMuted={textMuted} pendingRef={sfPendingRef} kakaoPhotos={country === '한국'}
@@ -511,6 +512,9 @@ const EditPlanModal = ({
                 if (editingPlan._localAddress) updatedRests[matchedIndex].localAddress = S(editingPlan._localAddress);
                 else delete updatedRests[matchedIndex].localAddress;
                 delete updatedRests[matchedIndex].kakaoPlaceUrl;
+              } else if (editingPlan._googlePlaceId && !updatedRests[matchedIndex].googlePlaceId) {
+                // 장소 번호가 없던 옛 핀이라 사진 찾으면서 알아낸 번호 — 핀에 남겨 다음부터 바로 쓴다
+                updatedRests[matchedIndex].googlePlaceId = S(editingPlan._googlePlaceId);
               }
               const sf = updatedRests[matchedIndex].storefront;
               if (sf && !(updatedRests[matchedIndex].imgs || []).includes(sf.url)) delete updatedRests[matchedIndex].storefront;
