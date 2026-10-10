@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, Calendar, Backpack, ShoppingBag, Plane, Trash2, MapPin, Languages, Map as MapIcon, Wallet, ListChecks, Sparkles, X, MessageCircle } from 'lucide-react';
+import { RefreshCw, Calendar, Backpack, ShoppingBag, Plane, Trash2, MapPin, Languages, Map as MapIcon, Wallet, ListChecks, Sparkles, X, MessageCircle, Siren } from 'lucide-react';
 import { COUNTRY_LANGUAGE, COUNTRY_CURRENCY, COUNTRY_TIMEZONE } from '../utils/constants';
 import { S, getAccommodationTransitFrom } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 import TransitRouteViewModal from './TransitRouteViewModal';
 import LanguageModal from './LanguageModal';
+import EmergencyModal from './EmergencyModal';
 import TripImg from './TripImg';
 import { getStorefrontByUrl, storefrontBadge } from '../utils/mapillary';
 
@@ -54,8 +55,11 @@ const DashboardTab = ({
   handleEditPlanClick, handleDeletePlan, changeTab, displayCityName, openPhotoViewer,
   currentRestaurants, setIsSettingsOpen,
   isDomesticTrip, countryTips = [], resolvedGlobalCountry,
-  archivedPins = [], onOpenArchive,
+  archivedPins = [], onOpenArchive, showToast, onSaveLocalAddress,
 }) => {
+  const [isEmergencyOpen, setIsEmergencyOpen] = useState(false);
+  // 내 숙소 핀 (긴급 정보 화면에서 현지어 주소·기사님 화면)
+  const accommodationPins = (Array.isArray(currentRestaurants) ? currentRestaurants : []).filter(r => r && r.isAccommodation && r.lat && r.lng);
   const [transitView, setTransitView] = useState(null);
   const [isTipsOpen, setIsTipsOpen] = useState(false);
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
@@ -110,6 +114,7 @@ const DashboardTab = ({
     { key: 'expense', label: '여행정산', Icon: Wallet, onClick: () => setIsExpenseModalOpen(true), badge: totalExpenseKrw > 0 ? `₩${totalExpenseKrw.toLocaleString()}` : null },
     { key: 'packing', label: '준비물', Icon: Backpack, onClick: () => setIsDashboardPackingOpen(true) },
     { key: 'shopping', label: '쇼핑', Icon: ShoppingBag, onClick: () => setIsDashboardShoppingOpen(true) },
+    ...(!isDomesticTrip ? [{ key: 'emergency', label: '긴급 정보', Icon: Siren, onClick: () => setIsEmergencyOpen(true) }] : []),
     ...(COUNTRY_LANGUAGE[resolvedGlobalCountry] && !isDomesticTrip ? [{ key: 'phrases', label: '현지 회화', Icon: MessageCircle, onClick: () => setIsLanguageOpen(true) }] : []),
     ...(countryTips.length > 0 ? [{ key: 'tips', label: `${resolvedGlobalCountry} 꿀팁`, Icon: Sparkles, onClick: () => setIsTipsOpen(true) }] : []),
     { key: 'map', label: '지도 열기', Icon: MapIcon, onClick: () => changeTab('map'), full: true },
@@ -445,6 +450,12 @@ const DashboardTab = ({
         </div>,
         document.body
       )}
+
+      <EmergencyModal
+        isOpen={isEmergencyOpen} onClose={() => setIsEmergencyOpen(false)}
+        country={resolvedGlobalCountry} accommodations={accommodationPins}
+        isDarkMode={isDarkMode} textMain={textMain} showToast={showToast} onSaveLocalAddress={onSaveLocalAddress}
+      />
 
       <LanguageModal
         isOpen={isLanguageOpen}

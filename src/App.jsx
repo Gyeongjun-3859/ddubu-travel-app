@@ -197,6 +197,37 @@ const MainApp = () => {
   }, [appUserId, trips, activeTripId]);
   // 📴 오프라인 표시 (신호가 끊기면 위쪽에 안내)
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
+  const isOfflineRef = useRef(isOffline);
+  isOfflineRef.current = isOffline;
+  // 📤 아직 서버에 못 보낸 변경이 있는지(개수) — 오프라인에서 고쳐도 휴대폰에 대기해 있다가 연결되면 보내진다(동기화 엔진).
+  // 평소엔 고친 직후 잠깐(0.1초 남짓) 대기하다 보내지므로, 오프라인이거나 5초 넘게 남아 있을 때만 보여 준다.
+  // 보여 주던 대기가 다 보내지면 '저장 완료' 안내.
+  const [pendingCount, setPendingCount] = useState(0);
+  const pendingShownRef = useRef(false);
+  const pendingSinceRef = useRef(0);
+  useEffect(() => {
+    const tick = () => {
+      let n = 0;
+      try {
+        const p = (JSON.parse(localStorage.getItem('my_travel_pending') || '{}') || {})[activeTripId];
+        if (p) {
+          n += Object.keys(p.scalars || {}).length;
+          Object.values(p.upserts || {}).forEach(a => { n += Array.isArray(a) ? a.length : 0; });
+          Object.values(p.deletes || {}).forEach(a => { n += Array.isArray(a) ? a.length : 0; });
+        }
+      } catch (e) {}
+      if (n > 0) {
+        if (!pendingSinceRef.current) pendingSinceRef.current = Date.now();
+        if (isOfflineRef.current || Date.now() - pendingSinceRef.current > 5000) { pendingShownRef.current = true; setPendingCount(n); }
+      } else {
+        pendingSinceRef.current = 0;
+        if (pendingShownRef.current) { pendingShownRef.current = false; setPendingCount(0); showToastRef.current('✅ 못 보냈던 변경을 모두 저장했어요'); }
+      }
+    };
+    tick();
+    const t = setInterval(tick, 2000);
+    return () => clearInterval(t);
+  }, [activeTripId]);
   useEffect(() => {
     const on = () => setIsOffline(false);
     const off = () => setIsOffline(true);
@@ -1659,11 +1690,23 @@ async function confirmDeleteTrip() {
   // 핀 저장 버튼: 가게 앞 사진을 새로 골랐으면 먼저 우리 저장소로 복사한 뒤 저장한다.
   // (고를 때마다 복사하면 고르다 바꾼 사진 파일이 저장소에 버려진 채 남는다)
   const storefrontSavingRef = useRef(false);
+  const storefrontPendingRef = useRef(null); // 대표 사진 칸이 찾는 중인 작업 (StorefrontPicker가 채움)
   async function savePlaceWithStorefront(isFromMap = true) {
     if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
+    if (storefrontSavingRef.current) return; // 두 번 누름 방지
     let sf = newManualStorefront;
+    // 장소를 고르자마자 누르면 대표 사진을 아직 찾는 중이다 → 끝날 때까지(최대 6초) 기다렸다가 자동으로 고른 사진을 넣는다
+    if (!sf && storefrontPendingRef.current) {
+      storefrontSavingRef.current = true;
+      showToast("🖼️ 대표 사진 찾는 중…");
+      for (let i = 0; i < 2 && !sf && storefrontPendingRef.current; i++) { // 찾는 도중 다시 시작됐으면 새 작업을 한 번 더 기다림
+        const job = storefrontPendingRef.current;
+        const r = await Promise.race([job.promise, new Promise(res => setTimeout(() => res(null), 6000))]);
+        if (r !== undefined) { sf = r || null; break; }
+      }
+      storefrontSavingRef.current = false;
+    }
     if (sf && !sf.url && sf.full) {
-      if (storefrontSavingRef.current) return; // 두 번 누름 방지
       storefrontSavingRef.current = true;
       if (storefrontNeedsCopy(sf)) showToast("🖼️ 대표 사진을 저장하는 중이에요…");
       try {
@@ -4382,9 +4425,11 @@ if (currentRestaurants && currentRestaurants.length > 0) {
 
       {/* --- 모달 및 팝업 영역 --- */}
       <Toast toastMsg={toastMsg} />
-      {isOffline && (
+      {(isOffline || pendingCount > 0) && (
         <div className="fixed top-1.5 left-1/2 -translate-x-1/2 z-[9600] rounded-full bg-slate-800/90 px-3 py-1 text-[11px] font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
-          📴 오프라인 — 휴대폰에 저장된 내용을 보여 주고 있어요
+          {isOffline ? '📴 오프라인 — 휴대폰에 저장된 내용을 보여 주고 있어요' : '📤 저장 대기 중'}
+          {/* 개수는 안 보여 준다 — 저장할 때 목록을 통째로 넘겨서 메모 하나만 고쳐도 여러 개로 세어진다 */}
+          {pendingCount > 0 && <span className="ml-1 text-amber-300">· 못 보낸 변경이 있어요 (연결되면 자동 저장)</span>}
         </div>
       )}
 
@@ -4563,7 +4608,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         newManualAccommodationDays={newManualAccommodationDays} setNewManualAccommodationDays={setNewManualAccommodationDays}
         manualFileInputRef={manualFileInputRef} supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId}
         handleManualPlaceAdd={savePlaceWithStorefront} handleCopyLocalName={handleCopyLocalName}
-        newManualStorefront={newManualStorefront} setNewManualStorefront={setNewManualStorefront} newManualExt={newManualExt} setNewManualExt={setNewManualExt}
+        newManualStorefront={newManualStorefront} setNewManualStorefront={setNewManualStorefront} newManualExt={newManualExt} setNewManualExt={setNewManualExt} storefrontPendingRef={storefrontPendingRef}
         currentRestaurants={currentRestaurants} showConfirm={showConfirm} country={resolvedGlobalCountry}
         onPickArea={(area) => { pickedAreaRef.current = area; }}
       />
@@ -4807,6 +4852,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
             currentRestaurants={currentRestaurants}
             isDomesticTrip={isDomesticTrip} countryTips={COUNTRY_TIPS[resolvedGlobalCountry] || []} resolvedGlobalCountry={resolvedGlobalCountry}
             archivedPins={archivedPins} onOpenArchive={() => { setPlanViewDay(0); changeTab('plan'); }}
+            showToast={showToast} onSaveLocalAddress={saveLocalAddressToPin}
           />
 
           {/* --- Plan Tab --- */}
@@ -4969,6 +5015,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
                 currentRestaurants={currentRestaurants}
                 onAddPlace={openQuickAddPlace}
                 isDomesticTrip={isDomesticTrip} tripCountry={resolvedGlobalCountry} showToast={showToast} onSaveLocalAddress={saveLocalAddressToPin}
+                dateForDay={getDateStringForDay} cityForecast={forecast}
               />
               )}
             </div>

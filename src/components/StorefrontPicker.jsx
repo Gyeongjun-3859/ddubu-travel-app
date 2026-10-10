@@ -14,7 +14,9 @@ const BADGE = { wiki: '대표', google: '구글', commons: '근처', mapillary: 
 // 다른 후보를 누르면 바뀌고, ✕로 빼면 사진 없이 저장한다. 실제 복사는 핀을 저장할 때 한다.
 //   value: null | 후보 { source:'wiki'|'mapillary', full, thumb, author, link?, mapillaryId?, capturedAt?, auto? }
 //          | 이미 저장된 사진 { url, source, … }
-const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId, value, onChange, isDarkMode, textMuted }) => {
+// pendingRef: 찾는 중이면 { promise } — 결과(자동으로 고른 사진, 없으면 null)로 끝난다. 장소를 고르자마자 [등록]을 누르면
+//   사진을 찾기 전에 저장돼 사진이 빠졌다(사용자 제보: 콕토베·젠코프 성당) → 저장하는 쪽이 이걸 기다렸다가 넣는다.
+const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId, value, onChange, isDarkMode, textMuted, pendingRef }) => {
   const [cands, setCands] = React.useState([]);
   const [status, setStatus] = React.useState('idle'); // idle | loading | done
   const [browsing, setBrowsing] = React.useState(!(value && value.url)); // 저장된 사진이 있으면 [다른 사진]을 누를 때만 찾는다
@@ -26,9 +28,13 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
   const hasPos = lat !== null && lng !== null && isFinite(lat) && isFinite(lng);
 
   React.useEffect(() => {
-    if (!hasPos || !browsing) return;
+    if (!hasPos || !browsing) { if (pendingRef) pendingRef.current = null; return; }
     const reqId = ++reqRef.current;
     setStatus('loading');
+    let finish;
+    const job = { promise: new Promise(r => { finish = r; }) };
+    if (pendingRef) pendingRef.current = job;
+    const done = (pick) => { finish(pick); if (pendingRef && pendingRef.current === job) pendingRef.current = null; };
     // 위치를 고른 직후 이름·현지어 이름이 채워질 시간을 잠깐 준다(검색 선택과 같은 순간에 바뀜)
     const t = setTimeout(async () => {
       const { name: nm, localName: ln, googlePlaceId: gid } = nameRef.current;
@@ -38,16 +44,20 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
         findCommonsPhotos(lat, lng).catch(() => []),
         hasMapillaryToken() ? findStorefrontCandidates(lat, lng).catch(() => []) : Promise.resolve([]),
       ]);
-      if (reqId !== reqRef.current) return;
+      if (reqId !== reqRef.current) { done(undefined); return; }
       // 자동 1순위: 위키백과(그 장소 문서) → 구글(그 장소 사진) → 근처 사진 → 거리 사진
       const list = [...(wiki ? [wiki] : []), ...google, ...commons, ...streets.slice(0, 4).map(c => ({ ...c, source: 'mapillary' }))];
       setCands(list);
       setStatus('done');
       // 자동 선택: 아직 아무것도 안 골랐거나, 전에 자동으로 고른 것(위치를 바꾸기 전 것)이면 새 1순위로
       const cur = valueRef.current;
-      if (!cur || (cur.auto && !cur.url)) onChange(list[0] ? { ...list[0], auto: true } : null);
+      if (!cur || (cur.auto && !cur.url)) {
+        const pick = list[0] ? { ...list[0], auto: true } : null;
+        onChange(pick);
+        done(pick);
+      } else done(cur);
     }, 500);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); done(undefined); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng, browsing, hasPos]);
 

@@ -31,10 +31,10 @@ const AddPlaceModal = ({
   newManualAccommodationDays, setNewManualAccommodationDays,
   manualFileInputRef, supabaseClient, appUserId, activeTripId,
   handleManualPlaceAdd, currentRestaurants, showConfirm, country, onPickArea,
-  newManualStorefront, setNewManualStorefront, newManualExt, setNewManualExt,
+  newManualStorefront, setNewManualStorefront, newManualExt, setNewManualExt, storefrontPendingRef,
 }) => {
   // 장소 자동완성은 일정 수정 창과 같은 훅을 쓴다. 해외 장소를 구글에서 고르면 현지어 이름도 (비어 있을 때) 채운다.
-  const { suggestions: placeSuggestions, showSuggestions, setShowSuggestions, onQueryChange, select: selectSuggestion } = usePlaceSearch({
+  const { suggestions: placeSuggestions, showSuggestions, setShowSuggestions, onQueryChange, select: selectSuggestion, waitForPick } = usePlaceSearch({
     isKakaoMap, isKakaoMapLoaded, country, showToast, biasPins: currentRestaurants,
     myPins: currentRestaurants, excludePinId: clickedLocation?.id,
     onPick: ({ name, lat, lng, localName, area, pin, theme, ext }) => {
@@ -71,6 +71,19 @@ const AddPlaceModal = ({
       }
     },
   });
+  // 저장 버튼: 고른 장소의 위치를 아직 받는 중이면 끝날 때까지 기다렸다가, 그 뒤의 최신 값으로 저장한다
+  // (기다리는 동안 화면이 새로 그려지므로 저장 함수도 최신 것을 ref로 부른다)
+  const saveRef = React.useRef(handleManualPlaceAdd);
+  saveRef.current = handleManualPlaceAdd;
+  const onSaveClick = async (isFromMap) => {
+    const pick = waitForPick();
+    if (pick) {
+      if (typeof showToast === 'function') showToast('📍 고른 장소 정보를 받는 중…');
+      await Promise.race([pick, new Promise(r => setTimeout(r, 6000))]);
+      await new Promise(r => setTimeout(r, 80)); // 바뀐 값이 화면에 반영되고 대표 사진 칸이 찾기 시작할 때까지
+    }
+    saveRef.current(isFromMap);
+  };
   const [isPreviewOpen, setIsPreviewOpen] = React.useState(false); // 좁은 화면에서 "등록된 일정" 미리보기 펼침 여부
   const newManualLocalNameRef = React.useRef(newManualLocalName);
   newManualLocalNameRef.current = newManualLocalName;
@@ -424,7 +437,7 @@ const AddPlaceModal = ({
           {typeof setNewManualStorefront === 'function' && (
             <StorefrontPicker
               lat={clickedLocation?.lat} lng={clickedLocation?.lng}
-              name={newManualPlaceName} localName={newManualLocalName} googlePlaceId={newManualExt && newManualExt.googlePlaceId}
+              name={newManualPlaceName} localName={newManualLocalName} googlePlaceId={newManualExt && newManualExt.googlePlaceId} pendingRef={storefrontPendingRef}
               localLang={LOCAL_LANG_BY_COUNTRY[country] || (country && country !== '한국' ? 'en' : '')}
               value={newManualStorefront} onChange={setNewManualStorefront}
               isDarkMode={isDarkMode} textMuted={textMuted}
@@ -545,11 +558,11 @@ const AddPlaceModal = ({
 
         {/* Bottom Sticky Action Bar */}
         <div className={`shrink-0 ${isDarkMode ? 'bg-slate-800/95 border-slate-700' : 'bg-white/95 border-slate-100'} backdrop-blur-xl border-t px-4 py-3 flex items-center gap-2.5`}>
-          <button onClick={() => handleManualPlaceAdd(false)} className={`flex-1 py-3 px-3 ${isDarkMode ? 'bg-slate-700 hover:bg-slate-600 text-slate-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'} font-bold text-xs rounded-2xl transition-all flex items-center justify-center gap-1.5 active:scale-95`}>
+          <button onClick={() => onSaveClick(false)} className={`flex-1 py-3 px-3 ${isDarkMode ? 'bg-slate-700 hover:bg-slate-600 text-slate-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'} font-bold text-xs rounded-2xl transition-all flex items-center justify-center gap-1.5 active:scale-95`}>
             <Bookmark className="w-[18px] h-[18px]" />
             <span>임시 저장</span>
           </button>
-          <button onClick={() => handleManualPlaceAdd(true)} className="flex-[2] py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-500/25 transition-all flex items-center justify-center gap-1.5 active:scale-95">
+          <button onClick={() => onSaveClick(true)} className="flex-[2] py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-500/25 transition-all flex items-center justify-center gap-1.5 active:scale-95">
             <MapPinPlus className="w-[18px] h-[18px]" />
             <span>일정 &amp; 지도에 핀 등록</span>
           </button>

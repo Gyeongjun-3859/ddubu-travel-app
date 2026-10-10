@@ -5,6 +5,7 @@ import TransitConnector from './TransitConnector';
 import TripImg from './TripImg';
 import { getStorefrontByUrl, storefrontBadge } from '../utils/mapillary';
 import DriverCardModal from './DriverCardModal';
+import PlaceWeatherChip from './PlaceWeatherChip';
 
 const THEME_EMOJI = {
   '식당': '🍽️', '디저트': '🍰', '관광지': '📸', '쇼핑': '🛍️', '숙소': '🏠', '카페': '☕', '기타': '📍',
@@ -19,11 +20,21 @@ const PlanTimelinePanel = ({
   handleEditPlanClick, handleDeletePlan, handleCopyLocalName, openPhotoViewer,
   currentRestaurants, onAddPlace,
   isDomesticTrip, tripCountry, showToast, onSaveLocalAddress,
+  dateForDay, cityForecast,
 }) => {
   const safePT = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
   // 🚕 기사님께 보여주기 — 해외 여행 일정 카드에서 한 번에 (여행 중엔 일정 탭을 주로 보니까). 연결된 핀이 있어야 위치·주소를 안다
   const [driverPin, setDriverPin] = React.useState(null);
-  const pinOf = (plan) => isDomesticTrip ? null : findPinForPlan(plan, Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [], safePT);
+  const linkedPinOf = (plan) => findPinForPlan(plan, Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [], safePT);
+  const pinOf = (plan) => isDomesticTrip ? null : linkedPinOf(plan);
+  // 그 장소(좌표·고도) 그날 날씨 — 산 일정은 시내보다 훨씬 추워서 (예보는 16일 앞까지만)
+  const dayDate = typeof dateForDay === 'function' ? dateForDay(currentDay) : '';
+  const cityDay = (Array.isArray(cityForecast) ? cityForecast : []).find(f => f && f.date === dayDate) || null;
+  const weatherChip = (plan) => {
+    const pin = linkedPinOf(plan);
+    if (!pin || !pin.lat || !pin.lng || !dayDate) return null;
+    return <PlaceWeatherChip lat={pin.lat} lng={pin.lng} date={dayDate} cityDay={cityDay} />;
+  };
   const taxiBtn = (plan) => {
     const pin = pinOf(plan);
     if (!pin) return null;
@@ -132,6 +143,7 @@ const PlanTimelinePanel = ({
                       <p className="truncate text-[11px] font-semibold text-[#007AFF]" onClick={(e) => handleCopyLocalName(e, plan.localName)}>📋 {S(plan.localName)}</p>
                     )}
                     {plan.features && <p className={`line-clamp-1 text-[11px] leading-tight ${textMuted}`}>{S(plan.features)}</p>}
+                    {weatherChip(plan)}
                     {taxiBtn(plan)}
                   </div>
                   {actionBar(plan, isActive)}
@@ -203,6 +215,7 @@ const PlanTimelinePanel = ({
                           <span>{getThemeEmoji(plan.theme)} {S(plan.theme) || '기타'}</span>
                           {plan.localName && (<><span className="opacity-40">•</span><span className="truncate text-[#007AFF] font-semibold" onClick={(e) => handleCopyLocalName(e, plan.localName)}>{S(plan.localName)}</span></>)}
                         </div>
+                        {weatherChip(plan)}
                         {!isDomesticTrip && (
                           <div className="flex flex-wrap gap-1.5">
                             <button

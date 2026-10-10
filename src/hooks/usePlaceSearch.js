@@ -24,6 +24,10 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
   const timerRef = useRef(null);
   const reqRef = useRef(0);
   const sessionRef = useRef(newPlacesSessionToken());
+  // 고른 장소의 위치를 받는 중인 작업 — 고르자마자 [등록]을 누르면 위치 없이 저장돼 핀이 지도에 안 생겼다.
+  // 저장 쪽이 waitForPick()으로 이게 끝나길 기다린다
+  const pickingRef = useRef(null);
+  const waitForPick = () => pickingRef.current;
 
   const run = (query) => {
     const reqId = ++reqRef.current; // 늦게 도착한 이전 검색 결과가 덮어쓰지 않게 구분
@@ -99,7 +103,13 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
     timerRef.current = setTimeout(() => run(val), 350);
   };
 
-  const select = async (s) => {
+  const select = (s) => {
+    const job = selectInner(s).catch(e => console.warn('[장소 선택 처리 실패]', e && e.message));
+    pickingRef.current = job;
+    job.finally(() => { if (pickingRef.current === job) pickingRef.current = null; });
+    return job;
+  };
+  const selectInner = async (s) => {
     setSuggestions([]); setShowSuggestions(false);
     reqRef.current++; // 선택 직후 도착하는 검색 결과 무시
     if (s.source === 'pin') {
@@ -142,5 +152,5 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
     if (typeof onPick === 'function') onPick({ name, lat, lng, localName: localName && localName !== name ? localName : '', area, theme, ext });
   };
 
-  return { suggestions, showSuggestions, setShowSuggestions, onQueryChange, select };
+  return { suggestions, showSuggestions, setShowSuggestions, onQueryChange, select, waitForPick };
 }

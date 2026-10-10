@@ -47,6 +47,9 @@ const EditPlanModal = ({
     },
   });
   const [sfSaving, setSfSaving] = React.useState(false);
+  const editingRef = React.useRef(editingPlan); // 기다린 뒤 최신 입력값으로 저장하기 위해
+  editingRef.current = editingPlan;
+  const sfPendingRef = React.useRef(null); // 대표 사진 칸이 찾는 중인 작업 — 저장이 기다렸다가 넣음
   if (!editingPlan) { openedRef.current = { id: null, snapshot: null, baseline: null }; return null; }
   if (openedRef.current.id !== editingPlan.id) {
     const baseline = (Array.isArray(planTimeline) ? planTimeline : []).find(p => p && S(p.id) === S(editingPlan.id)) || null;
@@ -187,7 +190,7 @@ const EditPlanModal = ({
                   googlePlaceId={editingPlan._googlePlaceId}
                   value={editingPlan._storefront || null}
                   onChange={(v) => setEditingPlan(prev => prev ? ({ ...prev, _storefront: v }) : prev)}
-                  isDarkMode={isDarkMode} textMuted={textMuted}
+                  isDarkMode={isDarkMode} textMuted={textMuted} pendingRef={sfPendingRef}
                 />
               </div>
             )}
@@ -369,14 +372,34 @@ const EditPlanModal = ({
         {/* Bottom Sticky Action Bar */}
         <div className={`shrink-0 ${isDarkMode ? 'bg-slate-800/95 border-slate-700' : 'bg-white/95 border-slate-100'} backdrop-blur-xl border-t px-4 py-3`}>
           <button disabled={sfSaving} onClick={async () => {
+            // 장소를 고르자마자 누르면 위치를 아직 받는 중 → 끝날 때까지 기다렸다가 최신 값으로
+            const pick = placeSearch.waitForPick();
+            if (pick) {
+              setSfSaving(true);
+              showToast('📍 고른 장소 정보를 받는 중…');
+              await Promise.race([pick, new Promise(r => setTimeout(r, 6000))]);
+              await new Promise(r => setTimeout(r, 80));
+              setSfSaving(false);
+            }
             // 새 장소를 골랐으면: 이전 장소의 대표 사진은 빼고, 새로 고른 대표 사진을 (직접 올린 사진 뒤에) 넣는다
-            let ep = editingPlan;
+            let ep = editingRef.current || editingPlan;
             if (ep._pickedLat != null) {
               const rests0 = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
               const linked0 = findPinForPlan(openedRef.current.baseline || openedRef.current.snapshot || ep, rests0, Array.isArray(planTimeline) ? planTimeline : []);
               const oldSfUrl = linked0 && linked0.storefront && linked0.storefront.url;
               const userPhotos = (Array.isArray(ep.photos) ? ep.photos : (ep.photo ? [ep.photo] : [])).filter(u => u && u !== oldSfUrl);
               let sf = ep._storefront;
+              // 장소를 고르자마자 저장하면 사진을 아직 찾는 중 → 끝날 때까지(최대 6초) 기다렸다가 자동으로 고른 사진을 넣는다
+              if (!sf && sfPendingRef.current) {
+                setSfSaving(true);
+                showToast("🖼️ 대표 사진 찾는 중…");
+                for (let i = 0; i < 2 && !sf && sfPendingRef.current; i++) {
+                  const job = sfPendingRef.current;
+                  const r = await Promise.race([job.promise, new Promise(res => setTimeout(() => res(null), 6000))]);
+                  if (r !== undefined) { sf = r || null; break; }
+                }
+                setSfSaving(false);
+              }
               if (sf && !sf.url && sf.full) {
                 setSfSaving(true);
                 if (storefrontNeedsCopy(sf)) showToast("🖼️ 대표 사진을 저장하는 중이에요…");
