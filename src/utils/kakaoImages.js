@@ -4,13 +4,20 @@
 
 const mem = new Map();
 
+// 서버 함수는 배포 사이트에만 있다. 안드로이드 앱(화면이 휴대폰 안에서 열림)이나 로컬 개발 화면에서는
+// 배포 사이트의 주소로 직접 부른다 (서버 함수가 앱·로컬 주소를 허용해 둠)
+const SITE = 'https://ddubu-travel-app.vercel.app';
+const apiBase = () => {
+  try { return window.location.origin === SITE ? '' : SITE; } catch (e) { return SITE; }
+};
+
 async function search(query) {
   if (mem.has(query)) return mem.get(query);
   const p = (async () => {
-    const r = await fetch(`/api/kakao-images?query=${encodeURIComponent(query)}`);
+    const r = await fetch(`${apiBase()}/api/kakao-images?query=${encodeURIComponent(query)}`);
     if (!r.ok) return [];
     const ct = r.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) return []; // 로컬 개발 서버는 이 주소에 화면(html)을 돌려준다
+    if (!ct.includes('application/json')) return []; // 서버 함수가 아닌 화면(html)이 오면 무시
     const d = await r.json();
     return Array.isArray(d.items) ? d.items : [];
   })().catch(() => []);

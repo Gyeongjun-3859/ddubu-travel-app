@@ -2,7 +2,17 @@
 // 카카오 REST 키는 화면 코드에 넣으면 누구나 볼 수 있어서, 서버(Vercel 환경변수 KAKAO_REST_KEY)에만 두고 여기서 대신 부른다.
 // 결과는 블로그·카페 사진이라 우리 저장소로 복사하지 않고, 카카오가 주는 미리보기 주소와 원문 링크만 돌려준다.
 //   GET /api/kakao-images?query=금수복국 해운대본점 음식
+// 다른 주소에서 부르는 걸 허용할 곳: 안드로이드 앱(화면이 휴대폰 안 https://localhost 에서 열림)과 로컬 개발 화면.
+// 아무 사이트나 허용하면 남이 우리 카카오 사용량을 쓸 수 있어서 목록으로 제한한다.
+const ALLOWED_ORIGINS = /^(https?:\/\/localhost(:\d+)?|capacitor:\/\/localhost|https?:\/\/127\.0\.0\.1(:\d+)?)$/;
+
 export default async function handler(req, res) {
+  const origin = (req.headers && req.headers.origin) || '';
+  if (ALLOWED_ORIGINS.test(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') { res.status(204).end(); return; }
   const key = process.env.KAKAO_REST_KEY;
   if (!key) { res.status(501).json({ error: 'no-key', items: [] }); return; }
   const query = String((req.query && req.query.query) || '').trim().slice(0, 80);
