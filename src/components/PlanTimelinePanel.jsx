@@ -4,6 +4,7 @@ import { S, getAccommodationTransitFrom, openGoogleMapsNav, openExternalUrl, isE
 import TransitConnector from './TransitConnector';
 import TripImg from './TripImg';
 import { getStorefrontByUrl, storefrontBadge } from '../utils/mapillary';
+import DriverCardModal from './DriverCardModal';
 
 const THEME_EMOJI = {
   '식당': '🍽️', '디저트': '🍰', '관광지': '📸', '쇼핑': '🛍️', '숙소': '🏠', '카페': '☕', '기타': '📍',
@@ -17,9 +18,22 @@ const PlanTimelinePanel = ({
   activeMobileCard, setActiveMobileCard,
   handleEditPlanClick, handleDeletePlan, handleCopyLocalName, openPhotoViewer,
   currentRestaurants, onAddPlace,
-  isDomesticTrip,
+  isDomesticTrip, tripCountry, showToast, onSaveLocalAddress,
 }) => {
   const safePT = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
+  // 🚕 기사님께 보여주기 — 해외 여행 일정 카드에서 한 번에 (여행 중엔 일정 탭을 주로 보니까). 연결된 핀이 있어야 위치·주소를 안다
+  const [driverPin, setDriverPin] = React.useState(null);
+  const pinOf = (plan) => isDomesticTrip ? null : findPinForPlan(plan, Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [], safePT);
+  const taxiBtn = (plan) => {
+    const pin = pinOf(plan);
+    if (!pin) return null;
+    return (
+      <button onClick={(e) => { e.stopPropagation(); setDriverPin(pin); }}
+        className="mt-0.5 flex w-fit items-center gap-1 rounded-md bg-indigo-600/10 px-2 py-1 text-[11px] font-semibold text-indigo-600">
+        🚕 기사님
+      </button>
+    );
+  };
 
   const accomsForDay = safePT.filter(p => {
     if (!p.isAccommodation) return false;
@@ -118,6 +132,7 @@ const PlanTimelinePanel = ({
                       <p className="truncate text-[11px] font-semibold text-[#007AFF]" onClick={(e) => handleCopyLocalName(e, plan.localName)}>📋 {S(plan.localName)}</p>
                     )}
                     {plan.features && <p className={`line-clamp-1 text-[11px] leading-tight ${textMuted}`}>{S(plan.features)}</p>}
+                    {taxiBtn(plan)}
                   </div>
                   {actionBar(plan, isActive)}
                 </div>
@@ -189,12 +204,15 @@ const PlanTimelinePanel = ({
                           {plan.localName && (<><span className="opacity-40">•</span><span className="truncate text-[#007AFF] font-semibold" onClick={(e) => handleCopyLocalName(e, plan.localName)}>{S(plan.localName)}</span></>)}
                         </div>
                         {!isDomesticTrip && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); openNav(plan); }}
-                            className="mt-0.5 flex w-fit items-center gap-1 rounded-md bg-[#007AFF]/10 px-2 py-1 text-[11px] font-semibold text-[#007AFF]"
-                          >
-                            <Navigation className="w-3 h-3" /> 길찾기
-                          </button>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openNav(plan); }}
+                              className="mt-0.5 flex w-fit items-center gap-1 rounded-md bg-[#007AFF]/10 px-2 py-1 text-[11px] font-semibold text-[#007AFF]"
+                            >
+                              <Navigation className="w-3 h-3" /> 길찾기
+                            </button>
+                            {taxiBtn(plan)}
+                          </div>
                         )}
                       </div>
                       {actionBar(plan, isActive)}
@@ -227,6 +245,7 @@ const PlanTimelinePanel = ({
           })}
         </div>
       )}
+      {driverPin && <DriverCardModal pin={driverPin} country={S(driverPin.country) || S(tripCountry)} onClose={() => setDriverPin(null)} showToast={showToast} onSaveLocalAddress={onSaveLocalAddress} />}
     </div>
   );
 };

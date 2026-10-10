@@ -7,8 +7,9 @@ import { hasLocalApps, twoGisPlaceUrl, yandexGoUrl } from '../utils/localApps';
 
 // 🚕 기사님께 보여주기 — 현지어 이름·주소·"여기로 가 주세요"를 화면 가득 큰 글씨로.
 // (알마티 택시 기사는 영어가 거의 안 통하고, 한국어 이름으로는 못 알아본다)
-// 주소는 구글에서 현지어로 받아 온다(핀에 저장된 장소 번호, 없으면 이름+위치로 찾기). 못 받아도 이름만으로 보여 준다.
-const DriverCardModal = ({ pin, country, onClose, showToast }) => {
+// 주소: 핀에 저장된 현지어 주소(localAddress)가 있으면 그걸 바로 — 신호가 없는 산·시골에서도 보이게.
+// 없으면 구글에서 현지어로 받아 오고(핀의 장소 번호, 없으면 이름+위치로 찾기) onSaveLocalAddress로 핀에 저장해 다음부턴 오프라인에서도.
+const DriverCardModal = ({ pin, country, onClose, showToast, onSaveLocalAddress }) => {
   const lang = LOCAL_LANG_BY_COUNTRY[country] || 'en';
   const [local, setLocal] = React.useState({ name: '', address: '' });
   const [loading, setLoading] = React.useState(false);
@@ -17,7 +18,7 @@ const DriverCardModal = ({ pin, country, onClose, showToast }) => {
     if (!pin) return undefined;
     let cancelled = false;
     setLocal({ name: '', address: '' });
-    if (!hasGooglePlacesKey()) return undefined;
+    if (S(pin.localAddress) || !hasGooglePlacesKey()) return undefined;
     setLoading(true);
     (async () => {
       try {
@@ -26,6 +27,7 @@ const DriverCardModal = ({ pin, country, onClose, showToast }) => {
         if (!id) return;
         const r = await googlePlaceAddressIn(id, lang);
         if (!cancelled) setLocal(r);
+        if (r.address && typeof onSaveLocalAddress === 'function') onSaveLocalAddress(pin.id, r.address, id);
       } catch (e) {
         console.warn('[현지어 주소 불러오기 실패]', e && e.message);
       } finally {
@@ -37,12 +39,13 @@ const DriverCardModal = ({ pin, country, onClose, showToast }) => {
 
   if (!pin) return null;
   const name = S(pin.localName) || local.name || S(pin.name);
+  const address = S(pin.localAddress) || local.address;
   const phrase = DRIVER_PHRASE[lang] || DRIVER_PHRASE[String(lang).split('-')[0]] || DRIVER_PHRASE.en;
   const reading = hasCyrillic(name) ? cyrillicToLatin(name) : '';
   const hasPos = pin.lat && pin.lng;
 
   const copy = async () => {
-    const text = [name, local.address].filter(Boolean).join('\n');
+    const text = [name, address].filter(Boolean).join('\n');
     try { await navigator.clipboard.writeText(text); if (showToast) showToast('📋 현지어 이름·주소를 복사했어요'); }
     catch (e) { if (showToast) showToast('복사하지 못했어요'); }
   };
@@ -59,8 +62,8 @@ const DriverCardModal = ({ pin, country, onClose, showToast }) => {
           <p className="text-4xl sm:text-5xl font-black leading-tight break-words">{name}</p>
           {reading && <p className="mt-1 text-sm font-semibold text-slate-400">{reading}</p>}
         </div>
-        {local.address
-          ? <p className="text-2xl font-bold leading-snug text-slate-700 break-words">{local.address}</p>
+        {address
+          ? <p className="text-2xl font-bold leading-snug text-slate-700 break-words">{address}</p>
           : loading && <p className="text-sm text-slate-400">주소를 불러오는 중…</p>}
       </div>
       <div className="px-4 pb-6 pt-2 grid grid-cols-2 gap-2">

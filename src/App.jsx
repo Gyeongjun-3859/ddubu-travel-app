@@ -8,7 +8,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTR
 import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, themeFromGoogleTypes, isExpenseRecord, planDayNum, isArchivedPin, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
-import { hasGooglePlacesKey, googleNearbyPlace, googlePlaceNameIn, LOCAL_LANG_BY_COUNTRY } from './utils/googlePlaces';
+import { hasGooglePlacesKey, googleNearbyPlace, googlePlaceAddressIn, LOCAL_LANG_BY_COUNTRY } from './utils/googlePlaces';
 import { copyStorefrontPhoto, setStorefrontCredits, storefrontNeedsCopy } from './utils/mapillary';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
@@ -119,7 +119,17 @@ function clearAccountTripCache() {
     const keptPending = {};
     guestIds.forEach(id => { if (pending && pending[id]) keptPending[id] = pending[id]; });
     localStorage.setItem('my_travel_pending', JSON.stringify(keptPending));
+    localStorage.removeItem(PROFILE_CACHE_KEY);
   } catch (e) {}
+}
+
+// 로그인 계정의 여행 목록을 기기에 기억 — 신호가 없을 때 자동 로그인이 서버에 못 물어봐도 여행을 열 수 있게
+const PROFILE_CACHE_KEY = 'my_travel_profile_cache';
+function readProfileCache(id) {
+  try {
+    const c = JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY) || 'null');
+    return c && c.id === id && Array.isArray(c.trips) ? c : null;
+  } catch (e) { return null; }
 }
 
 /*
@@ -181,6 +191,19 @@ const MainApp = () => {
 
   const [trips, setTrips] = useState([{ id: 'default', name: '🛫 나의 첫 번째 여행' }]);
   const [activeTripId, setActiveTripId] = useState('default');
+  useEffect(() => {
+    if (!appUserId || appUserId === 'Guest') return;
+    try { localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ id: appUserId, trips, activeTripId })); } catch (e) {}
+  }, [appUserId, trips, activeTripId]);
+  // 📴 오프라인 표시 (신호가 끊기면 위쪽에 안내)
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
+  useEffect(() => {
+    const on = () => setIsOffline(false);
+    const off = () => setIsOffline(true);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
   const [sharedTripId, setSharedTripId] = useState(null);
   const [pendingInvite, setPendingInvite] = useState(null);
   const [inviteIdInput, setInviteIdInput] = useState("");
@@ -880,7 +903,7 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
     setNewManualPhoto(pinImgs[0] || "");
     setNewManualPhotos(pinImgs);
     setNewManualStorefront(pinSf);
-    setNewManualExt({ googlePlaceId: S(pin.googlePlaceId), kakaoPlaceUrl: S(pin.kakaoPlaceUrl) });
+    setNewManualExt({ googlePlaceId: S(pin.googlePlaceId), kakaoPlaceUrl: S(pin.kakaoPlaceUrl), localAddress: S(pin.localAddress) });
     setNewManualIsAccommodation(Boolean(pin.isAccommodation));
     setNewManualIsLandmark(Boolean(pin.isLandmark));
     setNewManualTheme(pin.theme ? S(pin.theme) : "기타");
@@ -961,6 +984,20 @@ const saveToDb = useCallback((updates, explicitTripId) => {
     });
     if (Object.keys(scalarPatch).length > 0) engineRef.current.patch(tripId, scalarPatch);
   }, []);
+
+  // '기사님께 보여주기'가 구글에서 받아 온 현지어 주소를 핀에 저장 — 다음부턴 신호 없는 곳에서도 주소까지 보인다.
+  // (보기 전용 여행·아직 핀이 아닌 장소는 저장하지 않음)
+  function saveLocalAddressToPin(pinId, address, googlePlaceId) {
+    if (readOnlyRef.current || !pinId || !address) return;
+    const list = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+    const pin = list.find(r => S(r.id) === S(pinId));
+    if (!pin || S(pin.localAddress) === S(address)) return;
+    const updated = list.map(r => S(r.id) === S(pinId)
+      ? { ...r, localAddress: S(address), ...(googlePlaceId && !r.googlePlaceId ? { googlePlaceId: S(googlePlaceId) } : {}) }
+      : r);
+    setCurrentRestaurants(updated);
+    saveToDb({ current_restaurants: updated });
+  }
 
   function handleForceSave() {
     saveToDb({
@@ -1694,7 +1731,9 @@ async function confirmDeleteTrip() {
         const prevPin = loc?.id ? safeCurrentRestaurants.find(r => r && S(r.id) === S(loc.id)) : null;
         const g = S(newManualExt.googlePlaceId) || S(reusedPin?.googlePlaceId) || S(prevPin?.googlePlaceId);
         const k = S(newManualExt.kakaoPlaceUrl) || S(reusedPin?.kakaoPlaceUrl) || S(prevPin?.kakaoPlaceUrl);
-        return { ...(g ? { googlePlaceId: g } : {}), ...(k ? { kakaoPlaceUrl: k } : {}) };
+        // 현지어 주소: 이번에 장소를 골랐으면 그 장소 것만 (이전 장소 주소가 남지 않게), 아니면 기존 핀 것
+        const a = newManualExt.googlePlaceId ? S(newManualExt.localAddress) : (S(reusedPin?.localAddress) || S(prevPin?.localAddress));
+        return { ...(g ? { googlePlaceId: g } : {}), ...(k ? { kakaoPlaceUrl: k } : {}), ...(a ? { localAddress: a } : {}) };
       })()),
       ...(storefront ? { storefront: {
         url: storefront.url, mapillaryId: S(storefront.mapillaryId), author: S(storefront.author), capturedAt: storefront.capturedAt || 0,
@@ -2964,17 +3003,20 @@ function deletePackingItem(id) {
 
           if (saveIdPw) { setIdInput(S(id)); setPwInput(S(pw)); setSaveCredentials(true); }
           if (autoLogin) {
+            let netFail = false;
+            const isNetErr = (er) => Boolean(er) && /Failed to fetch|NetworkError|Load failed|network/i.test(String(er.message || er));
             try {
               // 1) 이미 전환된 계정이면 Supabase가 들고 있는 세션으로 바로 복원
               const { data: sessionData } = await client.auth.getSession();
               let profile = null;
               if (sessionData?.session) {
-                const { data: profileRows } = await client.from('profiles').select('trips, activeTripId').eq('app_user_id', S(id));
+                const { data: profileRows, error: profileErr } = await client.from('profiles').select('trips, activeTripId').eq('app_user_id', S(id));
+                if (isNetErr(profileErr)) netFail = true;
                 if (Array.isArray(profileRows) && profileRows.length > 0) profile = profileRows[0];
               }
 
               // 2) 세션이 없으면(아직 전환 전) 레거시 방식으로 확인 후 조용히 전환
-              if (!profile) {
+              if (!profile && !netFail) {
                 const { data } = await client.rpc('verify_login', { p_app_user_id: S(id), p_password: S(pw) });
                 profile = Array.isArray(data) && data.length > 0 ? data[0] : null;
                 if (profile) {
@@ -3000,7 +3042,19 @@ function deletePackingItem(id) {
                 setAutoLogin(true);
                 setShowIdSetup(false);
               }
-            } catch(e) { console.error("Auto login check failed", e); }
+            } catch(e) { console.error("Auto login check failed", e); if (isNetErr(e)) netFail = true; }
+            // 신호가 없어 서버에 못 물어봤으면: 이 기기에 기억해 둔 여행 목록으로 들어간다 (산·기내에서 앱을 열었을 때)
+            if (!restoredLogin && (netFail || navigator.onLine === false)) {
+              const cached = readProfileCache(S(id));
+              if (cached) {
+                restoredLogin = true;
+                setAppUserId(S(id));
+                setTrips(cached.trips);
+                if (cached.activeTripId) setActiveTripId(S(cached.activeTripId));
+                setAutoLogin(true);
+                setShowIdSetup(false);
+              }
+            }
           }
         }
 
@@ -3305,8 +3359,12 @@ function deletePackingItem(id) {
                 // 현지어 이름: 근처 검색은 한국어로 받아서 영어·번역 이름이 들어갔다 → 그 나라 말 이름을 한 번 더 받아 채운다
                 const localLang = LOCAL_LANG_BY_COUNTRY[resolvedCountryRef.current];
                 if (place && place.id && localLang) {
-                  googlePlaceNameIn(place.id, localLang)
-                    .then(local => { if (local && local !== place.name) setNewManualLocalName(local); })
+                  // 같은 요청으로 현지어 주소도 받아 핀에 저장 ('기사님께 보여주기'가 신호 없이도 주소까지)
+                  googlePlaceAddressIn(place.id, localLang)
+                    .then(local => {
+                      if (local.name && local.name !== place.name) setNewManualLocalName(local.name);
+                      if (local.address) setNewManualExt(prev => (prev && prev.googlePlaceId === place.id ? { ...prev, localAddress: local.address } : prev));
+                    })
                     .catch(err => console.warn('[현지어 이름 조회 실패]', err && err.message));
                 }
               };
@@ -4324,6 +4382,11 @@ if (currentRestaurants && currentRestaurants.length > 0) {
 
       {/* --- 모달 및 팝업 영역 --- */}
       <Toast toastMsg={toastMsg} />
+      {isOffline && (
+        <div className="fixed top-1.5 left-1/2 -translate-x-1/2 z-[9600] rounded-full bg-slate-800/90 px-3 py-1 text-[11px] font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
+          📴 오프라인 — 휴대폰에 저장된 내용을 보여 주고 있어요
+        </div>
+      )}
 
       {/* 커스텀 확인 모달 (window.confirm 대체) */}
       <ConfirmModal confirmModal={confirmModal} setConfirmModal={setConfirmModal} cardBg={cardBg} isDarkMode={isDarkMode} textMain={textMain} />
@@ -4451,11 +4514,13 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         isSettleMode={isSettleMode} setIsSettleMode={setIsSettleMode} settleLocal={settleLocal} setSettleLocal={setSettleLocal} settleKrw={settleKrw} setSettleKrw={setSettleKrw}
         isDiaryOpen={isDiaryOpen} setIsDiaryOpen={setIsDiaryOpen} diaryReview={diaryReview} setDiaryReview={setDiaryReview} diaryRating={diaryRating} setDiaryRating={setDiaryRating}
         currentRestaurants={currentRestaurants} setCurrentRestaurants={setCurrentRestaurants} showToast={showToast} rates={rates}
+        isDomesticTrip={isDomesticTrip} tripCountry={resolvedGlobalCountry} onSaveLocalAddress={saveLocalAddressToPin}
       />
 
       <PlaceInfoModal place={placeInfoTarget} onClose={() => setPlaceInfoTarget(null)} cardBg={cardBg} />
 
       <PinDetailModal
+        onSaveLocalAddress={saveLocalAddressToPin}
         selectedPinInfo={selectedPinInfo} setSelectedPinInfo={setSelectedPinInfo} cardBg={cardBg} setViewPhoto={setViewPhoto} handleCopyLocalName={handleCopyLocalName} openEditPinModal={openEditPinModal}
         isDomesticTrip={isDomesticTrip} tripCountry={resolvedGlobalCountry} showToast={showToast}
       />
@@ -4903,7 +4968,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
                 handleCopyLocalName={handleCopyLocalName} openPhotoViewer={openPhotoViewer}
                 currentRestaurants={currentRestaurants}
                 onAddPlace={openQuickAddPlace}
-                isDomesticTrip={isDomesticTrip}
+                isDomesticTrip={isDomesticTrip} tripCountry={resolvedGlobalCountry} showToast={showToast} onSaveLocalAddress={saveLocalAddressToPin}
               />
               )}
             </div>

@@ -37,11 +37,11 @@ const EditPlanModal = ({
       setEditingPlan(prev => prev ? ({
         ...prev, place: name,
         // 다른 장소를 골랐으니 대표 사진도 새로 (아래 '대표 사진' 칸이 자동으로 고름). 구글 장소 번호도 새 장소 것으로
-        _storefront: null, _googlePlaceId: (ext && ext.googlePlaceId) || '',
+        _storefront: null, _googlePlaceId: (ext && ext.googlePlaceId) || '', _localAddress: (ext && ext.localAddress) || '',
         // 다른 장소를 골랐으면 현지어 이름도 그 장소 것으로 (예전엔 비어 있을 때만 채워 이전 장소 이름이 남았다 — 4차 A)
         localName: localName || '',
-        // 테마는 '기타'일 때만 고른 장소 분류로
-        ...(theme && theme !== '기타' && (!prev.theme || prev.theme === '기타') ? { theme, ...(theme === '숙소' ? { isAccommodation: true } : {}) } : {}),
+        // 다른 장소를 골랐으니 테마도 그 장소 분류로 추천 (분류를 모르면 그대로). 숙소가 아니게 바뀌면 숙소 표시도 끈다
+        ...(theme && theme !== '기타' ? { theme, isAccommodation: theme === '숙소' } : {}),
         ...(!isNaN(lat) && !isNaN(lng) ? { _pickedLat: lat, _pickedLng: lng } : {}),
       }) : prev);
     },
@@ -416,7 +416,7 @@ const EditPlanModal = ({
             // 최신 일정 위에 덮어 저장한다. 예전엔 창을 열 때 복사해 둔 일정 전체를 저장해서, 그 사이
             // 공유 상대가 바꾼 칸(예: 메모)이 내 옛 값으로 소리 없이 되돌아갔다.
             // 화면 전용 칸(국가/지역 선택 상태, 랜드마크 체크)은 일정 데이터에 넣지 않는다.
-            const UI_ONLY_KEYS = ['countrySelect', 'manualCountry', 'regionSelect', 'manualRegion', 'isLandmark', '_pickedLat', '_pickedLng', '_storefront', '_sfFinal', '_googlePlaceId'];
+            const UI_ONLY_KEYS = ['countrySelect', 'manualCountry', 'regionSelect', 'manualRegion', 'isLandmark', '_pickedLat', '_pickedLng', '_storefront', '_sfFinal', '_googlePlaceId', '_localAddress'];
             // 새 장소를 골랐을 때 핀에 같이 넣을 대표 사진 출처·구글 장소 번호
             const pickedNew = editingPlan._pickedLat != null;
             const sfMeta = editingPlan._sfFinal ? {
@@ -468,6 +468,8 @@ const EditPlanModal = ({
               if (pickedNew) {
                 if (editingPlan._googlePlaceId) updatedRests[matchedIndex].googlePlaceId = S(editingPlan._googlePlaceId);
                 else delete updatedRests[matchedIndex].googlePlaceId;
+                if (editingPlan._localAddress) updatedRests[matchedIndex].localAddress = S(editingPlan._localAddress);
+                else delete updatedRests[matchedIndex].localAddress;
                 delete updatedRests[matchedIndex].kakaoPlaceUrl;
               }
               const sf = updatedRests[matchedIndex].storefront;
@@ -489,6 +491,7 @@ const EditPlanModal = ({
                 theme: S(planData.theme) || "기타",
                 ...(sfMeta ? { storefront: sfMeta } : {}),
                 ...(editingPlan._googlePlaceId ? { googlePlaceId: S(editingPlan._googlePlaceId) } : {}),
+                ...(editingPlan._localAddress ? { localAddress: S(editingPlan._localAddress) } : {}),
               };
               planData.pinId = newPinId;
               updatedTimeline = updatedTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p);

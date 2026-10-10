@@ -81,7 +81,9 @@ async function flush() {
   } catch (e) {
     console.warn('[사진 서명 주소 요청 실패 — 원래 주소 사용]', e && e.message);
     const now = Date.now();
-    paths.forEach(p => { c[p] = { url: null, exp: now + FAIL_RETRY_MS }; });
+    // 인터넷이 끊겨 실패한 경우가 많다 → 아직 쓸 수 있는 주소가 있으면 지우지 않는다
+    // (예전엔 만료 하루 전 갱신이 실패하면 멀쩡한 주소까지 지워 사진이 사라졌다)
+    paths.forEach(p => { if (!(c[p] && c[p].url && c[p].exp > now)) c[p] = { url: null, exp: now + FAIL_RETRY_MS }; });
   }
   saveCache();
   listeners.forEach(fn => { try { fn(); } catch (e) {} });

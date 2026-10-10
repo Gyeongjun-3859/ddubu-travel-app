@@ -103,11 +103,12 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
     setSuggestions([]); setShowSuggestions(false);
     reqRef.current++; // 선택 직후 도착하는 검색 결과 무시
     if (s.source === 'pin') {
-      if (typeof onPick === 'function') onPick({ name: s.name, lat: s.lat, lng: s.lng, localName: S(s.pin.localName), area: null, pin: s.pin, ext: { googlePlaceId: S(s.pin.googlePlaceId), kakaoPlaceUrl: S(s.pin.kakaoPlaceUrl) } });
+      if (typeof onPick === 'function') onPick({ name: s.name, lat: s.lat, lng: s.lng, localName: S(s.pin.localName), area: null, pin: s.pin, ext: { googlePlaceId: S(s.pin.googlePlaceId), kakaoPlaceUrl: S(s.pin.kakaoPlaceUrl), localAddress: S(s.pin.localAddress) } });
       return;
     }
     let { lat, lng } = s;
     let localName = '';
+    let localAddress = '';
     let name = s.name;
     // 고른 장소의 분류로 테마 추천 (카카오: 분류 코드 / 구글: 상세 요청의 types) — 창에서 테마가 '기타'일 때만 바뀜
     let theme = s.source === 'kakao' ? themeFromKakaoCategory(s.kakaoCategory) : '기타';
@@ -118,7 +119,7 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
       const localLang = country && country !== '한국' ? (LOCAL_LANG_BY_COUNTRY[country] || 'en') : null;
       try {
         const loc = await googlePlaceLocation(s.placeId, sessionRef.current, 'ko', localLang);
-        lat = loc.lat; lng = loc.lng; localName = loc.localName || '';
+        lat = loc.lat; lng = loc.lng; localName = loc.localName || ''; localAddress = loc.localAddress || '';
         area = resolvePlaceArea({ countryCode: loc.countryCode, names: loc.areaNames });
         theme = themeFromGoogleTypes('', loc.types);
       } catch (e) {
@@ -137,7 +138,7 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
       } catch (e) { console.warn('[장소 이름 번역 실패]', e && e.message); }
     }
     // ext: 핀에 같이 저장할 바깥 서비스 번호 — 나중에 '장소 정보'(영업시간·리뷰)를 다시 찾지 않고 바로 열기 위함
-    const ext = { googlePlaceId: s.placeId || '', kakaoPlaceUrl: s.kakaoUrl || '' };
+    const ext = { googlePlaceId: s.placeId || '', kakaoPlaceUrl: s.kakaoUrl || '', localAddress };
     if (typeof onPick === 'function') onPick({ name, lat, lng, localName: localName && localName !== name ? localName : '', area, theme, ext });
   };
 

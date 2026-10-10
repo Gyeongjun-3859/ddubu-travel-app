@@ -2,6 +2,7 @@ import React from 'react';
 import { Trash2 } from 'lucide-react';
 import { S, findPinForPlan, currencyForCountry, localToKrw } from '../utils/helpers';
 import TripImg from './TripImg';
+import TaxiHelpButtons from './TaxiHelpButtons';
 
 const PlanDetailModal = ({
   selectedPlanInfo, setSelectedPlanInfo, cardBg, isDarkMode, openPhotoViewer, handleCopyLocalName,
@@ -9,8 +10,13 @@ const PlanDetailModal = ({
   isSettleMode, setIsSettleMode, settleLocal, setSettleLocal, settleKrw, setSettleKrw,
   isDiaryOpen, setIsDiaryOpen, diaryReview, setDiaryReview, diaryRating, setDiaryRating,
   currentRestaurants, setCurrentRestaurants, showToast, rates,
+  isDomesticTrip, tripCountry, onSaveLocalAddress,
 }) => {
   if (!selectedPlanInfo) return null;
+  // 이 일정에 연결된 핀 (위치·현지어 주소가 핀에 있음) — 해외면 '기사님께 보여주기'·2GIS·Yandex Go
+  const linkedPin = !isDomesticTrip && !selectedPlanInfo.isTransport
+    ? findPinForPlan(selectedPlanInfo, Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [], planTimeline)
+    : null;
 
   return (
     <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPlanInfo(null)}>
@@ -74,6 +80,7 @@ const PlanDetailModal = ({
               <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800">복사</span>
             </div>
           )}
+          {linkedPin && <TaxiHelpButtons pin={linkedPin} country={S(linkedPin.country) || S(tripCountry)} showToast={showToast} onSaveLocalAddress={onSaveLocalAddress} />}
 
 <div className="flex justify-between items-center mt-3 mb-1">
           <span className="text-[11px] font-black text-slate-700 dark:text-slate-300">📝 기록된 메모</span>

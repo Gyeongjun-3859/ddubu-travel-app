@@ -189,6 +189,22 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
   // ---------------------------------------------------------------------
   // 최초 로드 / 재조회(PTR, 재접속)
   // ---------------------------------------------------------------------
+  // 인터넷이 끊겨 서버에 못 닿은 경우인지 (권한 없음·여행 없음과 구분 — 그땐 저장된 데이터를 보여 주면 안 됨)
+  function isNetworkError(err) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+    const msg = String((err && (err.message || err.details)) || err || '');
+    return /Failed to fetch|NetworkError|Load failed|network|fetch/i.test(msg);
+  }
+  // 휴대폰에 저장해 둔 이 여행 데이터로 화면을 채운다 (오프라인 — 산·기내). 이미 불러온 게 있으면 그대로 둔다
+  function loadFromDevice(tripId) {
+    try {
+      const all = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '{}');
+      if (!all || !all[tripId]) return null;
+      if (!getState(tripId).loaded) { restoreStoredPending(tripId); applyRow(tripId, all[tripId]); }
+      return currentView(getState(tripId));
+    } catch (e) { console.error(e); return null; }
+  }
+
   async function load(tripId) {
     if (isGuest()) {
       try {
@@ -203,6 +219,7 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
     const client = getClient();
     try {
       const { data, error } = await client.from('travel_state').select('*').eq('id', tripId).single();
+      if (error && isNetworkError(error)) return loadFromDevice(tripId);
       if (error || !data) return null; // 여행 row가 아직 없을 수 있음(생성 직후 race) — 기존 로컬 상태 보존, 아무것도 안 바꿈
       restoreStoredPending(tripId);
       applyRow(tripId, data);
@@ -210,7 +227,7 @@ export function createTripSyncEngine({ getClient, getUserId, onToast, onAccessLo
       return currentView(getState(tripId));
     } catch (e) {
       console.error('[tripSyncEngine] load 실패', e);
-      return null;
+      return isNetworkError(e) ? loadFromDevice(tripId) : null;
     }
   }
 

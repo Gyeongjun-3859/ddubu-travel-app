@@ -107,6 +107,7 @@ export function cleanRestaurantItem(r) {
     // 바깥 서비스 장소 번호 — '장소 정보'(영업시간·평점·리뷰)를 바로 열 때 씀 (구글 약관상 장소 번호는 저장해도 됨)
     ...(r.googlePlaceId ? { googlePlaceId: S(r.googlePlaceId) } : {}),
     ...(r.kakaoPlaceUrl ? { kakaoPlaceUrl: S(r.kakaoPlaceUrl) } : {}),
+    ...(r.localAddress ? { localAddress: S(r.localAddress) } : {}), // 현지어 주소 (기사님께 보여주기 — 오프라인용)
     // 가게 앞 사진(Mapillary 거리 사진을 우리 저장소에 복사한 것) — 출처 표시(찍은 사람·날짜)에 필요. 사진 자체는 imgs에도 들어 있다.
     ...(r.storefront && r.storefront.url ? { storefront: {
       url: S(r.storefront.url), mapillaryId: S(r.storefront.mapillaryId), author: S(r.storefront.author), capturedAt: r.storefront.capturedAt || 0,

@@ -3,19 +3,15 @@ import { S, openGoogleMapsNav } from '../utils/helpers';
 import TripImg from './TripImg';
 import { storefrontCredit, photoSourceLink, storefrontPrefix } from '../utils/mapillary';
 import PlaceInfoSection from './PlaceInfoSection';
-import DriverCardModal from './DriverCardModal';
+import TaxiHelpButtons from './TaxiHelpButtons';
 import { hasCyrillic, cyrillicToLatin } from '../utils/phrasebook';
-import { hasLocalApps, twoGisPlaceUrl, yandexGoUrl } from '../utils/localApps';
 
 const PinDetailModal = ({
   selectedPinInfo, setSelectedPinInfo, cardBg, setViewPhoto, handleCopyLocalName, openEditPinModal,
-  isDomesticTrip, tripCountry, showToast,
+  isDomesticTrip, tripCountry, showToast, onSaveLocalAddress,
 }) => {
-  const [driverOpen, setDriverOpen] = React.useState(false);
-  React.useEffect(() => { setDriverOpen(false); }, [selectedPinInfo && selectedPinInfo.id]);
   if (!selectedPinInfo) return null;
   const pinCountry = S(selectedPinInfo.country) || S(tripCountry);
-  const hasPos = selectedPinInfo.lat && selectedPinInfo.lng;
   const hasPhoto = selectedPinInfo.img && !S(selectedPinInfo.img).includes("unsplash");
   // 대표 사진이 가게 앞 사진(Mapillary)이면 출처(찍은 사람·날짜)를 사진 위에 표시해야 한다 (CC BY-SA 조건)
   const sf = selectedPinInfo.storefront;
@@ -52,20 +48,7 @@ const PinDetailModal = ({
           {hasCyrillic(selectedPinInfo.localName) && <p className="-mt-2 mb-3 pl-6 text-[11px] font-semibold text-slate-400">{cyrillicToLatin(selectedPinInfo.localName)}</p>}
 
           {/* 해외: 택시 기사에게 보여 줄 큰 글씨 화면 / 중앙아시아: 2GIS·Yandex Go */}
-          {!isDomesticTrip && (
-            <button onClick={() => setDriverOpen(true)}
-              className="w-full mb-2 bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-xl font-bold text-sm transition-colors">
-              🚕 기사님께 보여주기 (현지어 크게)
-            </button>
-          )}
-          {!isDomesticTrip && hasPos && hasLocalApps(pinCountry) && (
-            <div className="flex gap-2 mb-3">
-              <a href={twoGisPlaceUrl(selectedPinInfo.lat, selectedPinInfo.lng, S(selectedPinInfo.localName) || S(selectedPinInfo.name))} target="_blank" rel="noopener noreferrer"
-                className="flex-1 text-center bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 py-2 rounded-xl font-bold text-xs">🗺️ 2GIS에서 보기</a>
-              <a href={yandexGoUrl(selectedPinInfo.lat, selectedPinInfo.lng)} target="_blank" rel="noopener noreferrer"
-                className="flex-1 text-center bg-yellow-50 hover:bg-yellow-100 border border-yellow-300 text-yellow-800 py-2 rounded-xl font-bold text-xs">🚕 Yandex Go 택시</a>
-            </div>
-          )}
+          {!isDomesticTrip && <TaxiHelpButtons pin={selectedPinInfo} country={pinCountry} showToast={showToast} onSaveLocalAddress={onSaveLocalAddress} />}
 
           {selectedPinInfo.signature && S(selectedPinInfo.signature) !== "직접 추가한 장소" ? (
             <p className="text-sm text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">{S(selectedPinInfo.signature)}</p>
@@ -98,7 +81,6 @@ const PinDetailModal = ({
           </div>
         </div>
       </div>
-      {driverOpen && <DriverCardModal pin={selectedPinInfo} country={pinCountry} onClose={() => setDriverOpen(false)} showToast={showToast} />}
     </div>
   );
 };
