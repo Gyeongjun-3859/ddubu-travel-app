@@ -77,7 +77,8 @@ export async function findStorefrontCandidates(lat, lng, max = 6) {
 // 게스트는 저장소를 못 쓰므로 직접 올린 사진처럼 기기 안(data URL)에 넣는다.
 // 위키백과·위키미디어 사진은 주소가 바뀌지 않는 공개 사진이라 복사할 필요가 없고, 구글 사진은 약관상 저장하면 안 돼서
 // (볼 때마다 구글에서 불러옴) 주소만 저장한다 → [등록]을 누르면 기다림 없이 바로 저장. 복사가 필요한 건 주소가 만료되는 거리 사진뿐.
-export const storefrontNeedsCopy = (cand) => Boolean(cand) && !['wiki', 'commons', 'google'].includes(cand.source);
+// 카카오(블로그) 사진도 남의 사진이라 복사하지 않고 미리보기 주소만 둔다
+export const storefrontNeedsCopy = (cand) => Boolean(cand) && !['wiki', 'commons', 'google', 'kakao'].includes(cand.source);
 
 // 거리 사진 미리 받아 두기 — 자동으로 골라지는 순간 받기 시작해서, [등록]을 누를 땐 올리기만 하면 되게 (저장 대기 단축)
 const blobCache = new Map(); // 사진 주소 → Promise<Blob>
@@ -125,6 +126,7 @@ export function storefrontCredit(sf) {
   if (sf.source === 'wiki') return ['위키백과', sf.author].filter(Boolean).join(' · ');
   if (sf.source === 'commons') return ['위키미디어 공용', sf.author].filter(Boolean).join(' · ');
   if (sf.source === 'google') return ['Google', sf.author].filter(Boolean).join(' · ');
+  if (sf.source === 'kakao') return ['카카오 검색', sf.author].filter(Boolean).join(' · ');
   const dt = sf.capturedAt ? new Date(sf.capturedAt) : null;
   const when = dt && !isNaN(dt) ? `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, '0')}` : '';
   return ['Mapillary', sf.author, when].filter(Boolean).join(' · ');
@@ -141,9 +143,9 @@ export function setStorefrontCredits(pins) {
 export const getStorefrontByUrl = (url) => creditByUrl.get(String(url || '')) || null;
 
 // 카드 사진 구석의 작은 출처 표시, 크게 볼 때 출처 앞머리
-const SOURCE_BADGE = { wiki: '📖 위키백과', commons: '📖 위키미디어', google: '📷 Google' };
+const SOURCE_BADGE = { wiki: '📖 위키백과', commons: '📖 위키미디어', google: '📷 Google', kakao: '📷 카카오' };
 export const storefrontBadge = (sf) => (sf && SOURCE_BADGE[sf.source]) || '📷 Mapillary';
-export const storefrontPrefix = (sf) => (sf && ['wiki', 'commons'].includes(sf.source)) ? '📖' : (sf && sf.source === 'google' ? '📷' : '🏪 가게 앞 ·');
+export const storefrontPrefix = (sf) => (sf && ['wiki', 'commons'].includes(sf.source)) ? '📖' : (sf && ['google', 'kakao'].includes(sf.source) ? '📷' : '🏪 가게 앞 ·');
 
 // 출처 링크 — 위키백과 사진은 그 문서, 거리 사진은 Mapillary 사진 페이지
 export const photoSourceLink = (sf) => (sf && sf.link) ? sf.link : mapillaryPhotoLink(sf && sf.mapillaryId);

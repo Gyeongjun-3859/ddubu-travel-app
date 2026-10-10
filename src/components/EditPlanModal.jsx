@@ -190,7 +190,7 @@ const EditPlanModal = ({
                   googlePlaceId={editingPlan._googlePlaceId}
                   value={editingPlan._storefront || null}
                   onChange={(v) => setEditingPlan(prev => prev ? ({ ...prev, _storefront: v }) : prev)}
-                  isDarkMode={isDarkMode} textMuted={textMuted} pendingRef={sfPendingRef}
+                  isDarkMode={isDarkMode} textMuted={textMuted} pendingRef={sfPendingRef} kakaoPhotos={country === '한국'}
                 />
               </div>
             )}

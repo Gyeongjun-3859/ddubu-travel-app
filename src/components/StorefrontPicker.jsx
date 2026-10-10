@@ -4,8 +4,10 @@ import TripImg from './TripImg';
 import { hasMapillaryToken, findStorefrontCandidates, storefrontCredit, photoSourceLink, prefetchStorefront, storefrontPrefix } from '../utils/mapillary';
 import { findWikiPhoto, findCommonsPhotos } from '../utils/wikiPhoto';
 import { googlePlacePhotos } from '../utils/googlePlaces';
+import { findKakaoFoodMenuPhotos } from '../utils/kakaoImages';
 
 const BADGE = { wiki: '대표', google: '구글', commons: '근처', mapillary: '거리' };
+const badgeOf = (c) => c.source === 'kakao' ? (c.kind === 'menu' ? '메뉴' : '음식') : (BADGE[c.source] || '거리');
 
 // 핀 등록·수정 창의 '🖼️ 대표 사진' 칸.
 // 위치가 정해지면 ① 그 장소의 위키백과 대표 사진(유명한 곳) ② 구글 장소 사진(호텔·식당 거의 다 있음, 볼 때마다 불러옴)
@@ -16,13 +18,14 @@ const BADGE = { wiki: '대표', google: '구글', commons: '근처', mapillary: 
 //          | 이미 저장된 사진 { url, source, … }
 // pendingRef: 찾는 중이면 { promise } — 결과(자동으로 고른 사진, 없으면 null)로 끝난다. 장소를 고르자마자 [등록]을 누르면
 //   사진을 찾기 전에 저장돼 사진이 빠졌다(사용자 제보: 콕토베·젠코프 성당) → 저장하는 쪽이 이걸 기다렸다가 넣는다.
-const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId, value, onChange, isDarkMode, textMuted, pendingRef }) => {
+// kakaoPhotos: 국내 장소면 카카오 이미지 검색의 음식·메뉴판 사진도 후보로 (가게 앞 → 음식 → 메뉴판 순 — 사용자 요청)
+const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId, value, onChange, isDarkMode, textMuted, pendingRef, kakaoPhotos = false }) => {
   const [cands, setCands] = React.useState([]);
   const [status, setStatus] = React.useState('idle'); // idle | loading | done
   const [browsing, setBrowsing] = React.useState(!(value && value.url)); // 저장된 사진이 있으면 [다른 사진]을 누를 때만 찾는다
   const reqRef = React.useRef(0);
-  const nameRef = React.useRef({ name, localName, googlePlaceId });
-  nameRef.current = { name, localName, googlePlaceId };
+  const nameRef = React.useRef({ name, localName, googlePlaceId, kakaoPhotos });
+  nameRef.current = { name, localName, googlePlaceId, kakaoPhotos };
   const valueRef = React.useRef(value);
   valueRef.current = value;
   const hasPos = lat !== null && lng !== null && isFinite(lat) && isFinite(lng);
@@ -37,16 +40,18 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
     const done = (pick) => { finish(pick); if (pendingRef && pendingRef.current === job) pendingRef.current = null; };
     // 위치를 고른 직후 이름·현지어 이름이 채워질 시간을 잠깐 준다(검색 선택과 같은 순간에 바뀜)
     const t = setTimeout(async () => {
-      const { name: nm, localName: ln, googlePlaceId: gid } = nameRef.current;
-      const [wiki, google, commons, streets] = await Promise.all([
+      const { name: nm, localName: ln, googlePlaceId: gid, kakaoPhotos: useKakao } = nameRef.current;
+      const [wiki, google, commons, streets, kakao] = await Promise.all([
         findWikiPhoto({ name: nm, localName: ln, lat, lng, localLang }).catch(() => null),
         gid ? googlePlacePhotos(gid).catch(() => []) : Promise.resolve([]),
         findCommonsPhotos(lat, lng).catch(() => []),
         hasMapillaryToken() ? findStorefrontCandidates(lat, lng).catch(() => []) : Promise.resolve([]),
+        useKakao ? findKakaoFoodMenuPhotos(nm).catch(() => []) : Promise.resolve([]),
       ]);
       if (reqId !== reqRef.current) { done(undefined); return; }
       // 자동 1순위: 위키백과(그 장소 문서) → 구글(그 장소 사진) → 근처 사진 → 거리 사진
-      const list = [...(wiki ? [wiki] : []), ...google, ...commons, ...streets.slice(0, 4).map(c => ({ ...c, source: 'mapillary' }))];
+      // 순서: 위키백과 → 구글 → 거리(가게 앞) → 카카오 음식·메뉴판 → 근처
+      const list = [...(wiki ? [wiki] : []), ...google, ...streets.slice(0, 4).map(c => ({ ...c, source: 'mapillary' })), ...kakao, ...commons];
       setCands(list);
       setStatus('done');
       // 자동 선택: 아직 아무것도 안 골랐거나, 전에 자동으로 고른 것(위치를 바꾸기 전 것)이면 새 1순위로
@@ -54,7 +59,8 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
       if (!cur || (cur.auto && !cur.url)) {
         // 자동으로는 위키백과·구글(그 장소 사진)·거리 사진만. '근처'(위키미디어) 사진은 다른 건물일 수 있어 후보로만 둔다
         // (국내 가게에 길거리 자동차 사진이 자동으로 들어갔다 — 6차 B7-2)
-        const first = list.find(c => c.source !== 'commons');
+        // 카카오(블로그) 사진도 다른 가게일 수 있어 자동으로는 고르지 않는다
+        const first = list.find(c => c.source !== 'commons' && c.source !== 'kakao');
         const pick = first ? { ...first, auto: true } : null;
         onChange(pick);
         done(pick);
@@ -123,7 +129,7 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
                     onClick={() => onChange(on ? null : { ...c, auto: false })}
                     className={`relative shrink-0 w-20 h-20 rounded-xl overflow-hidden border-2 transition-all ${on ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30' : (isDarkMode ? 'border-slate-700' : 'border-transparent')}`}>
                     <img src={c.thumb} className="w-full h-full object-cover" alt="" loading="lazy" />
-                    <span className="absolute bottom-0 inset-x-0 bg-black/55 text-white text-[9px] font-bold py-0.5">{BADGE[c.source] || '거리'}</span>
+                    <span className="absolute bottom-0 inset-x-0 bg-black/55 text-white text-[9px] font-bold py-0.5">{badgeOf(c)}</span>
                     {on && <span className="absolute top-1 right-1 w-5 h-5 rounded-full bg-[#007AFF] text-white flex items-center justify-center"><Check className="w-3.5 h-3.5" /></span>}
                   </button>
                 );
