@@ -7,7 +7,7 @@
  *   (구글 사진은 약관상 저장하지 않는다)
  * 일정·핀 데이터는 앱이 원래 휴대폰(localStorage)에 저장하고 있어서 여기서 다루지 않는다.
  */
-const VERSION = 'v1';
+const VERSION = 'v2'; // 아이콘·이름을 바꾸면 올려서 휴대폰에 저장된 옛 파일을 새로 받게 한다
 const STATIC = `ddubu-static-${VERSION}`;
 const PHOTOS = `ddubu-photos-${VERSION}`;
 const MAX_PHOTOS = 250;
@@ -22,7 +22,7 @@ self.addEventListener('install', (event) => {
         const html = await res.clone().text();
         await cache.put('/', res);
         const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map(m => m[1]);
-        await cache.addAll([...new Set([...assets, '/manifest.json', '/favicon.ico', '/logo192.png'])]);
+        await cache.addAll([...new Set([...assets, '/manifest.json', '/favicon.ico', '/logo192.png', '/logo512.png', '/apple-touch-icon.png'])]);
         // 이전 배포의 앱 파일은 지운다 (계속 쌓이지 않게)
         const keep = new Set(assets);
         for (const req of await cache.keys()) {
