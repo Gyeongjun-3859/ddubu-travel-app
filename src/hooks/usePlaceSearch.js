@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { S, themeFromGoogleTypes, themeFromKakaoCategory } from '../utils/helpers';
 import { resolvePlaceArea } from '../utils/placeArea';
-import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation, LOCAL_LANG_BY_COUNTRY, translateToKorean, translateText } from '../utils/googlePlaces';
+import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation, googlePlaceAddressIn, LOCAL_LANG_BY_COUNTRY, LOCAL_LANG_BY_CODE, translateToKorean, translateText } from '../utils/googlePlaces';
 import { codeFromCountryName } from '../utils/placeArea';
 
 const HANGUL_RE = /[가-힣]/;
@@ -132,6 +132,15 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
         lat = loc.lat; lng = loc.lng; localName = loc.localName || ''; localAddress = loc.localAddress || '';
         area = resolvePlaceArea({ countryCode: loc.countryCode, names: loc.areaNames });
         theme = themeFromGoogleTypes('', loc.types);
+        // 여행 나라를 아직 안 정했으면(localLang 없음) 고른 장소의 나라로 현지어 이름·주소를 한 번 더 받는다 (6차 I6-2)
+        if (!localLang && loc.countryCode && loc.countryCode !== 'KR') {
+          const lang2 = LOCAL_LANG_BY_CODE[loc.countryCode] || 'en';
+          try {
+            const l2 = await googlePlaceAddressIn(s.placeId, lang2);
+            if (l2.name) localName = l2.name;
+            if (l2.address) localAddress = l2.address;
+          } catch (e) { console.warn('[현지어 이름 받기 실패]', e && e.message); }
+        }
       } catch (e) {
         console.warn('[구글 좌표 조회 실패]', e && e.message);
         if (typeof showToast === 'function') showToast("위치를 가져오지 못했어요. 지도를 눌러 직접 지정해주세요.");

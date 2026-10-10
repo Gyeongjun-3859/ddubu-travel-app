@@ -1723,6 +1723,9 @@ async function confirmDeleteTrip() {
   }
 
   function handleManualPlaceAdd(isFromMap = true, storefront = null) {
+    // [임시 저장](isFromMap=false)은 안내대로 날짜 없이 📦 보관함(Day 0)에 넣는다 — 예전엔 창에서 고른 Day 일정에도 들어갔다(6차 B6-1).
+    // 단, '기존 일정 불러오기(수정)'로 연 경우는 그 일정을 고치는 것이라 원래 Day를 그대로 쓴다.
+    const linkDay = (!isFromMap && !(pinLinkPlanId && pinLinkPlanId !== 'manual')) ? '0' : pinLinkDay;
     if (!newManualPlaceName.trim()) { showToast("장소 이름을 적어주세요!"); return; }
     // 검색으로 고른 장소의 국가·지역(I2). 여행에 국가·지역이 없을 때 이 값으로 채운다.
     const area = pickedAreaRef.current;
@@ -1802,7 +1805,7 @@ async function confirmDeleteTrip() {
     const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
     let updatedTimeline = [...safePlanTimeline];
     
-    if (pinLinkDay) {
+    if (linkDay) {
       // 전역 여행 국가/지역을 기본값으로 사용 (핀 데이터보다 globalPlanCountry/globalPlanRegion 우선)
       let targetCountry = globalPlanCountry && globalPlanCountry !== '수동입력' ? globalPlanCountry : (globalManualCountry || S(globalPlanCountry));
       let targetRegion = globalPlanRegion && globalPlanRegion !== '수동입력' ? globalPlanRegion : (globalManualRegion || S(globalPlanRegion));
@@ -1815,11 +1818,11 @@ async function confirmDeleteTrip() {
       const pinFinalImgs = finalImgs;
       if (pinLinkPlanId && pinLinkPlanId !== 'manual') {
         updatedTimeline = updatedTimeline.map(p => p && String(p.id) === String(pinLinkPlanId) ? {
-          ...p, day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
+          ...p, day: parseInt(linkDay), time: S(newManualTime), place: S(newManualPlaceName),
           localName: S(newPlace.localName), features: newManualFeature ? S(newManualFeature) : (reusedPin?.signature && S(reusedPin.signature) !== '직접 추가한 장소' ? S(reusedPin.signature) : ''), photo: pinFinalImgs[0] || S(newManualPhoto),
           photos: pinFinalImgs,
           isAccommodation: Boolean(newManualIsAccommodation),
-          accommodationDays: newManualIsAccommodation ? (newManualAccommodationDays.length > 0 ? newManualAccommodationDays : (parseInt(pinLinkDay) >= 1 ? [parseInt(pinLinkDay)] : [])) : [],
+          accommodationDays: newManualIsAccommodation ? (newManualAccommodationDays.length > 0 ? newManualAccommodationDays : (parseInt(linkDay) >= 1 ? [parseInt(linkDay)] : [])) : [],
           theme: S(newPlace.theme),
           country: targetCountry, region: targetRegion,
           pinId: S(placeId) // 이 일정과 핀을 번호로 연결 (이름이 바뀌어도 연결 유지)
@@ -1827,19 +1830,19 @@ async function confirmDeleteTrip() {
       } else {
         // 이 핀이 보관함(Day 0) 일정에 들어 있었으면 새로 만들지 않고 그 일정을 이 Day로 옮긴다
         // (안 그러면 같은 장소 일정이 보관함과 Day에 하나씩 생긴다)
-        const archivedPlan = parseInt(pinLinkDay) >= 1
+        const archivedPlan = parseInt(linkDay) >= 1
           ? updatedTimeline.find(p => p && S(p.pinId) === S(placeId) && planDayNum(p) === 0)
           : null;
         if (archivedPlan) updatedTimeline = updatedTimeline.filter(p => p !== archivedPlan);
         const newPlan = {
           ...(archivedPlan || {}),
           id: archivedPlan ? archivedPlan.id : Date.now().toString() + "_plan",
-          day: parseInt(pinLinkDay), time: S(newManualTime), place: S(newManualPlaceName),
+          day: parseInt(linkDay), time: S(newManualTime), place: S(newManualPlaceName),
           localName: S(newPlace.localName), features: newManualFeature ? S(newManualFeature) : (reusedPin?.signature && S(reusedPin.signature) !== '직접 추가한 장소' ? S(reusedPin.signature) : ''), photo: pinFinalImgs[0] || S(newManualPhoto),
           photos: pinFinalImgs,
           country: targetCountry, region: targetRegion,
           isAccommodation: Boolean(newManualIsAccommodation),
-          accommodationDays: newManualIsAccommodation ? (newManualAccommodationDays.length > 0 ? newManualAccommodationDays : (parseInt(pinLinkDay) >= 1 ? [parseInt(pinLinkDay)] : [])) : [],
+          accommodationDays: newManualIsAccommodation ? (newManualAccommodationDays.length > 0 ? newManualAccommodationDays : (parseInt(linkDay) >= 1 ? [parseInt(linkDay)] : [])) : [],
           theme: S(newPlace.theme),
           pinId: S(placeId) // 이 일정과 핀을 번호로 연결
         };
@@ -1859,7 +1862,7 @@ async function confirmDeleteTrip() {
        }
        setClickedLocation(null); setIsAddPlaceModalOpen(false); 
     } else {
-       showToast("📍 장소가 핀 보관함에 일단 저장되었습니다!");
+       showToast("📦 보관함에 저장했어요 — 날짜는 나중에 정하면 돼요");
        setIsAddPlaceModalOpen(false);
     }
     

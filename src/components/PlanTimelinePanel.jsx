@@ -247,6 +247,19 @@ const PlanTimelinePanel = ({
                             {plan.features && ` · ${S(plan.features)}`}
                           </span>
                         </p>
+                        {weatherChip(plan)}
+                        {/* 사진 없는 카드에도 길찾기·기사님 (예전엔 사진 있는 카드에만 있었다 — 6차 B6-3). 위치 있는 핀만 */}
+                        {!isDomesticTrip && (() => { const lp = linkedPinOf(plan); return lp && lp.lat && lp.lng; })() && (
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openNav(plan); }}
+                              className="mt-0.5 flex w-fit items-center gap-1 rounded-md bg-[#007AFF]/10 px-2 py-1 text-[11px] font-semibold text-[#007AFF]"
+                            >
+                              <Navigation className="w-3 h-3" /> 길찾기
+                            </button>
+                            {taxiBtn(plan)}
+                          </div>
+                        )}
                       </div>
                       {actionBar(plan, isActive)}
                     </div>

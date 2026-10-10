@@ -453,6 +453,8 @@ const EditPlanModal = ({
               if (k === 'updatedAt' || UI_ONLY_KEYS.includes(k)) return;
               if (JSON.stringify(edited[k]) !== JSON.stringify(original[k])) changed[k] = edited[k];
             });
+            // 사진을 고쳤는지(지운 것 포함) — 핀 사진도 같이 바꾸기 위해 (바뀐 칸 목록을 만든 뒤에 계산해야 한다)
+            const photosChanged = Object.prototype.hasOwnProperty.call(changed, 'photos') || Object.prototype.hasOwnProperty.call(changed, 'photo');
             const safePlanTimeline = Array.isArray(planTimeline) ? planTimeline.filter(Boolean) : [];
             const latest = safePlanTimeline.find(p => p && S(p.id) === S(editingPlan.id)) || original;
             const baseline = openedRef.current.baseline;
@@ -480,8 +482,9 @@ const EditPlanModal = ({
                 localName: editingPlan.localName ? S(editingPlan.localName) : updatedRests[matchedIndex].localName,
                 signature: editingPlan.features ? S(editingPlan.features) : updatedRests[matchedIndex].signature,
                 // 새 장소를 골랐으면 사진도 새 장소 것만 (이전 장소 사진이 남지 않게, 비어 있어도 그대로)
-                img: editingPlan.photo ? S(editingPlan.photo) : (pickedNew ? "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80" : updatedRests[matchedIndex].img),
-                imgs: pickedNew ? (Array.isArray(editingPlan.photos) ? editingPlan.photos : []) : (Array.isArray(editingPlan.photos) && editingPlan.photos.length > 0 ? editingPlan.photos : updatedRests[matchedIndex].imgs),
+                img: editingPlan.photo ? S(editingPlan.photo) : ((pickedNew || photosChanged) ? "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80" : updatedRests[matchedIndex].img),
+                // 사진을 고쳤으면(지운 것 포함) 핀도 그대로 — 예전엔 비어 있으면 핀의 옛 사진이 남아 지운 사진이 지도에 계속 보였다(6차 B6-2)
+                imgs: (pickedNew || photosChanged) ? (Array.isArray(editingPlan.photos) ? editingPlan.photos : []) : (Array.isArray(editingPlan.photos) && editingPlan.photos.length > 0 ? editingPlan.photos : updatedRests[matchedIndex].imgs),
                 isAccommodation: editingPlan.isAccommodation || editingPlan.theme === "숙소",
                 isLandmark: Boolean(editingPlan.isLandmark),
                 theme: editingPlan.theme || "기타"

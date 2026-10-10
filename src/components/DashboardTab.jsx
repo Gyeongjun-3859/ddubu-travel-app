@@ -58,6 +58,8 @@ const DashboardTab = ({
   archivedPins = [], onOpenArchive, showToast, onSaveLocalAddress,
 }) => {
   const [isEmergencyOpen, setIsEmergencyOpen] = useState(false);
+  // 여행(나라·도시)을 바꾸면 열려 있던 회화·긴급·꿀팁 창을 닫는다 — 예전엔 다른 나라 내용으로 바뀐 채 열려 있었다(6차 B6-5)
+  useEffect(() => { setIsLanguageOpen(false); setIsEmergencyOpen(false); setIsTipsOpen(false); }, [resolvedGlobalCountry, displayCityName]);
   // 내 숙소 핀 (긴급 정보 화면에서 현지어 주소·기사님 화면)
   const accommodationPins = (Array.isArray(currentRestaurants) ? currentRestaurants : []).filter(r => r && r.isAccommodation && r.lat && r.lng);
   const [transitView, setTransitView] = useState(null);
@@ -180,7 +182,8 @@ const DashboardTab = ({
               return (
                 <div
                   key={plan.id}
-                  onClick={() => { if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}
+                  // stopPropagation: 화면 전체의 '선택 해제'(빈 곳 누르면 해제)가 이 클릭에도 걸려 선택이 바로 풀려서 상세 창이 영영 안 열렸다(6차 B6-4)
+                  onClick={(e) => { e.stopPropagation(); if (isActive) { setSelectedPlanInfo(plan); setActiveMobileCard(null); } else setActiveMobileCard(plan.id); }}
                   className={`group relative w-[220px] shrink-0 snap-start overflow-hidden rounded-xl border cursor-pointer transition-all ${isDarkMode ? 'bg-slate-800' : 'bg-white'} ${isActive ? 'border-[#007AFF] shadow-md' : (isDarkMode ? 'border-slate-700 md:hover:border-[#007AFF]/50' : 'border-slate-200/70 md:hover:shadow-md md:hover:border-[#007AFF]/40')}`}
                 >
                   <div className="relative h-28 bg-slate-100 dark:bg-slate-700">

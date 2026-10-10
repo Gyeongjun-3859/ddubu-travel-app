@@ -49,6 +49,12 @@ export const LOCAL_LANG_BY_COUNTRY = {
   '인도네시아': 'id', '말레이시아': 'ms', '필리핀': 'en', '미국': 'en', '영국': 'en', '호주': 'en', '싱가포르': 'en',
 };
 
+// 나라 코드 → 현지어 (여행 나라를 안 정했을 때 고른 장소의 나라로 현지어 이름·주소를 채우는 데 씀)
+export const LOCAL_LANG_BY_CODE = {
+  JP: 'ja', CN: 'zh-CN', TW: 'zh-TW', HK: 'zh-HK', MO: 'zh-HK', TH: 'th', VN: 'vi', FR: 'fr', IT: 'it', ES: 'es', DE: 'de',
+  RU: 'ru', KZ: 'ru', KG: 'ru', UZ: 'ru', TJ: 'ru', ID: 'id', MY: 'ms', MN: 'mn', TR: 'tr', PT: 'pt', CZ: 'cs', GR: 'el',
+};
+
 // 후보의 placeId → 좌표·주소. localLanguageCode를 주면 같은 한 번의 요청으로 그 언어의 장소 이름(displayName)도
 // 받아온다 — 택시 기사에게 보여줄 "현지어 이름" 자동 채우기용 (요청을 한 번 더 보내지 않기 위해 합침)
 export async function googlePlaceLocation(placeId, sessionToken, languageCode = 'ko', localLanguageCode = null) {
