@@ -48,7 +48,7 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
         if (status === kakao.maps.services.Status.OK && Array.isArray(data)) {
           show(data.slice(0, 5).map(d => ({
             name: d.place_name, address: d.road_address_name || d.address_name || '',
-            lat: parseFloat(d.y), lng: parseFloat(d.x), source: 'kakao', kakaoCategory: d.category_group_code || '',
+            lat: parseFloat(d.y), lng: parseFloat(d.x), source: 'kakao', kakaoCategory: d.category_group_code || '', kakaoUrl: d.place_url || '',
           })));
         } else { show([]); }
       }, { size: 5 });
@@ -103,7 +103,7 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
     setSuggestions([]); setShowSuggestions(false);
     reqRef.current++; // 선택 직후 도착하는 검색 결과 무시
     if (s.source === 'pin') {
-      if (typeof onPick === 'function') onPick({ name: s.name, lat: s.lat, lng: s.lng, localName: S(s.pin.localName), area: null, pin: s.pin });
+      if (typeof onPick === 'function') onPick({ name: s.name, lat: s.lat, lng: s.lng, localName: S(s.pin.localName), area: null, pin: s.pin, ext: { googlePlaceId: S(s.pin.googlePlaceId), kakaoPlaceUrl: S(s.pin.kakaoPlaceUrl) } });
       return;
     }
     let { lat, lng } = s;
@@ -135,7 +135,9 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
         if (ko && ko !== name) { if (!localName) localName = name; name = ko; }
       } catch (e) { console.warn('[장소 이름 번역 실패]', e && e.message); }
     }
-    if (typeof onPick === 'function') onPick({ name, lat, lng, localName: localName && localName !== name ? localName : '', area, theme });
+    // ext: 핀에 같이 저장할 바깥 서비스 번호 — 나중에 '장소 정보'(영업시간·리뷰)를 다시 찾지 않고 바로 열기 위함
+    const ext = { googlePlaceId: s.placeId || '', kakaoPlaceUrl: s.kakaoUrl || '' };
+    if (typeof onPick === 'function') onPick({ name, lat, lng, localName: localName && localName !== name ? localName : '', area, theme, ext });
   };
 
   return { suggestions, showSuggestions, setShowSuggestions, onQueryChange, select };

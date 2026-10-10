@@ -30,13 +30,14 @@ const AddPlaceModal = ({
   newManualAccommodationDays, setNewManualAccommodationDays,
   manualFileInputRef, supabaseClient, appUserId, activeTripId,
   handleManualPlaceAdd, currentRestaurants, showConfirm, country, onPickArea,
-  newManualStorefront, setNewManualStorefront,
+  newManualStorefront, setNewManualStorefront, setNewManualExt,
 }) => {
   // 장소 자동완성은 일정 수정 창과 같은 훅을 쓴다. 해외 장소를 구글에서 고르면 현지어 이름도 (비어 있을 때) 채운다.
   const { suggestions: placeSuggestions, showSuggestions, setShowSuggestions, onQueryChange, select: selectSuggestion } = usePlaceSearch({
     isKakaoMap, isKakaoMapLoaded, country, showToast, biasPins: currentRestaurants,
     myPins: currentRestaurants, excludePinId: clickedLocation?.id,
-    onPick: ({ name, lat, lng, localName, area, pin, theme }) => {
+    onPick: ({ name, lat, lng, localName, area, pin, theme, ext }) => {
+      if (typeof setNewManualExt === 'function') setNewManualExt(ext || {});
       if (pin) {
         // 저장해 둔 내 핀을 골랐으면 그 핀의 내용을 채우고, 저장하면 새 핀 대신 이 핀에 일정이 연결되게 한다
         const pinSf = pin.storefront && pin.storefront.url ? pin.storefront : null;

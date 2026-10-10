@@ -120,6 +120,76 @@ export async function googlePlaceNameIn(placeId, languageCode) {
   return (data.displayName && data.displayName.text) || '';
 }
 
+// ── 장소 상세 정보 (영업시간·평점·리뷰·사진) ─────────────────────────────────────────
+// 리뷰·평점은 비싼 요금 등급(월 1,000회 무료)이라 '상세 정보'를 눌렀을 때만 부르고, 한 번 받은 건 이 화면이 켜져 있는 동안 기억한다.
+const detailsCache = new Map();
+export async function googlePlaceDetails(placeId) {
+  if (!KEY || !placeId) throw new Error('no-key');
+  if (detailsCache.has(placeId)) return detailsCache.get(placeId);
+  const fields = [
+    'id', 'displayName', 'formattedAddress', 'rating', 'userRatingCount', 'priceLevel',
+    'currentOpeningHours.openNow', 'currentOpeningHours.weekdayDescriptions', 'regularOpeningHours.weekdayDescriptions',
+    'websiteUri', 'nationalPhoneNumber', 'internationalPhoneNumber', 'googleMapsUri', 'editorialSummary', 'reviews', 'photos',
+  ].join(',');
+  const res = await fetch(`${BASE}/places/${encodeURIComponent(placeId)}?languageCode=ko`, {
+    headers: { 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': fields },
+  });
+  if (!res.ok) throw new Error(`places-details-${res.status}`);
+  const d = await res.json();
+  const hours = (d.currentOpeningHours && d.currentOpeningHours.weekdayDescriptions) || (d.regularOpeningHours && d.regularOpeningHours.weekdayDescriptions) || [];
+  const info = {
+    id: d.id || placeId,
+    name: (d.displayName && d.displayName.text) || '',
+    address: d.formattedAddress || '',
+    rating: typeof d.rating === 'number' ? d.rating : null,
+    ratingCount: d.userRatingCount || 0,
+    priceLevel: d.priceLevel || '',
+    openNow: d.currentOpeningHours && typeof d.currentOpeningHours.openNow === 'boolean' ? d.currentOpeningHours.openNow : null,
+    hours: Array.isArray(hours) ? hours : [],
+    website: d.websiteUri || '',
+    phone: d.nationalPhoneNumber || d.internationalPhoneNumber || '',
+    mapsUrl: d.googleMapsUri || '',
+    summary: (d.editorialSummary && d.editorialSummary.text) || '',
+    reviews: (Array.isArray(d.reviews) ? d.reviews : []).slice(0, 3).map(r => ({
+      author: (r.authorAttribution && r.authorAttribution.displayName) || '',
+      rating: r.rating || 0,
+      when: r.relativePublishTimeDescription || '',
+      text: (r.text && r.text.text) || (r.originalText && r.originalText.text) || '',
+    })),
+    // 사진은 구글 약관상 저장하지 않고 볼 때마다 불러온다(올린 사람 이름 표시 필수)
+    photos: (Array.isArray(d.photos) ? d.photos : []).slice(0, 5).map(ph => ({
+      name: ph.name,
+      author: (Array.isArray(ph.authorAttributions) && ph.authorAttributions[0] && ph.authorAttributions[0].displayName) || '',
+      authorUrl: (Array.isArray(ph.authorAttributions) && ph.authorAttributions[0] && ph.authorAttributions[0].uri) || '',
+    })),
+  };
+  detailsCache.set(placeId, info);
+  return info;
+}
+
+// 사진 이름 → 화면에 띄울 주소 (img src로 바로 씀 — 구글이 실제 사진으로 넘겨준다)
+export const googlePhotoSrc = (photoName, maxWidth = 800) =>
+  `${BASE}/${photoName}/media?maxWidthPx=${maxWidth}&key=${encodeURIComponent(KEY || '')}`;
+
+// 구글 장소 번호가 저장되지 않은 옛 핀: 이름 + 위치로 찾아서 번호를 알아낸다 (300m 안에서 가장 가까운 것)
+export async function googleFindPlaceId(name, lat, lng) {
+  if (!KEY || !name) throw new Error('no-key');
+  const body = { textQuery: name, maxResultCount: 3, languageCode: 'ko' };
+  if (isFinite(lat) && isFinite(lng)) body.locationBias = { circle: { center: { latitude: lat, longitude: lng }, radius: 300 } };
+  const res = await fetch(`${BASE}/places:searchText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': 'places.id,places.location' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`places-find-${res.status}`);
+  const data = await res.json();
+  const list = Array.isArray(data.places) ? data.places : [];
+  if (!(isFinite(lat) && isFinite(lng))) return (list[0] && list[0].id) || '';
+  const near = list.map(p => ({ id: p.id, d: Math.hypot((p.location.latitude - lat) * 111000, (p.location.longitude - lng) * 111000 * Math.cos(lat * Math.PI / 180)) }))
+    .filter(o => o.d <= 300).sort((a, b) => a.d - b.d);
+  return (near[0] && near[0].id) || '';
+}
+
 // 글 → target 언어 번역 (Cloud Translation API v2, Places와 같은 키 사용)
 export async function translateText(text, target) {
   if (!KEY) throw new Error('no-key');

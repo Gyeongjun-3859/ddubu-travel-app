@@ -341,6 +341,7 @@ const MainApp = () => {
   } = usePhotoViewer();
   const [newManualPhotos, setNewManualPhotos] = useState([]); // 핀 등록 다중 사진
   const [newManualStorefront, setNewManualStorefront] = useState(null); // 핀 '가게 앞 사진'(Mapillary) — 고른 후보 또는 저장된 사진
+  const [newManualExt, setNewManualExt] = useState({}); // 등록 창에서 고른 장소의 구글 장소 번호·카카오 장소 주소 (핀에 같이 저장)
   const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
   const pendingMapFlyRef = useRef(null); // 핀 이동 버튼 클릭 시 탭 전환 후 flyTo 대기 좌표
   
@@ -877,6 +878,7 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
     setNewManualPhoto(pinImgs[0] || "");
     setNewManualPhotos(pinImgs);
     setNewManualStorefront(pinSf);
+    setNewManualExt({ googlePlaceId: S(pin.googlePlaceId), kakaoPlaceUrl: S(pin.kakaoPlaceUrl) });
     setNewManualIsAccommodation(Boolean(pin.isAccommodation));
     setNewManualIsLandmark(Boolean(pin.isLandmark));
     setNewManualTheme(pin.theme ? S(pin.theme) : "기타");
@@ -1685,6 +1687,13 @@ async function confirmDeleteTrip() {
       signature: newManualFeature ? S(newManualFeature) : (reusedPin?.signature ? S(reusedPin.signature) : "직접 추가한 장소"),
       img: finalImgs[0] || "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
       imgs: finalImgs,
+      // 장소 번호: 이번에 고른 것 → (이름으로 재사용한 핀이면) 그 핀 것 → 수정 중인 핀 것
+      ...((() => {
+        const prevPin = loc?.id ? safeCurrentRestaurants.find(r => r && S(r.id) === S(loc.id)) : null;
+        const g = S(newManualExt.googlePlaceId) || S(reusedPin?.googlePlaceId) || S(prevPin?.googlePlaceId);
+        const k = S(newManualExt.kakaoPlaceUrl) || S(reusedPin?.kakaoPlaceUrl) || S(prevPin?.kakaoPlaceUrl);
+        return { ...(g ? { googlePlaceId: g } : {}), ...(k ? { kakaoPlaceUrl: k } : {}) };
+      })()),
       ...(storefront ? { storefront: {
         url: storefront.url, mapillaryId: S(storefront.mapillaryId), author: S(storefront.author), capturedAt: storefront.capturedAt || 0,
         ...(storefront.source ? { source: S(storefront.source) } : {}), ...(storefront.link ? { link: S(storefront.link) } : {}),
@@ -1769,7 +1778,7 @@ async function confirmDeleteTrip() {
        setIsAddPlaceModalOpen(false);
     }
     
-    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualAccommodationDays([]); setNewManualIsLandmark(false); setNewManualTheme("기타");
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualExt({}); setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualAccommodationDays([]); setNewManualIsLandmark(false); setNewManualTheme("기타");
     setPinLinkDay(""); setPinLinkPlanId(""); 
 
     // 여행 국가가 비어 있으면(지역만 정했거나 옛 여행) 고른 장소의 국가로 채운다 — 다음부터 현지어 이름·통화가 맞게
@@ -3265,12 +3274,13 @@ function deletePackingItem(id) {
                 // 장소를 찾았으면 그 장소의 실제 좌표로 (지도 아이콘은 실제 지점보다 조금 위에 그려져 누른 자리와 어긋남)
                 const hasPlacePos = place && isFinite(place.lat) && isFinite(place.lng);
                 setClickedLocation(hasPlacePos ? { lat: place.lat, lng: place.lng } : { lat: clickLat, lng: clickLng });
+                setNewManualExt(place && place.id ? { googlePlaceId: place.id } : {});
                 setNewManualPlaceName(place ? place.name : "");
                 setNewManualLocalName(place ? place.localName : "");
                 setNewManualFeature("");
                 // 직전에 수정한 핀의 사진·랜드마크·테마가 새 핀에 따라오지 않게 같이 비운다
                 setNewManualPhoto("");
-                setNewManualPhotos([]); setNewManualStorefront(null);
+                setNewManualPhotos([]); setNewManualStorefront(null); setNewManualExt({});
                 setNewManualIsLandmark(false);
                 setNewManualTheme(theme);
                 setNewManualIsAccommodation(theme === '숙소');
@@ -3579,7 +3589,7 @@ function deletePackingItem(id) {
                     setNewManualPlaceName(placeName); setNewManualLocalName(""); setNewManualFeature("");
                     const nearTheme = themeFromKakaoCategory(nearby && nearby.category_group_code);
                     setNewManualTheme(nearTheme);
-                    setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualIsLandmark(false);
+                    setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualExt({}); setNewManualIsLandmark(false);
                     setNewManualIsAccommodation(nearTheme === '숙소'); setNewManualAccommodationDays([]);
                     setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
                     setIsAddPlaceModalOpen(true);
@@ -3791,7 +3801,7 @@ function deletePackingItem(id) {
             // 고른 분류(카페 등)에 맞는 테마를 미리 골라 둔다 (예전엔 늘 '기타'). 이전 등록의 사진·연박도 비운다.
             const catTheme = themeFromKakaoCategory(place.category_group_code || place._catCode);
             setNewManualTheme(catTheme);
-            setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualIsLandmark(false);
+            setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualExt({}); setNewManualIsLandmark(false);
             setNewManualIsAccommodation(catTheme === '숙소'); setNewManualAccommodationDays([]);
             setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
             setIsAddPlaceModalOpen(true);
@@ -4276,7 +4286,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
 
   const openQuickAddPlace = () => {
     setClickedLocation(null);
-    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null);
+    setNewManualPlaceName(""); setNewManualLocalName(""); setNewManualFeature(""); setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualExt({});
     setNewManualTime(""); setNewManualIsAccommodation(false); setNewManualAccommodationDays([]); setNewManualIsLandmark(false); setNewManualTheme("기타");
     // 문자열로 — 숫자 0(보관함)을 그대로 넘기면 창에서 `{pinLinkDay && …}`가 '0' 글자를 찍었다
     setPinLinkDay(String(planViewDay)); setPinLinkPlanId("");
@@ -4471,7 +4481,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         newManualAccommodationDays={newManualAccommodationDays} setNewManualAccommodationDays={setNewManualAccommodationDays}
         manualFileInputRef={manualFileInputRef} supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId}
         handleManualPlaceAdd={savePlaceWithStorefront} handleCopyLocalName={handleCopyLocalName}
-        newManualStorefront={newManualStorefront} setNewManualStorefront={setNewManualStorefront}
+        newManualStorefront={newManualStorefront} setNewManualStorefront={setNewManualStorefront} setNewManualExt={setNewManualExt}
         currentRestaurants={currentRestaurants} showConfirm={showConfirm} country={resolvedGlobalCountry}
         onPickArea={(area) => { pickedAreaRef.current = area; }}
       />

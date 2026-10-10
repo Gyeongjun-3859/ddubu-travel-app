@@ -104,6 +104,9 @@ export function cleanRestaurantItem(r) {
     country: S(r.country), city: S(r.city), lat: r.lat, lng: r.lng,
     isAccommodation: Boolean(r.isAccommodation), isLandmark: Boolean(r.isLandmark),
     theme: S(r.theme) || "기타", rating: r.rating || 0, review: r.review || "",
+    // 바깥 서비스 장소 번호 — '장소 정보'(영업시간·평점·리뷰)를 바로 열 때 씀 (구글 약관상 장소 번호는 저장해도 됨)
+    ...(r.googlePlaceId ? { googlePlaceId: S(r.googlePlaceId) } : {}),
+    ...(r.kakaoPlaceUrl ? { kakaoPlaceUrl: S(r.kakaoPlaceUrl) } : {}),
     // 가게 앞 사진(Mapillary 거리 사진을 우리 저장소에 복사한 것) — 출처 표시(찍은 사람·날짜)에 필요. 사진 자체는 imgs에도 들어 있다.
     ...(r.storefront && r.storefront.url ? { storefront: {
       url: S(r.storefront.url), mapillaryId: S(r.storefront.mapillaryId), author: S(r.storefront.author), capturedAt: r.storefront.capturedAt || 0,

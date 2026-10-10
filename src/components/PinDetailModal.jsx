@@ -2,6 +2,7 @@ import React from 'react';
 import { S, openGoogleMapsNav } from '../utils/helpers';
 import TripImg from './TripImg';
 import { storefrontCredit, photoSourceLink } from '../utils/mapillary';
+import PlaceInfoSection from './PlaceInfoSection';
 
 const PinDetailModal = ({
   selectedPinInfo, setSelectedPinInfo, cardBg, setViewPhoto, handleCopyLocalName, openEditPinModal,
@@ -15,9 +16,9 @@ const PinDetailModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/60 z-[8000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300" onClick={() => setSelectedPinInfo(null)}>
-      <div className={`${cardBg} w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
+      <div className={`${cardBg} w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl flex flex-col animate-in zoom-in-95 duration-300`} onClick={e => e.stopPropagation()}>
         {selectedPinInfo.img && !S(selectedPinInfo.img).includes("unsplash") && (
-          <div className="w-full h-48 relative cursor-pointer" onClick={e => { e.stopPropagation(); const imgs = Array.isArray(selectedPinInfo.imgs) && selectedPinInfo.imgs.length > 0 ? selectedPinInfo.imgs : (Array.isArray(selectedPinInfo.photos) && selectedPinInfo.photos.length > 0 ? selectedPinInfo.photos : [selectedPinInfo.img]); setViewPhoto({ imgs, idx: 0 }); }}>
+          <div className="w-full h-48 shrink-0 relative cursor-pointer" onClick={e => { e.stopPropagation(); const imgs = Array.isArray(selectedPinInfo.imgs) && selectedPinInfo.imgs.length > 0 ? selectedPinInfo.imgs : (Array.isArray(selectedPinInfo.photos) && selectedPinInfo.photos.length > 0 ? selectedPinInfo.photos : [selectedPinInfo.img]); setViewPhoto({ imgs, idx: 0 }); }}>
             <TripImg src={selectedPinInfo.img} className="w-full h-full object-cover" alt="" />
             {selectedPinInfo.isAccommodation && <div className="absolute top-3 left-3 bg-yellow-400 text-white text-xs font-bold px-2 py-1 rounded shadow-md">숙소</div>}
             {showCredit && (
@@ -46,6 +47,9 @@ const PinDetailModal = ({
           ) : (
             <p className="text-sm text-slate-400 italic">기록된 메모가 없습니다.</p>
           )}
+
+          {/* 영업시간·평점·리뷰·구글 사진 — 누를 때만 불러온다 */}
+          {selectedPinInfo.lat && selectedPinInfo.lng && <PlaceInfoSection pin={selectedPinInfo} />}
 
           {/* 사진이 하나도 없는 핀: 근처 거리 사진에서 가게 앞 사진을 고를 수 있게 수정 창으로 */}
           {!hasPhoto && selectedPinInfo.lat && selectedPinInfo.lng && (
