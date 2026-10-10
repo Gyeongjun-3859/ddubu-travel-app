@@ -74,22 +74,34 @@ export async function googlePlaceLocation(placeId, sessionToken, languageCode = 
   };
 }
 
-// 좌표 → 바로 근처(반경 40m) 가장 가까운 장소 이름 — 지도를 눌러 핀을 만들 때 이름 칸 미리 채우기용.
-// 근처에 장소가 없으면 빈 문자열.
-export async function googleNearbyPlaceName(lat, lng, languageCode = 'ko') {
+// 좌표 → 근처(radius m 안) 가장 가까운 장소 하나 — 지도를 눌렀을 때 정보 창·핀 이름 미리 채우기용.
+// 근처에 장소가 없으면 null. (전화번호·별점은 더 비싼 요금 등급이라 받지 않는다)
+async function googleNearbyPlaceRaw(lat, lng, radius, languageCode = 'ko') {
   if (!KEY) throw new Error('no-key');
   const res = await fetch(`${BASE}/places:searchNearby`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': 'places.displayName' },
+    headers: {
+      'Content-Type': 'application/json', 'X-Goog-Api-Key': KEY,
+      'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.location,places.primaryType,places.primaryTypeDisplayName,places.types',
+    },
     body: JSON.stringify({
       maxResultCount: 1, rankPreference: 'DISTANCE', languageCode,
-      locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: 40 } },
+      locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius } },
     }),
   });
   if (!res.ok) throw new Error(`places-nearby-${res.status}`);
   const data = await res.json();
   const p = Array.isArray(data.places) && data.places[0];
-  return (p && p.displayName && p.displayName.text) ? p.displayName.text : '';
+  if (!p || !p.displayName || !p.displayName.text) return null;
+  return {
+    name: p.displayName.text,
+    address: p.formattedAddress || '',
+    lat: p.location ? p.location.latitude : NaN,
+    lng: p.location ? p.location.longitude : NaN,
+    category: (p.primaryTypeDisplayName && p.primaryTypeDisplayName.text) || '',
+    primaryType: p.primaryType || '',
+    types: Array.isArray(p.types) ? p.types : [],
+  };
 }
 
 // 현지어 이름 → 한국어 번역 (Cloud Translation API v2, Places와 같은 키 사용)
@@ -107,19 +119,21 @@ export async function translateToKorean(text) {
   return t && t.translatedText ? String(t.translatedText).trim() : '';
 }
 
-// 지도를 눌러 핀을 만들 때 이름 칸 미리 채우기(I3).
-// 구글에 한국어 이름이 없는 장소는 현지어 이름이 와서 이름 칸에 그대로 들어갔다 →
-// 원문은 현지어 칸에, 이름 칸엔 한국어 번역을 넣는다. 번역이 실패하면 이름 칸에도 원문.
-export async function googleNearbyPlaceNames(lat, lng) {
-  const name = await googleNearbyPlaceName(lat, lng, 'ko');
-  if (!name || HANGUL_RE.test(name)) return { name, localName: '' };
+// 지도를 눌렀을 때 근처 장소 정보(이름·현지어 이름·분류·주소·구글 분류 코드). 근처에 장소가 없으면 null.
+// 구글에 한국어 이름이 없는 장소는 현지어 이름이 오므로(I3) 원문은 localName에, name엔 한국어 번역을 넣는다.
+// 번역이 실패하면 name에도 원문. radius는 지도 확대 정도에 맞춰 부르는 쪽에서 정한다(기본 40m).
+export async function googleNearbyPlace(lat, lng, radius = 40) {
+  const place = await googleNearbyPlaceRaw(lat, lng, radius, 'ko');
+  if (!place) return null;
+  const name = place.name;
+  if (HANGUL_RE.test(name)) return { ...place, localName: '' };
   try {
     const ko = await translateToKorean(name);
     // 영어 상호처럼 번역해도 그대로면 현지어 칸에 같은 글자를 또 넣지 않는다
-    if (!ko || ko === name) return { name, localName: '' };
-    return { name: ko, localName: name };
+    if (!ko || ko === name) return { ...place, localName: '' };
+    return { ...place, name: ko, localName: name };
   } catch (e) {
     console.warn('[장소 이름 번역 실패]', e && e.message);
-    return { name, localName: name };
+    return { ...place, localName: name };
   }
 }

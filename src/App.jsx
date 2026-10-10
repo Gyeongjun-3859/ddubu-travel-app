@@ -5,10 +5,10 @@ import { Browser } from '@capacitor/browser';
 import { App as CapacitorApp } from '@capacitor/app';
 import { X, Menu, LayoutDashboard, Calendar, Map as MapIcon, Wallet, Plane, Backpack, ShoppingBag, Mail, Settings, ClipboardList, CloudSun, MapPin, Navigation, LogOut, Home, Compass, ListChecks, PenLine, Globe, Clock, Tag, Search, Camera, Pencil, FolderOpen, Trash2, Handshake, Undo2, Redo2, RefreshCw, Plus } from 'lucide-react';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTRY_FLAG, KAKAO_CAT_COLORS, CITY_NAME_TO_EN, COUNTRY_TIPS, COUNTRY_PACKING_SUGGESTIONS, REGION_PACKING_SUGGESTIONS } from './utils/constants';
-import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, isExpenseRecord, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
+import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, themeFromGoogleTypes, isExpenseRecord, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
-import { hasGooglePlacesKey, googleNearbyPlaceNames } from './utils/googlePlaces';
+import { hasGooglePlacesKey, googleNearbyPlace } from './utils/googlePlaces';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
 import PackingDashboardModal from './components/PackingDashboardModal';
@@ -293,8 +293,6 @@ const MainApp = () => {
   const [navDayFilter, setNavDayFilter] = useState('all'); // 'all' | 'unlinked' | 1|2|3...
   const [clickedLocation, setClickedLocation] = useState(null);
   const [newManualPlaceName, setNewManualPlaceName] = useState("");
-  const newManualPlaceNameRef = useRef(""); // 지도 클릭 핸들러(오래 살아있는 콜백)에서 지금 입력값을 읽기 위한 사본
-  newManualPlaceNameRef.current = newManualPlaceName;
   const [newManualLocalName, setNewManualLocalName] = useState("");
   const [newManualFeature, setNewManualFeature] = useState("");
   const [newManualPhoto, setNewManualPhoto] = useState("");
@@ -3126,38 +3124,64 @@ function deletePackingItem(id) {
             setPendingMove({ id: movingPinIdRef.current, lat: e.latlng.lat, lng: e.latlng.lng });
             return;
           }
-          if (!isPinModeRef.current) {
-            return; 
-          }
-          if (readOnlyRef.current) { showToastRef.current('👀 보기 전용 여행이라 핀을 추가할 수 없어요.'); return; }
-          setClickedLocation(e.latlng);
-          setNewManualPlaceName("");
-          setNewManualLocalName("");
-          setNewManualFeature("");
-          setNewManualPhoto("");
-          // 직전에 수정한 핀의 사진·랜드마크·테마가 새 핀에 따라오지 않게 같이 비운다
-          setNewManualPhotos([]);
-          setNewManualIsLandmark(false);
-          setNewManualTheme("기타");
-          setNewManualIsAccommodation(false);
-          setNewManualAccommodationDays([]);
-          setPinLinkDay("");
-          setPinLinkPlanId("");
-          setNewManualTime("");
-          setIsAddPlaceModalOpen(true);
-          // 누른 자리 바로 근처의 장소 이름을 구글에서 찾아 이름 칸에 미리 채운다 (그 사이 직접 입력했으면 덮어쓰지 않음)
-          if (hasGooglePlacesKey()) {
-            const reqId = ++nearbyNameReqRef.current;
-            // 한국어 이름이 없는 장소는 번역한 이름을 이름 칸에, 원문을 현지어 칸에 (I3)
-            googleNearbyPlaceNames(e.latlng.lat, e.latlng.lng)
-              .then(({ name, localName }) => {
-                if (!name || reqId !== nearbyNameReqRef.current) return;
-                if (S(newManualPlaceNameRef.current).trim() !== '') return;
-                setNewManualPlaceName(name);
-                if (localName) setNewManualLocalName(prev => (S(prev).trim() ? prev : localName));
-              })
-              .catch(err => console.warn('[근처 장소 이름 조회 실패]', err && err.message));
-          }
+          // 카카오 지도와 같게: 누른 자리 근처의 장소를 구글에서 찾아 정보 창을 띄운다.
+          // 일반 모드는 장소가 있을 때만, 핀 추가 모드는 장소가 없어도 '이 위치를 핀으로 지정' 버튼과 함께 띄운다.
+          const pinMode = isPinModeRef.current;
+          const clickLat = e.latlng.lat;
+          const clickLng = e.latlng.lng;
+          const reqId = ++nearbyNameReqRef.current;
+          const showInfo = (place) => {
+            if (reqId !== nearbyNameReqRef.current) return; // 그 사이 다른 곳을 눌렀으면 늦게 온 결과는 버림
+            if (!place && !pinMode) { map.closePopup(); return; }
+            const box = document.createElement('div');
+            box.style.cssText = 'width:200px;max-width:200px;overflow:hidden;line-height:1.6;box-sizing:border-box;';
+            box.innerHTML = place
+              ? `<div style="font-size:13px;font-weight:900;color:#1e293b;margin-bottom:2px;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${pinMode ? '📍 ' : ''}${escapeHtml(place.name)}</div>
+                 ${place.localName ? `<div style="font-size:10px;color:#64748b;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(place.localName)}</div>` : ''}
+                 ${place.category ? `<div style="font-size:10px;color:#6366f1;font-weight:700;margin-bottom:2px;">${escapeHtml(place.category)}</div>` : ''}
+                 ${place.address ? `<div style="font-size:11px;color:#555;word-break:keep-all;">${escapeHtml(place.address)}</div>` : ''}`
+              : `<div style="font-size:12px;font-weight:900;color:#1e293b;">📍 선택한 위치</div>`;
+            if (pinMode) {
+              const btn = document.createElement('button');
+              btn.textContent = '이 위치를 핀으로 지정 📌';
+              btn.style.cssText = 'width:100%;margin-top:6px;padding:6px 0;background:#4f46e5;color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;';
+              btn.onclick = () => {
+                map.closePopup();
+                if (readOnlyRef.current) { showToastRef.current('👀 보기 전용 여행이라 핀을 추가할 수 없어요.'); return; }
+                const theme = place ? themeFromGoogleTypes(place.primaryType, place.types) : '기타';
+                // 장소를 찾았으면 그 장소의 실제 좌표로 (지도 아이콘은 실제 지점보다 조금 위에 그려져 누른 자리와 어긋남)
+                const hasPlacePos = place && isFinite(place.lat) && isFinite(place.lng);
+                setClickedLocation(hasPlacePos ? { lat: place.lat, lng: place.lng } : { lat: clickLat, lng: clickLng });
+                setNewManualPlaceName(place ? place.name : "");
+                setNewManualLocalName(place ? place.localName : "");
+                setNewManualFeature("");
+                // 직전에 수정한 핀의 사진·랜드마크·테마가 새 핀에 따라오지 않게 같이 비운다
+                setNewManualPhoto("");
+                setNewManualPhotos([]);
+                setNewManualIsLandmark(false);
+                setNewManualTheme(theme);
+                setNewManualIsAccommodation(theme === '숙소');
+                setNewManualAccommodationDays([]);
+                setPinLinkDay("");
+                setPinLinkPlanId("");
+                setNewManualTime("");
+                setIsAddPlaceModalOpen(true);
+              };
+              box.appendChild(btn);
+            }
+            window.L.popup({ maxWidth: 230, autoPanPadding: [20, 20] }).setLatLng([clickLat, clickLng]).setContent(box).openOn(map);
+          };
+          if (pinMode && readOnlyRef.current) { showToastRef.current('👀 보기 전용 여행이라 핀을 추가할 수 없어요.'); return; }
+          if (!hasGooglePlacesKey()) { showInfo(null); return; }
+          // 구글 지도 그림의 장소 아이콘은 실제 지점보다 약 14픽셀 위에 그려진다 → 누른 자리보다 14픽셀 아래를 중심으로 찾는다
+          // (오사카 난바 아이콘 9곳으로 확인: 그대로면 옆 가게가 잡히고, 14픽셀 아래면 8곳이 정확히 잡힘)
+          const searchAt = map.containerPointToLatLng(map.latLngToContainerPoint(e.latlng).add([0, 14]));
+          // 누른 자리는 화면에서 십여 픽셀씩 어긋나므로 찾는 반경은 '화면 12픽셀'만큼의 실제 거리 (멀리 보면 넓게, 가까이 보면 좁게 — 20~80m)
+          const metersPerPx = 156543.03 * Math.cos(clickLat * Math.PI / 180) / Math.pow(2, map.getZoom());
+          const radius = Math.min(80, Math.max(20, Math.round(metersPerPx * 12)));
+          googleNearbyPlace(searchAt.lat, searchAt.lng, radius)
+            .then(showInfo)
+            .catch(err => { console.warn('[근처 장소 조회 실패]', err && err.message); showInfo(null); });
         });
 
         mapInstanceRef.current = map;

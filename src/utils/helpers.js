@@ -86,6 +86,24 @@ export function themeFromKakaoCategory(code) {
   return ({ FD6: '식당', CE7: '디저트', AT4: '관광지', CT1: '관광지', AD5: '숙소', CS2: '쇼핑', MT1: '쇼핑' })[code] || '기타';
 }
 
+// 구글 장소 분류(primaryType·types) → 핀 테마 (구글 지도에서 누른 장소를 핀으로 만들 때 테마 자동 선택)
+const GOOGLE_TYPE_THEME = [
+  ['숙소', /^(lodging|hotel|motel|hostel|resort_hotel|guest_house|bed_and_breakfast|inn|japanese_inn|budget_japanese_inn|private_guest_room|campground|camping_cabin|cottage|farmstay|extended_stay_hotel)$/],
+  ['디저트', /^(cafe|coffee_shop|bakery|dessert_shop|dessert_restaurant|ice_cream_shop|tea_house|confectionery|candy_store|chocolate_shop|donut_shop|juice_shop|cat_cafe|dog_cafe)$/],
+  ['식당', /(_restaurant|^restaurant|^food_court|^meal_takeaway|^meal_delivery|^diner|^bar|^pub|^izakaya|^bistro|^brunch_restaurant|^steak_house|^sandwich_shop|^deli)$/],
+  ['관광지', /^(tourist_attraction|museum|art_gallery|park|national_park|amusement_park|water_park|aquarium|zoo|historical_landmark|historical_place|monument|cultural_landmark|place_of_worship|church|hindu_temple|buddhist_temple|shinto_shrine|mosque|synagogue|observation_deck|botanical_garden|garden|castle|beach|plaza|scenic_spot|visitor_center|performing_arts_theater|stadium)$/],
+  ['쇼핑', /(_store|^shopping_mall|^market|^supermarket|^department_store|^convenience_store|^gift_shop|^grocery_store|^outlet_mall)$/],
+];
+export function themeFromGoogleTypes(primaryType, types) {
+  const list = [primaryType, ...(Array.isArray(types) ? types : [])].filter(Boolean);
+  // 대표 분류부터 차례로 보고 처음 맞는 테마 (카페 겸 식당이면 대표 분류가 우선)
+  for (const t of list) {
+    const hit = GOOGLE_TYPE_THEME.find(([, re]) => re.test(t));
+    if (hit) return hit[0];
+  }
+  return '기타';
+}
+
 export function escapeHtml(val) {
   return S(val)
     .replace(/&/g, '&amp;')
