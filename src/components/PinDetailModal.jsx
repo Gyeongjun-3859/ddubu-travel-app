@@ -8,7 +8,7 @@ import { hasCyrillic, cyrillicToLatin } from '../utils/phrasebook';
 
 const PinDetailModal = ({
   selectedPinInfo, setSelectedPinInfo, cardBg, setViewPhoto, handleCopyLocalName, openEditPinModal,
-  isDomesticTrip, tripCountry, showToast, onSaveLocalAddress,
+  isDomesticTrip, tripCountry, showToast, onSaveLocalAddress, isReadOnly,
 }) => {
   if (!selectedPinInfo) return null;
   const pinCountry = S(selectedPinInfo.country) || S(tripCountry);
@@ -60,7 +60,7 @@ const PinDetailModal = ({
           {selectedPinInfo.lat && selectedPinInfo.lng && <PlaceInfoSection pin={selectedPinInfo} />}
 
           {/* 사진이 하나도 없는 핀: 근처 거리 사진에서 가게 앞 사진을 고를 수 있게 수정 창으로 */}
-          {!hasPhoto && selectedPinInfo.lat && selectedPinInfo.lng && (
+          {!isReadOnly && !hasPhoto && selectedPinInfo.lat && selectedPinInfo.lng && (
             <button onClick={() => { openEditPinModal(selectedPinInfo); setSelectedPinInfo(null); }}
               className="w-full mt-4 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 py-2.5 rounded-xl font-bold text-xs transition-colors">
               🖼️ 대표 사진 넣기
@@ -73,10 +73,11 @@ const PinDetailModal = ({
             </button>
           )}
           <div className="flex space-x-2 mt-2">
-            <button onClick={() => {
+            {/* 보기 전용 여행이면 고치는 버튼은 숨긴다 (눌러도 막히지만 헷갈림 — 6차 B7-1) */}
+            {!isReadOnly && <button onClick={() => {
               openEditPinModal(selectedPinInfo);
               setSelectedPinInfo(null);
-            }} className="flex-1 bg-indigo-100 text-indigo-600 py-3 rounded-xl font-bold text-sm hover:bg-indigo-200 transition-colors duration-300">정보 수정</button>
+            }} className="flex-1 bg-indigo-100 text-indigo-600 py-3 rounded-xl font-bold text-sm hover:bg-indigo-200 transition-colors duration-300">정보 수정</button>}
             <button onClick={() => setSelectedPinInfo(null)} className="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors duration-300">닫기</button>
           </div>
         </div>

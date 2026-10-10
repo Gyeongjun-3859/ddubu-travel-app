@@ -52,7 +52,10 @@ const StorefrontPicker = ({ lat, lng, name, localName, localLang, googlePlaceId,
       // 자동 선택: 아직 아무것도 안 골랐거나, 전에 자동으로 고른 것(위치를 바꾸기 전 것)이면 새 1순위로
       const cur = valueRef.current;
       if (!cur || (cur.auto && !cur.url)) {
-        const pick = list[0] ? { ...list[0], auto: true } : null;
+        // 자동으로는 위키백과·구글(그 장소 사진)·거리 사진만. '근처'(위키미디어) 사진은 다른 건물일 수 있어 후보로만 둔다
+        // (국내 가게에 길거리 자동차 사진이 자동으로 들어갔다 — 6차 B7-2)
+        const first = list.find(c => c.source !== 'commons');
+        const pick = first ? { ...first, auto: true } : null;
         onChange(pick);
         done(pick);
       } else done(cur);

@@ -4570,7 +4570,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
       <PinDetailModal
         onSaveLocalAddress={saveLocalAddressToPin}
         selectedPinInfo={selectedPinInfo} setSelectedPinInfo={setSelectedPinInfo} cardBg={cardBg} setViewPhoto={setViewPhoto} handleCopyLocalName={handleCopyLocalName} openEditPinModal={openEditPinModal}
-        isDomesticTrip={isDomesticTrip} tripCountry={resolvedGlobalCountry} showToast={showToast}
+        isDomesticTrip={isDomesticTrip} tripCountry={resolvedGlobalCountry} showToast={showToast} isReadOnly={isReadOnlyTrip}
       />
 
       <TripModal
