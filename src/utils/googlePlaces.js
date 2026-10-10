@@ -45,7 +45,7 @@ export async function googleAutocomplete(input, sessionToken, languageCode = 'ko
 // 여행 국가 → 현지 언어 코드 (현지어 이름 자동 채우기용). 목록에 없으면 영어.
 export const LOCAL_LANG_BY_COUNTRY = {
   '일본': 'ja', '중국': 'zh-CN', '대만': 'zh-TW', '홍콩': 'zh-HK', '태국': 'th', '베트남': 'vi',
-  '프랑스': 'fr', '이탈리아': 'it', '스페인': 'es', '독일': 'de', '러시아': 'ru', '카자흐스탄': 'ru',
+  '프랑스': 'fr', '이탈리아': 'it', '스페인': 'es', '독일': 'de', '러시아': 'ru', '카자흐스탄': 'ru', '키르기스스탄': 'ru', '우즈베키스탄': 'ru',
   '인도네시아': 'id', '말레이시아': 'ms', '필리핀': 'en', '미국': 'en', '영국': 'en', '호주': 'en', '싱가포르': 'en',
 };
 
@@ -120,6 +120,17 @@ export async function googlePlaceNameIn(placeId, languageCode) {
   return (data.displayName && data.displayName.text) || '';
 }
 
+// 장소 id → 그 언어의 이름 + 주소 ('기사님께 보여주기' 화면용 — 러시아어 주소를 보여 주면 택시 기사가 바로 안다)
+export async function googlePlaceAddressIn(placeId, languageCode) {
+  if (!KEY || !placeId) throw new Error('no-key');
+  const res = await fetch(`${BASE}/places/${encodeURIComponent(placeId)}?languageCode=${languageCode}`, {
+    headers: { 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': 'displayName,formattedAddress,shortFormattedAddress' },
+  });
+  if (!res.ok) throw new Error(`places-addr-${res.status}`);
+  const d = await res.json();
+  return { name: (d.displayName && d.displayName.text) || '', address: d.shortFormattedAddress || d.formattedAddress || '' };
+}
+
 // ── 장소 상세 정보 (영업시간·평점·리뷰·사진) ─────────────────────────────────────────
 // 리뷰·평점은 비싼 요금 등급(월 1,000회 무료)이라 '상세 정보'를 눌렀을 때만 부르고, 한 번 받은 건 이 화면이 켜져 있는 동안 기억한다.
 const detailsCache = new Map();
@@ -165,6 +176,30 @@ export async function googlePlaceDetails(placeId) {
   };
   detailsCache.set(placeId, info);
   return info;
+}
+
+// 장소 사진 후보 (대표 사진 고르기용). 사진은 저장하지 않고 '사진 이름'만 — 볼 때마다 구글에서 불러온다(약관).
+// 이름 한 번 받는 요청 + 화면에 보이는 사진마다 1장씩 요금이 세어져서, 후보는 3장만.
+const photosCache = new Map();
+export async function googlePlacePhotos(placeId, limit = 3) {
+  if (!KEY || !placeId) return [];
+  if (!photosCache.has(placeId)) {
+    photosCache.set(placeId, (async () => {
+      const res = await fetch(`${BASE}/places/${encodeURIComponent(placeId)}`, { headers: { 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': 'photos' } });
+      if (!res.ok) throw new Error(`places-photos-${res.status}`);
+      const d = await res.json();
+      return Array.isArray(d.photos) ? d.photos : [];
+    })().catch(e => { photosCache.delete(placeId); throw e; }));
+  }
+  const list = await photosCache.get(placeId);
+  return list.slice(0, limit).map(ph => {
+    const a = Array.isArray(ph.authorAttributions) && ph.authorAttributions[0];
+    return {
+      source: 'google', photoName: ph.name,
+      full: googlePhotoSrc(ph.name, 1024), thumb: googlePhotoSrc(ph.name, 240),
+      author: (a && a.displayName) || '', link: (a && a.uri) || '',
+    };
+  });
 }
 
 // 사진 이름 → 화면에 띄울 주소 (img src로 바로 씀 — 구글이 실제 사진으로 넘겨준다)

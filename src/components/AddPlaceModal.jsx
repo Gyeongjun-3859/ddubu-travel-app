@@ -5,6 +5,7 @@ import { usePlaceSearch } from '../hooks/usePlaceSearch';
 import TripImg from './TripImg';
 import StorefrontPicker from './StorefrontPicker';
 import { LOCAL_LANG_BY_COUNTRY } from '../utils/googlePlaces';
+import { REGION_SPOTS } from '../utils/constants';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -30,7 +31,7 @@ const AddPlaceModal = ({
   newManualAccommodationDays, setNewManualAccommodationDays,
   manualFileInputRef, supabaseClient, appUserId, activeTripId,
   handleManualPlaceAdd, currentRestaurants, showConfirm, country, onPickArea,
-  newManualStorefront, setNewManualStorefront, setNewManualExt,
+  newManualStorefront, setNewManualStorefront, newManualExt, setNewManualExt,
 }) => {
   // 장소 자동완성은 일정 수정 창과 같은 훅을 쓴다. 해외 장소를 구글에서 고르면 현지어 이름도 (비어 있을 때) 채운다.
   const { suggestions: placeSuggestions, showSuggestions, setShowSuggestions, onQueryChange, select: selectSuggestion } = usePlaceSearch({
@@ -308,6 +309,19 @@ const AddPlaceModal = ({
                 </div>
               )}
             </div>
+            {/* 도시 추천 명소 — 누르면 그 이름으로 바로 검색 (목록에서 골라야 위치·사진이 들어감) */}
+            {!S(newManualPlaceName).trim() && REGION_SPOTS[S(displayCityName)] && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <span className={`text-[10px] font-bold ${textMuted} self-center`}>✨ {S(displayCityName)} 추천</span>
+                {REGION_SPOTS[S(displayCityName)].map(sp => (
+                  <button key={sp.label} type="button"
+                    onClick={() => { setNewManualPlaceName(sp.label); onQueryChange(sp.q); }}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                    {sp.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </section>
 
           {/* 3. 일정 동기화 & 시간 배정 */}
@@ -410,7 +424,7 @@ const AddPlaceModal = ({
           {typeof setNewManualStorefront === 'function' && (
             <StorefrontPicker
               lat={clickedLocation?.lat} lng={clickedLocation?.lng}
-              name={newManualPlaceName} localName={newManualLocalName}
+              name={newManualPlaceName} localName={newManualLocalName} googlePlaceId={newManualExt && newManualExt.googlePlaceId}
               localLang={LOCAL_LANG_BY_COUNTRY[country] || (country && country !== '한국' ? 'en' : '')}
               value={newManualStorefront} onChange={setNewManualStorefront}
               isDarkMode={isDarkMode} textMuted={textMuted}

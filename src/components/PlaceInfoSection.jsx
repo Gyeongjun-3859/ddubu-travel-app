@@ -9,15 +9,13 @@ const todayIdx = () => (new Date().getDay() + 6) % 7;
 // 핀 상세 창의 'ℹ️ 장소 정보' — 누를 때만 구글에서 영업시간·평점·리뷰·사진을 받아 펼친다.
 // (리뷰·평점은 비싼 요금 등급이라 창을 열 때 자동으로 부르지 않는다. 구글 사진·리뷰는 저장하지 않고 볼 때마다 불러옴 — 약관)
 // 저장된 구글 장소 번호가 없는 옛 핀은 이름 + 위치(300m 안)로 찾는다. 국내 핀은 카카오맵 링크도 같이.
-const PlaceInfoSection = ({ pin }) => {
+const PlaceInfoSection = ({ pin, autoLoad = false }) => {
   const [state, setState] = React.useState('idle'); // idle | loading | done | notfound | error
   const [info, setInfo] = React.useState(null);
   const [photoIdx, setPhotoIdx] = React.useState(0);
   const [showHours, setShowHours] = React.useState(false);
   const kakaoUrl = S(pin.kakaoPlaceUrl);
   const hasKey = hasGooglePlacesKey();
-
-  React.useEffect(() => { setState('idle'); setInfo(null); setPhotoIdx(0); setShowHours(false); }, [pin.id]);
 
   const load = async () => {
     setState('loading');
@@ -34,6 +32,13 @@ const PlaceInfoSection = ({ pin }) => {
       setState('error');
     }
   };
+
+  // autoLoad: 지도 정보 창에서 '상세 정보'를 눌러 연 경우 — 이미 누른 것이니 바로 불러온다
+  React.useEffect(() => {
+    setState('idle'); setInfo(null); setPhotoIdx(0); setShowHours(false);
+    if (autoLoad && hasKey) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pin.id]);
 
   const kakaoLink = kakaoUrl ? (
     <a href={kakaoUrl} target="_blank" rel="noopener noreferrer"

@@ -707,8 +707,19 @@ export const COUNTRY_TIPS = {
 
   // 아시아
   "카자흐스탄": [
-    { icon: '🔌', text: '전압 230V, 콘센트 모양이 같아 변환 어댑터가 필요 없어요' },
-    { icon: '💱', text: '현지 화폐는 KZT(₸)를 사용해요' },
+    { icon: '🛂', text: '한국 여권은 무비자로 30일까지 머물 수 있어요 (180일 중 최대 90일)' },
+    { icon: '🕐', text: '시차: 한국보다 4시간 느려요 (전국 같은 시간, 한국 18시 = 알마티 14시)' },
+    { icon: '🔌', text: '전압 220V, 콘센트 모양이 같아 변환 어댑터가 필요 없어요' },
+    { icon: '💱', text: '현지 화폐는 KZT(₸)를 사용해요. 달러를 가져가 시내 환전소(Обмен валют)에서 바꾸면 환율이 좋아요' },
+    { icon: '💳', text: '알마티 시내 식당·마트는 카드가 잘 되지만, 시장·작은 가게·산 지역은 현금이 편해요' },
+    { icon: '🚕', text: '택시는 Yandex Go 앱(또는 inDrive)으로 부르면 요금이 미리 정해져 편해요. 길에서 잡는 택시는 흥정이 필요해요' },
+    { icon: '🗺️', text: '길찾기는 구글 지도보다 2GIS 앱이 훨씬 정확해요 (가게 입구·버스까지, 오프라인 지도도 받아 둘 수 있어요)' },
+    { icon: '🗣️', text: '알마티에서는 러시아어가 가장 잘 통해요. 영어는 호텔·젊은 층 일부만 — 회화와 「기사님께 보여주기」를 활용하세요' },
+    { icon: '🏔️', text: '메데우·침불락·빅 알마티 호수는 고도가 높아 시내보다 훨씬 추워요. 10월 말엔 눈·영하도 있으니 패딩을 챙기세요' },
+    { icon: '🚌', text: '차린 캐니언·콜사이 호수는 알마티에서 차로 3~5시간 — 당일·1박 투어를 이용하는 게 편해요' },
+    { icon: '📶', text: '현지 유심·eSIM(Beeline·Kcell·Activ)이 싸고 빨라요. 산 지역은 신호가 약할 수 있어요' },
+    { icon: '🚰', text: '수돗물은 마시지 말고 생수를 사 드세요' },
+    { icon: '🧾', text: '식당 계산서에 봉사료(10~15%)가 이미 들어 있는 경우가 많아요 — 따로 팁을 줄 필요 없어요' },
   ],
   "키르기스스탄": [
     { icon: '🔌', text: '전압 220V, 콘센트 모양이 같아 변환 어댑터가 필요 없어요' },
@@ -1091,7 +1102,8 @@ export const COUNTRY_TIPS = {
 // 국가별 추천 준비물 (짐 꾸리기 모달 원클릭 추가용)
 export const COUNTRY_PACKING_SUGGESTIONS = {
   "한국": ['보조배터리', '우산/우비', '상비약'],
-  "일본": ['엔화 현금', '휴대용 쓰레기봉투', '포켓와이파이 or 유심'], // 교통카드는 지역마다 달라 아래 REGION_PACKING_SUGGESTIONS에서
+  "일본": ['엔화 현금', '휴대용 쓰레기봉투', '포켓와이파이 or 유심'],
+  "카자흐스탄": ['달러 현금(현지 환전용)', '2GIS·Yandex Go 앱 설치', 'eSIM 또는 현지 유심', '패딩·방한용품(산 지역)', '선크림·선글라스(고산 자외선)'], // 교통카드는 지역마다 달라 아래 REGION_PACKING_SUGGESTIONS에서
   "프랑스": ['멀티 어댑터(유럽형)', '크로스백', '동전 지갑'],
   "미국": ['신용카드(팁 결제용)', '편한 운동화'],
   "대만": ['이지카드', '우산', '소액 현금(대만달러)'],
@@ -1117,6 +1129,38 @@ export const REGION_PACKING_SUGGESTIONS = {
   "구마모토": ['ICOCA/SUGOCA 교통카드'],
   "제주": ['렌터카 국제/국내 면허증', '바람막이'],
   "부산": ['교통카드(티머니)', '편한 운동화(언덕 많음)'],
+  "알마티": ['편한 운동화(언덕·공원 산책)', '얇은 패딩(침불락·메데우)', '물티슈(시장)'],
+};
+
+// 도시별 추천 명소 — 등록 창에서 눌러 바로 검색 (q: 구글 검색어. 한국어로는 안 나오는 곳이 많아 영어로)
+export const REGION_SPOTS = {
+  "알마티": [
+    { label: '콕토베', q: 'Kok Tobe Almaty' },
+    { label: '침불락', q: 'Shymbulak Almaty' },
+    { label: '메데우', q: 'Medeu Almaty' },
+    { label: '빅 알마티 호수', q: 'Big Almaty Lake' },
+    { label: '젠코프 성당', q: 'Ascension Cathedral Almaty' },
+    { label: '그린 바자르', q: 'Green Bazaar Almaty' },
+    { label: '판필로프 공원', q: 'Panfilov Park Almaty' },
+    { label: '아르바트 거리', q: 'Zhibek Zholy Arbat Almaty' },
+    { label: '중앙 국립 박물관', q: 'Central State Museum Almaty' },
+    { label: '초대 대통령 공원', q: 'First President Park Almaty' },
+    { label: '차린 캐니언', q: 'Charyn Canyon' },
+    { label: '콜사이 호수', q: 'Kolsai Lakes' },
+    { label: '카인디 호수', q: 'Kaindy Lake' },
+  ],
+};
+
+// 나라별 현지 시간대 (한국과 시차가 있는 나라만 — 대시보드에 '현지 시각 · 한국 시각'을 같이 보여 줌)
+// 미국·러시아·호주처럼 시간대가 여러 개인 나라는 도시마다 달라서 뺐다
+export const COUNTRY_TIMEZONE = {
+  "카자흐스탄": 'Asia/Almaty', "키르기스스탄": 'Asia/Bishkek', "우즈베키스탄": 'Asia/Tashkent', "타지키스탄": 'Asia/Dushanbe', "투르크메니스탄": 'Asia/Ashgabat',
+  "몽골": 'Asia/Ulaanbaatar', "중국": 'Asia/Shanghai', "대만": 'Asia/Taipei', "홍콩": 'Asia/Hong_Kong', "마카오": 'Asia/Macau',
+  "태국": 'Asia/Bangkok', "베트남": 'Asia/Ho_Chi_Minh', "라오스": 'Asia/Vientiane', "캄보디아": 'Asia/Phnom_Penh', "싱가포르": 'Asia/Singapore',
+  "말레이시아": 'Asia/Kuala_Lumpur', "필리핀": 'Asia/Manila', "인도": 'Asia/Kolkata', "네팔": 'Asia/Kathmandu', "튀르키예": 'Europe/Istanbul',
+  "영국": 'Europe/London', "프랑스": 'Europe/Paris', "독일": 'Europe/Berlin', "이탈리아": 'Europe/Rome', "스페인": 'Europe/Madrid',
+  "스위스": 'Europe/Zurich', "체코": 'Europe/Prague', "오스트리아": 'Europe/Vienna', "네덜란드": 'Europe/Amsterdam', "포르투갈": 'Europe/Lisbon',
+  "그리스": 'Europe/Athens', "헝가리": 'Europe/Budapest', "조지아": 'Asia/Tbilisi', "아랍에미리트": 'Asia/Dubai', "괌": 'Pacific/Guam',
 };
 
 // 카카오 카테고리별 색상
@@ -1301,7 +1345,7 @@ export const COUNTRY_LANGUAGE = {
   "칠레": [{ code: 'es', english: 'Spanish', native: 'Español' }],
   "카메룬": [{ code: 'en', english: 'English', native: 'English' }, { code: 'fr', english: 'French', native: 'Français' }],
   "카보베르데": [{ code: 'pt', english: 'Portuguese', native: 'Português' }],
-  "카자흐스탄": [{ code: 'kk', english: 'Kazakh', native: 'Қазақша' }, { code: 'ru', english: 'Russian', native: 'Русский' }],
+  "카자흐스탄": [{ code: 'ru', english: 'Russian', native: 'Русский' }, { code: 'kk', english: 'Kazakh', native: 'Қазақша' }], // 알마티는 러시아어가 훨씬 잘 통해 먼저
   "카타르": [{ code: 'ar', english: 'Arabic', native: 'العربية' }],
   "캄보디아": [{ code: 'km', english: 'Khmer', native: 'ភាសាខ្មែរ' }],
   "캐나다": [{ code: 'en', english: 'English', native: 'English' }, { code: 'fr', english: 'French', native: 'Français' }],

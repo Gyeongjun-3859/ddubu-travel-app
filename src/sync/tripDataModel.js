@@ -111,6 +111,7 @@ export function cleanRestaurantItem(r) {
     ...(r.storefront && r.storefront.url ? { storefront: {
       url: S(r.storefront.url), mapillaryId: S(r.storefront.mapillaryId), author: S(r.storefront.author), capturedAt: r.storefront.capturedAt || 0,
       ...(r.storefront.source ? { source: S(r.storefront.source) } : {}), ...(r.storefront.link ? { link: S(r.storefront.link) } : {}),
+      ...(r.storefront.photoName ? { photoName: S(r.storefront.photoName) } : {}), // 구글 사진 이름(사진 자체는 저장 안 함)
     } } : {}),
     // [신규] 예전엔 핀에 updatedAt이 아예 없어서 충돌 해결(누구 수정이 최신인지 비교)이 불가능했다.
     updatedAt: r.updatedAt || 0,

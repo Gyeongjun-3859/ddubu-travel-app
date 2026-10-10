@@ -9,7 +9,7 @@ import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, the
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
 import { hasGooglePlacesKey, googleNearbyPlace, googlePlaceNameIn, LOCAL_LANG_BY_COUNTRY } from './utils/googlePlaces';
-import { copyStorefrontPhoto, setStorefrontCredits } from './utils/mapillary';
+import { copyStorefrontPhoto, setStorefrontCredits, storefrontNeedsCopy } from './utils/mapillary';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
 import PackingDashboardModal from './components/PackingDashboardModal';
@@ -28,6 +28,7 @@ import TripModal from './components/TripModal';
 import MobileMenu from './components/MobileMenu';
 import PlanDetailModal from './components/PlanDetailModal';
 import PinDetailModal from './components/PinDetailModal';
+import PlaceInfoModal from './components/PlaceInfoModal';
 import DeleteTripConfirmModal from './components/DeleteTripConfirmModal';
 import PhotoViewerModal from './components/PhotoViewerModal';
 import Toast from './components/Toast';
@@ -341,6 +342,7 @@ const MainApp = () => {
   } = usePhotoViewer();
   const [newManualPhotos, setNewManualPhotos] = useState([]); // 핀 등록 다중 사진
   const [newManualStorefront, setNewManualStorefront] = useState(null); // 핀 '가게 앞 사진'(Mapillary) — 고른 후보 또는 저장된 사진
+  const [placeInfoTarget, setPlaceInfoTarget] = useState(null); // 지도 정보 창에서 '상세 정보'를 누른 장소 (아직 핀이 아닌 곳)
   const [newManualExt, setNewManualExt] = useState({}); // 등록 창에서 고른 장소의 구글 장소 번호·카카오 장소 주소 (핀에 같이 저장)
   const mapInitFlyDoneRef = useRef(false); // 지도 최초 자동 이동 완료 여부
   const pendingMapFlyRef = useRef(null); // 핀 이동 버튼 클릭 시 탭 전환 후 flyTo 대기 좌표
@@ -1626,7 +1628,7 @@ async function confirmDeleteTrip() {
     if (sf && !sf.url && sf.full) {
       if (storefrontSavingRef.current) return; // 두 번 누름 방지
       storefrontSavingRef.current = true;
-      showToast("🖼️ 대표 사진을 저장하는 중이에요…");
+      if (storefrontNeedsCopy(sf)) showToast("🖼️ 대표 사진을 저장하는 중이에요…");
       try {
         sf = await copyStorefrontPhoto(supabaseClient, appUserId, activeTripId, sf);
       } catch (err) {
@@ -1697,6 +1699,7 @@ async function confirmDeleteTrip() {
       ...(storefront ? { storefront: {
         url: storefront.url, mapillaryId: S(storefront.mapillaryId), author: S(storefront.author), capturedAt: storefront.capturedAt || 0,
         ...(storefront.source ? { source: S(storefront.source) } : {}), ...(storefront.link ? { link: S(storefront.link) } : {}),
+        ...(storefront.photoName ? { photoName: S(storefront.photoName) } : {}),
       } } : {}),
       rating: 0, isAccommodation: Boolean(newManualIsAccommodation) || Boolean(reusedPin?.isAccommodation), isLandmark: Boolean(newManualIsLandmark) || Boolean(reusedPin?.isLandmark),
       theme: ((reusedPin && (!newManualTheme || newManualTheme === '기타')) ? S(reusedPin.theme) : S(newManualTheme)) || "기타"
@@ -3263,6 +3266,16 @@ function deletePackingItem(id) {
                  ${place.category ? `<div style="font-size:10px;color:#6366f1;font-weight:700;margin-bottom:2px;">${escapeHtml(place.category)}</div>` : ''}
                  ${place.address ? `<div style="font-size:11px;color:#555;word-break:keep-all;">${escapeHtml(place.address)}</div>` : ''}`
               : `<div style="font-size:12px;font-weight:900;color:#1e293b;">📍 선택한 위치</div>`;
+            if (place && place.id) {
+              const infoBtn = document.createElement('button');
+              infoBtn.textContent = 'ℹ️ 상세 정보 (영업시간·리뷰)';
+              infoBtn.style.cssText = 'width:100%;margin-top:6px;padding:5px 0;background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;';
+              infoBtn.onclick = () => {
+                map.closePopup();
+                setPlaceInfoTarget({ id: `g-${place.id}`, name: place.name, localName: place.localName || '', lat: place.lat, lng: place.lng, googlePlaceId: place.id });
+              };
+              box.appendChild(infoBtn);
+            }
             if (pinMode) {
               const btn = document.createElement('button');
               btn.textContent = '이 위치를 핀으로 지정 📌';
@@ -3280,7 +3293,7 @@ function deletePackingItem(id) {
                 setNewManualFeature("");
                 // 직전에 수정한 핀의 사진·랜드마크·테마가 새 핀에 따라오지 않게 같이 비운다
                 setNewManualPhoto("");
-                setNewManualPhotos([]); setNewManualStorefront(null); setNewManualExt({});
+                setNewManualPhotos([]); setNewManualStorefront(null);
                 setNewManualIsLandmark(false);
                 setNewManualTheme(theme);
                 setNewManualIsAccommodation(theme === '숙소');
@@ -3589,7 +3602,8 @@ function deletePackingItem(id) {
                     setNewManualPlaceName(placeName); setNewManualLocalName(""); setNewManualFeature("");
                     const nearTheme = themeFromKakaoCategory(nearby && nearby.category_group_code);
                     setNewManualTheme(nearTheme);
-                    setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualExt({}); setNewManualIsLandmark(false);
+                    setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualIsLandmark(false);
+                    setNewManualExt(nearby && nearby.place_url ? { kakaoPlaceUrl: nearby.place_url } : {});
                     setNewManualIsAccommodation(nearTheme === '숙소'); setNewManualAccommodationDays([]);
                     setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
                     setIsAddPlaceModalOpen(true);
@@ -3801,7 +3815,8 @@ function deletePackingItem(id) {
             // 고른 분류(카페 등)에 맞는 테마를 미리 골라 둔다 (예전엔 늘 '기타'). 이전 등록의 사진·연박도 비운다.
             const catTheme = themeFromKakaoCategory(place.category_group_code || place._catCode);
             setNewManualTheme(catTheme);
-            setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualExt({}); setNewManualIsLandmark(false);
+            setNewManualPhoto(""); setNewManualPhotos([]); setNewManualStorefront(null); setNewManualIsLandmark(false);
+            setNewManualExt(place.place_url ? { kakaoPlaceUrl: place.place_url } : {});
             setNewManualIsAccommodation(catTheme === '숙소'); setNewManualAccommodationDays([]);
             setPinLinkDay(""); setPinLinkPlanId(""); setNewManualTime("");
             setIsAddPlaceModalOpen(true);
@@ -4438,9 +4453,11 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         currentRestaurants={currentRestaurants} setCurrentRestaurants={setCurrentRestaurants} showToast={showToast} rates={rates}
       />
 
+      <PlaceInfoModal place={placeInfoTarget} onClose={() => setPlaceInfoTarget(null)} cardBg={cardBg} />
+
       <PinDetailModal
         selectedPinInfo={selectedPinInfo} setSelectedPinInfo={setSelectedPinInfo} cardBg={cardBg} setViewPhoto={setViewPhoto} handleCopyLocalName={handleCopyLocalName} openEditPinModal={openEditPinModal}
-        isDomesticTrip={isDomesticTrip}
+        isDomesticTrip={isDomesticTrip} tripCountry={resolvedGlobalCountry} showToast={showToast}
       />
 
       <TripModal
@@ -4481,7 +4498,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
         newManualAccommodationDays={newManualAccommodationDays} setNewManualAccommodationDays={setNewManualAccommodationDays}
         manualFileInputRef={manualFileInputRef} supabaseClient={supabaseClient} appUserId={appUserId} activeTripId={activeTripId}
         handleManualPlaceAdd={savePlaceWithStorefront} handleCopyLocalName={handleCopyLocalName}
-        newManualStorefront={newManualStorefront} setNewManualStorefront={setNewManualStorefront} setNewManualExt={setNewManualExt}
+        newManualStorefront={newManualStorefront} setNewManualStorefront={setNewManualStorefront} newManualExt={newManualExt} setNewManualExt={setNewManualExt}
         currentRestaurants={currentRestaurants} showConfirm={showConfirm} country={resolvedGlobalCountry}
         onPickArea={(area) => { pickedAreaRef.current = area; }}
       />

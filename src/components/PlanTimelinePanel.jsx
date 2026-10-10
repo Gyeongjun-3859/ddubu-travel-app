@@ -3,7 +3,7 @@ import { Trash2, Navigation, Star } from 'lucide-react';
 import { S, getAccommodationTransitFrom, openGoogleMapsNav, openExternalUrl, isExpenseRecord, findPinForPlan, planDayNum } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 import TripImg from './TripImg';
-import { getStorefrontByUrl } from '../utils/mapillary';
+import { getStorefrontByUrl, storefrontBadge } from '../utils/mapillary';
 
 const THEME_EMOJI = {
   '식당': '🍽️', '디저트': '🍰', '관광지': '📸', '쇼핑': '🛍️', '숙소': '🏠', '카페': '☕', '기타': '📍',
@@ -101,7 +101,7 @@ const PlanTimelinePanel = ({
                   {plan.photo ? (
                     <div className="relative w-1/3 h-24 shrink-0 overflow-hidden bg-slate-100 dark:bg-slate-700" onClick={(e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); }}>
                       <TripImg src={plan.photo} alt="" className="h-full w-full object-cover" />
-                      {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{getStorefrontByUrl(plan.photo).source === 'wiki' ? '📖 위키백과' : '📷 Mapillary'}</span>}
+                      {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{storefrontBadge(getStorefrontByUrl(plan.photo))}</span>}
                     </div>
                   ) : (
                     <div className="flex w-1/3 h-24 shrink-0 items-center justify-center bg-[#007AFF]/10 text-2xl">🏠</div>
@@ -178,7 +178,7 @@ const PlanTimelinePanel = ({
                         <TripImg src={plan.photo} alt="" className="h-full w-full object-cover" />
                         {plan.photos && plan.photos.length > 1 && <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 py-0.5 text-[9px] font-bold text-white">📸 {plan.photos.length}</span>}
                         {/* 자동으로 넣은 대표 사진이면 출처를 작게 (위키백과·Mapillary 자유 이용 사진 조건) */}
-                        {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{getStorefrontByUrl(plan.photo).source === 'wiki' ? '📖 위키백과' : '📷 Mapillary'}</span>}
+                        {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{storefrontBadge(getStorefrontByUrl(plan.photo))}</span>}
                       </div>
                       <div className="flex flex-1 flex-col justify-center gap-0.5 p-2.5">
                         <h3 className={`text-[14px] font-semibold leading-tight ${textMain}`}>{S(plan.place)}</h3>

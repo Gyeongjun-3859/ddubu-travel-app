@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import TripImg from './TripImg';
-import { getStorefrontByUrl, storefrontCredit, photoSourceLink } from '../utils/mapillary';
+import { getStorefrontByUrl, storefrontCredit, photoSourceLink, storefrontPrefix } from '../utils/mapillary';
 
 const PhotoViewerModal = ({
   viewPhoto, setViewPhoto, setViewPhotoAnim,
@@ -228,7 +228,7 @@ const PhotoViewerModal = ({
         <a href={photoSourceLink(curSf)} target="_blank" rel="noopener noreferrer"
            onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}
            className="text-white/80 text-[11px] pb-2 hover:text-white" style={{ zIndex: 30 }}>
-          {curSf.source === 'wiki' ? '📖' : '🏪 가게 앞 ·'} 📷 {storefrontCredit(curSf)}
+          {storefrontPrefix(curSf)} {storefrontCredit(curSf)}
         </a>
       )}
       {/* 하단 미니 썸네일 */}

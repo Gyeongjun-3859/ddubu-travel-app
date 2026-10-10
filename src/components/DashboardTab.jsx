@@ -1,13 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, Calendar, Backpack, ShoppingBag, Plane, Trash2, MapPin, Languages, Map as MapIcon, Wallet, ListChecks, Sparkles, X } from 'lucide-react';
-import { COUNTRY_LANGUAGE, COUNTRY_CURRENCY } from '../utils/constants';
+import { RefreshCw, Calendar, Backpack, ShoppingBag, Plane, Trash2, MapPin, Languages, Map as MapIcon, Wallet, ListChecks, Sparkles, X, MessageCircle } from 'lucide-react';
+import { COUNTRY_LANGUAGE, COUNTRY_CURRENCY, COUNTRY_TIMEZONE } from '../utils/constants';
 import { S, getAccommodationTransitFrom } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 import TransitRouteViewModal from './TransitRouteViewModal';
 import LanguageModal from './LanguageModal';
 import TripImg from './TripImg';
-import { getStorefrontByUrl } from '../utils/mapillary';
+import { getStorefrontByUrl, storefrontBadge } from '../utils/mapillary';
+
+// 현지 돈 빠른 금액 버튼 (나라 통화별 자주 보는 금액)
+const QUICK_AMOUNTS = {
+  KZT: [500, 1000, 2000, 5000, 10000, 20000],
+  JPY: [500, 1000, 3000, 5000, 10000],
+  CNY: [10, 50, 100, 200, 500],
+  KGS: [100, 500, 1000, 2000],
+  UZS: [10000, 50000, 100000, 200000],
+};
 
 const THEME_DEFAULT_PHOTO = {
   '식당': 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80',
@@ -50,6 +59,18 @@ const DashboardTab = ({
   const [transitView, setTransitView] = useState(null);
   const [isTipsOpen, setIsTipsOpen] = useState(false);
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
+  // 현지 시각 · 한국 시각 (시차가 있는 나라만, 1분마다 갱신)
+  const tz = COUNTRY_TIMEZONE[resolvedGlobalCountry];
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (!tz) return undefined;
+    const t = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(t);
+  }, [tz]);
+  const timeIn = (zone) => { try { return new Intl.DateTimeFormat('ko-KR', { timeZone: zone, hour: '2-digit', minute: '2-digit', hour12: false }).format(now); } catch (e) { return ''; } };
+  const localTime = tz ? timeIn(tz) : '';
+  const koreaTime = tz ? timeIn('Asia/Seoul') : '';
+  const showClock = Boolean(localTime && koreaTime && localTime !== koreaTime);
   const findPinCoord = (placeName) => {
     const pin = (Array.isArray(currentRestaurants) ? currentRestaurants : []).find(r => r && r.lat && r.lng && S(r.name) === S(placeName));
     return pin ? { lat: pin.lat, lng: pin.lng } : null;
@@ -89,6 +110,7 @@ const DashboardTab = ({
     { key: 'expense', label: '여행정산', Icon: Wallet, onClick: () => setIsExpenseModalOpen(true), badge: totalExpenseKrw > 0 ? `₩${totalExpenseKrw.toLocaleString()}` : null },
     { key: 'packing', label: '준비물', Icon: Backpack, onClick: () => setIsDashboardPackingOpen(true) },
     { key: 'shopping', label: '쇼핑', Icon: ShoppingBag, onClick: () => setIsDashboardShoppingOpen(true) },
+    ...(COUNTRY_LANGUAGE[resolvedGlobalCountry] && !isDomesticTrip ? [{ key: 'phrases', label: '현지 회화', Icon: MessageCircle, onClick: () => setIsLanguageOpen(true) }] : []),
     ...(countryTips.length > 0 ? [{ key: 'tips', label: `${resolvedGlobalCountry} 꿀팁`, Icon: Sparkles, onClick: () => setIsTipsOpen(true) }] : []),
     { key: 'map', label: '지도 열기', Icon: MapIcon, onClick: () => changeTab('map'), full: true },
   ];
@@ -103,6 +125,11 @@ const DashboardTab = ({
         {/* 헤더 */}
         <div className="flex items-center px-1">
           <h2 className={`text-xl sm:text-2xl font-bold tracking-tight ${textMain}`}>대시보드</h2>
+          {showClock && (
+            <span className={`ml-auto rounded-full border px-2.5 py-1 text-[11px] font-bold ${isDarkMode ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600 bg-white'}`}>
+              🕐 {S(displayCityName) || resolvedGlobalCountry} {localTime} <span className={textMuted}>· 한국 {koreaTime}</span>
+            </span>
+          )}
         </div>
 
         {/* 항공권 히어로 */}
@@ -159,7 +186,7 @@ const DashboardTab = ({
                       onClick={plan.photo ? (e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); } : undefined}
                     />
                     <span className={`absolute left-2 top-2 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white ${tag.bg}`}>{tag.label}</span>
-                    {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{getStorefrontByUrl(plan.photo).source === 'wiki' ? '📖 위키백과' : '📷 Mapillary'}</span>}
+                    {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{storefrontBadge(getStorefrontByUrl(plan.photo))}</span>}
                     {(plan.isAccommodation || plan.time !== '99:99') && (
                       <span className="absolute right-2 top-2 rounded-md bg-white/85 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 backdrop-blur-sm">
                         {plan.isAccommodation ? '숙박' : S(plan.time)}
@@ -344,6 +371,17 @@ const DashboardTab = ({
                 </div>
               ))}
             </div>
+            {/* 현지 돈 자주 쓰는 금액 — 눌러서 바로 원화로 (시장·택시에서 빨리 확인) */}
+            {tripCurrency && tripCurrency.code !== 'USD' && QUICK_AMOUNTS[tripCurrency.code] && (
+              <div className="flex flex-wrap gap-1">
+                {QUICK_AMOUNTS[tripCurrency.code].map(v => (
+                  <button key={v} onClick={() => handleInputChange(tripCurrency.code, String(v))}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-bold transition-colors ${softBtn}`}>
+                    {v.toLocaleString()}{tripCurrency.symbol || ''}
+                  </button>
+                ))}
+              </div>
+            )}
             {errorRates
               ? <span className="text-rose-500 text-[10px] font-semibold">{errorRates}</span>
               : updatedLabel && <span className={`text-[10px] font-medium ${textMuted}`}>{updatedLabel}</span>}

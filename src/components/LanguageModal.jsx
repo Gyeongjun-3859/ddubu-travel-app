@@ -1,12 +1,17 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Languages as LanguagesIcon, Volume2 } from 'lucide-react';
+import { PHRASEBOOK } from '../utils/phrasebook';
 
 const PHRASES = [
   { ko: '안녕하세요', label: '인사' },
   { ko: '감사합니다', label: '감사' },
   { ko: '얼마예요?', label: '가격 묻기' },
   { ko: '도와주세요', label: '도움 요청' },
+  { ko: '화장실 어디예요?', label: '화장실' },
+  { ko: '계산서 주세요', label: '계산' },
+  { ko: '카드로 계산할 수 있어요?', label: '카드' },
+  { ko: '여기로 가 주세요', label: '택시' },
 ];
 
 // [Chrome 버그 대응] SpeechSynthesisUtterance/Audio를 지역 변수로만 두면 재생 도중 GC(가비지 컬렉션)되어
@@ -50,8 +55,11 @@ const LanguageModal = ({ isOpen, onClose, isDarkMode, textMain, countryName, lan
     return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
   }, []);
 
+  // 직접 정리한 회화집이 있는 언어(러시아어·카자흐어)는 기계 번역 없이 그걸 보여 준다
+  const book = languageInfo ? PHRASEBOOK[languageInfo.code] : null;
+
   useEffect(() => {
-    if (!isOpen || !languageInfo) return;
+    if (!isOpen || !languageInfo || PHRASEBOOK[languageInfo.code]) return;
     let cancelled = false;
     setTranslations({});
     setSpeakError('');
@@ -147,7 +155,23 @@ const LanguageModal = ({ isOpen, onClose, isDarkMode, textMain, countryName, lan
         )}
 
         <div className="p-4 space-y-2.5 max-h-[60vh] overflow-y-auto custom-scrollbar">
-          {PHRASES.map(p => {
+          {book && book.map((p, i) => (
+            <React.Fragment key={p.ko}>
+              {(i === 0 || book[i - 1].group !== p.group) && <div className={`pt-1 text-[11px] font-black ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{p.group}</div>}
+              <div className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 ${isDarkMode ? 'bg-slate-900/40 border-slate-700' : 'bg-[#f4f3f8] border-slate-200/50'}`}>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-[11px] font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{p.ko}</div>
+                  <div className={`text-[15px] font-bold ${textMain}`}>{p.text}</div>
+                  <div className="text-[11px] font-semibold text-[#007AFF]">{p.say}</div>
+                </div>
+                <button onClick={() => speak(p.text)} aria-label="발음 듣기"
+                  className={`shrink-0 p-2 rounded-full transition-colors ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}>
+                  <Volume2 className="w-4 h-4" />
+                </button>
+              </div>
+            </React.Fragment>
+          ))}
+          {!book && PHRASES.map(p => {
             const translated = translations[p.ko];
             const isLoaded = Object.prototype.hasOwnProperty.call(translations, p.ko);
             return (

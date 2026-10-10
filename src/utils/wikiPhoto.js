@@ -65,3 +65,33 @@ export async function findWikiPhoto({ name, localName, lat, lng, localLang }) {
   }
   return null;
 }
+
+// 위키미디어 공용 — 그 자리 근처(반경 radius m)에서 찍힌 자유 이용 사진들. 위키백과 문서가 없는 곳(호텔·식당·작은 명소)도
+// 누군가 찍어 올린 사진이 있는 경우가 많다. 근처 다른 건물 사진일 수도 있어 자동 1순위로는 쓰지 않고 후보로만 보여 준다.
+const stripHtml = (h) => String(h || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+export async function findCommonsPhotos(lat, lng, { radius = 120, limit = 4 } = {}) {
+  if (!isFinite(lat) || !isFinite(lng)) return [];
+  const params = new URLSearchParams({
+    action: 'query', format: 'json', origin: '*', generator: 'geosearch', ggscoord: `${lat}|${lng}`, ggsradius: String(radius),
+    ggslimit: '15', ggsnamespace: '6', prop: 'imageinfo', iiprop: 'url|mime|extmetadata', iiurlwidth: '1024',
+  });
+  const res = await fetch(`https://commons.wikimedia.org/w/api.php?${params}`);
+  if (!res.ok) throw new Error(`commons-${res.status}`);
+  const data = await res.json();
+  const pages = Object.values((data.query && data.query.pages) || {}).sort((a, b) => (a.index || 99) - (b.index || 99));
+  const out = [];
+  for (const p of pages) {
+    const ii = (p.imageinfo || [])[0];
+    if (!ii || ii.mime !== 'image/jpeg' || !ii.thumburl) continue; // 지도·로고(svg·png)는 뺀다
+    if (/map|logo|flag|plan|diagram|карта|схема/i.test(p.title)) continue;
+    const meta = ii.extmetadata || {};
+    out.push({
+      source: 'commons',
+      full: ii.thumburl, thumb: ii.thumburl, // 작은 사진 주소를 따로 만들면 원본이 작은 사진은 깨져서 같은 주소를 쓴다
+      author: stripHtml(meta.Artist && meta.Artist.value).slice(0, 40),
+      link: ii.descriptionurl || '',
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}

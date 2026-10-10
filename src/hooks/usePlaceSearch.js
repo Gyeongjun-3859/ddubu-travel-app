@@ -129,7 +129,8 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
     }
     // 구글에 한국어 이름이 없는 해외 장소(예: 'Kok-Tobe Hill')는 한국어로 번역해 이름에 쓰고, 원래 이름은 현지어 칸으로
     // (지도를 눌러 고를 때 하던 처리(I3)를 검색으로 고를 때도)
-    if (s.source !== 'kakao' && hasGooglePlacesKey() && name && !HANGUL_RE.test(name)) {
+    // 한 단어 이름(예: 'Navat')은 고유명사라 번역하면 엉뚱해진다('허브') → 두 단어 이상일 때만 번역
+    if (s.source !== 'kakao' && hasGooglePlacesKey() && name && !HANGUL_RE.test(name) && name.trim().split(/\s+/).length >= 2) {
       try {
         const ko = await translateToKorean(name);
         if (ko && ko !== name) { if (!localName) localName = name; name = ko; }

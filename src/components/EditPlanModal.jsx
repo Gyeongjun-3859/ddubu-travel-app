@@ -5,6 +5,9 @@ import { S, compressAndStoreImage, isExpenseRecord, findPinForPlan } from '../ut
 import SelectOrInput from './SelectOrInput';
 import { usePlaceSearch } from '../hooks/usePlaceSearch';
 import TripImg from './TripImg';
+import StorefrontPicker from './StorefrontPicker';
+import { copyStorefrontPhoto, storefrontNeedsCopy } from '../utils/mapillary';
+import { LOCAL_LANG_BY_COUNTRY } from '../utils/googlePlaces';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -30,9 +33,11 @@ const EditPlanModal = ({
   // 골라 둔 좌표는 저장 때 연결된 핀 위치에 반영한다(_pickedLat/_pickedLng는 화면 전용 — 일정 데이터엔 안 들어감).
   const placeSearch = usePlaceSearch({
     isKakaoMap, isKakaoMapLoaded, country, showToast, biasPins: currentRestaurants,
-    onPick: ({ name, lat, lng, localName, theme }) => {
+    onPick: ({ name, lat, lng, localName, theme, ext }) => {
       setEditingPlan(prev => prev ? ({
         ...prev, place: name,
+        // 다른 장소를 골랐으니 대표 사진도 새로 (아래 '대표 사진' 칸이 자동으로 고름). 구글 장소 번호도 새 장소 것으로
+        _storefront: null, _googlePlaceId: (ext && ext.googlePlaceId) || '',
         // 다른 장소를 골랐으면 현지어 이름도 그 장소 것으로 (예전엔 비어 있을 때만 채워 이전 장소 이름이 남았다 — 4차 A)
         localName: localName || '',
         // 테마는 '기타'일 때만 고른 장소 분류로
@@ -41,6 +46,7 @@ const EditPlanModal = ({
       }) : prev);
     },
   });
+  const [sfSaving, setSfSaving] = React.useState(false);
   if (!editingPlan) { openedRef.current = { id: null, snapshot: null, baseline: null }; return null; }
   if (openedRef.current.id !== editingPlan.id) {
     const baseline = (Array.isArray(planTimeline) ? planTimeline : []).find(p => p && S(p.id) === S(editingPlan.id)) || null;
@@ -171,6 +177,20 @@ const EditPlanModal = ({
               </div>
               {editingPlan._pickedLat != null && <p className="text-[10px] font-semibold text-[#007AFF]">📍 새 위치로 바뀌어요 (저장하면 지도 핀도 이동)</p>}
             </div>
+            {/* 장소를 새로 골랐으면 대표 사진도 새 장소 것으로 자동 (등록 창과 같은 칸) */}
+            {editingPlan._pickedLat != null && (
+              <div className="col-span-3 pt-1">
+                <StorefrontPicker
+                  lat={editingPlan._pickedLat} lng={editingPlan._pickedLng}
+                  name={S(editingPlan.place)} localName={S(editingPlan.localName)}
+                  localLang={LOCAL_LANG_BY_COUNTRY[country] || (country && country !== '한국' ? 'en' : '')}
+                  googlePlaceId={editingPlan._googlePlaceId}
+                  value={editingPlan._storefront || null}
+                  onChange={(v) => setEditingPlan(prev => prev ? ({ ...prev, _storefront: v }) : prev)}
+                  isDarkMode={isDarkMode} textMuted={textMuted}
+                />
+              </div>
+            )}
           </section>
 
           {/* 국가 / 지역 */}
@@ -348,7 +368,37 @@ const EditPlanModal = ({
 
         {/* Bottom Sticky Action Bar */}
         <div className={`shrink-0 ${isDarkMode ? 'bg-slate-800/95 border-slate-700' : 'bg-white/95 border-slate-100'} backdrop-blur-xl border-t px-4 py-3`}>
-          <button onClick={() => {
+          <button disabled={sfSaving} onClick={async () => {
+            // 새 장소를 골랐으면: 이전 장소의 대표 사진은 빼고, 새로 고른 대표 사진을 (직접 올린 사진 뒤에) 넣는다
+            let ep = editingPlan;
+            if (ep._pickedLat != null) {
+              const rests0 = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
+              const linked0 = findPinForPlan(openedRef.current.baseline || openedRef.current.snapshot || ep, rests0, Array.isArray(planTimeline) ? planTimeline : []);
+              const oldSfUrl = linked0 && linked0.storefront && linked0.storefront.url;
+              const userPhotos = (Array.isArray(ep.photos) ? ep.photos : (ep.photo ? [ep.photo] : [])).filter(u => u && u !== oldSfUrl);
+              let sf = ep._storefront;
+              if (sf && !sf.url && sf.full) {
+                setSfSaving(true);
+                if (storefrontNeedsCopy(sf)) showToast("🖼️ 대표 사진을 저장하는 중이에요…");
+                try { sf = await copyStorefrontPhoto(supabaseClient, appUserId, activeTripId, sf); }
+                catch (err) { console.warn('[대표 사진 저장 실패]', err && err.message); showToast("대표 사진은 저장하지 못했어요. 일정만 저장할게요."); sf = null; }
+                finally { setSfSaving(false); }
+              }
+              const finalImgs = sf && sf.url ? [...userPhotos.filter(u => u !== sf.url), sf.url] : userPhotos;
+              ep = { ...ep, photos: finalImgs, photo: finalImgs[0] || "", _sfFinal: sf && sf.url ? sf : null };
+            }
+            saveEdited(ep);
+          }} className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-500/25 transition-all flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-60">
+            <PenLine className="w-[18px] h-[18px]" />
+            <span>{sfSaving ? '사진 저장 중…' : '수정 내용 저장'}</span>
+          </button>
+        </div>
+      </div>
+      </div>
+    </div>
+  );
+
+  function saveEdited(editingPlan) {
             const finalCountry = editingPlan.countrySelect === "수동입력" ? editingPlan.manualCountry : editingPlan.countrySelect;
             const finalRegion = editingPlan.regionSelect === "수동입력" ? editingPlan.manualRegion : editingPlan.regionSelect;
             // [저장 로직 수정] 테마(theme) 데이터가 핀 목록에도 저장되도록 강제 연동합니다.
@@ -366,7 +416,14 @@ const EditPlanModal = ({
             // 최신 일정 위에 덮어 저장한다. 예전엔 창을 열 때 복사해 둔 일정 전체를 저장해서, 그 사이
             // 공유 상대가 바꾼 칸(예: 메모)이 내 옛 값으로 소리 없이 되돌아갔다.
             // 화면 전용 칸(국가/지역 선택 상태, 랜드마크 체크)은 일정 데이터에 넣지 않는다.
-            const UI_ONLY_KEYS = ['countrySelect', 'manualCountry', 'regionSelect', 'manualRegion', 'isLandmark', '_pickedLat', '_pickedLng'];
+            const UI_ONLY_KEYS = ['countrySelect', 'manualCountry', 'regionSelect', 'manualRegion', 'isLandmark', '_pickedLat', '_pickedLng', '_storefront', '_sfFinal', '_googlePlaceId'];
+            // 새 장소를 골랐을 때 핀에 같이 넣을 대표 사진 출처·구글 장소 번호
+            const pickedNew = editingPlan._pickedLat != null;
+            const sfMeta = editingPlan._sfFinal ? {
+              url: S(editingPlan._sfFinal.url), mapillaryId: S(editingPlan._sfFinal.mapillaryId), author: S(editingPlan._sfFinal.author), capturedAt: editingPlan._sfFinal.capturedAt || 0,
+              ...(editingPlan._sfFinal.source ? { source: S(editingPlan._sfFinal.source) } : {}), ...(editingPlan._sfFinal.link ? { link: S(editingPlan._sfFinal.link) } : {}),
+              ...(editingPlan._sfFinal.photoName ? { photoName: S(editingPlan._sfFinal.photoName) } : {}),
+            } : null;
             const original = openedRef.current.snapshot || editingPlan;
             const changed = {};
             Object.keys(edited).forEach(k => {
@@ -399,13 +456,20 @@ const EditPlanModal = ({
                 ...(editingPlan._pickedLat != null ? { lat: editingPlan._pickedLat, lng: editingPlan._pickedLng } : {}),
                 localName: editingPlan.localName ? S(editingPlan.localName) : updatedRests[matchedIndex].localName,
                 signature: editingPlan.features ? S(editingPlan.features) : updatedRests[matchedIndex].signature,
-                img: editingPlan.photo ? S(editingPlan.photo) : updatedRests[matchedIndex].img,
-                imgs: Array.isArray(editingPlan.photos) && editingPlan.photos.length > 0 ? editingPlan.photos : updatedRests[matchedIndex].imgs,
+                // 새 장소를 골랐으면 사진도 새 장소 것만 (이전 장소 사진이 남지 않게, 비어 있어도 그대로)
+                img: editingPlan.photo ? S(editingPlan.photo) : (pickedNew ? "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80" : updatedRests[matchedIndex].img),
+                imgs: pickedNew ? (Array.isArray(editingPlan.photos) ? editingPlan.photos : []) : (Array.isArray(editingPlan.photos) && editingPlan.photos.length > 0 ? editingPlan.photos : updatedRests[matchedIndex].imgs),
                 isAccommodation: editingPlan.isAccommodation || editingPlan.theme === "숙소",
                 isLandmark: Boolean(editingPlan.isLandmark),
                 theme: editingPlan.theme || "기타"
               };
               // 일정 사진에서 가게 앞 사진을 지웠으면 핀의 출처 정보도 같이 지운다
+              if (sfMeta) updatedRests[matchedIndex].storefront = sfMeta;
+              if (pickedNew) {
+                if (editingPlan._googlePlaceId) updatedRests[matchedIndex].googlePlaceId = S(editingPlan._googlePlaceId);
+                else delete updatedRests[matchedIndex].googlePlaceId;
+                delete updatedRests[matchedIndex].kakaoPlaceUrl;
+              }
               const sf = updatedRests[matchedIndex].storefront;
               if (sf && !(updatedRests[matchedIndex].imgs || []).includes(sf.url)) delete updatedRests[matchedIndex].storefront;
               setCurrentRestaurants(updatedRests);
@@ -423,6 +487,8 @@ const EditPlanModal = ({
                 imgs: Array.isArray(planData.photos) ? planData.photos : [],
                 rating: 0, isAccommodation: Boolean(planData.isAccommodation), isLandmark: Boolean(editingPlan.isLandmark),
                 theme: S(planData.theme) || "기타",
+                ...(sfMeta ? { storefront: sfMeta } : {}),
+                ...(editingPlan._googlePlaceId ? { googlePlaceId: S(editingPlan._googlePlaceId) } : {}),
               };
               planData.pinId = newPinId;
               updatedTimeline = updatedTimeline.map(p => p && S(p.id) === S(editingPlan.id) ? planData : p);
@@ -448,15 +514,7 @@ const EditPlanModal = ({
             showToast(someoneElseChanged && Object.keys(changed).length > 0
               ? "📝 저장했어요. 그 사이 다른 사람이 고친 내용과 합쳐서 저장했어요."
               : "일정이 예쁘게 수정됐어요! 📝");
-          }} className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-500/25 transition-all flex items-center justify-center gap-1.5 active:scale-95">
-            <PenLine className="w-[18px] h-[18px]" />
-            <span>수정 내용 저장</span>
-          </button>
-        </div>
-      </div>
-      </div>
-    </div>
-  );
+  }
 };
 
 export default EditPlanModal;
