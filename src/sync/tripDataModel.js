@@ -107,6 +107,7 @@ export function cleanRestaurantItem(r) {
     // 가게 앞 사진(Mapillary 거리 사진을 우리 저장소에 복사한 것) — 출처 표시(찍은 사람·날짜)에 필요. 사진 자체는 imgs에도 들어 있다.
     ...(r.storefront && r.storefront.url ? { storefront: {
       url: S(r.storefront.url), mapillaryId: S(r.storefront.mapillaryId), author: S(r.storefront.author), capturedAt: r.storefront.capturedAt || 0,
+      ...(r.storefront.source ? { source: S(r.storefront.source) } : {}), ...(r.storefront.link ? { link: S(r.storefront.link) } : {}),
     } } : {}),
     // [신규] 예전엔 핀에 updatedAt이 아예 없어서 충돌 해결(누구 수정이 최신인지 비교)이 불가능했다.
     updatedAt: r.updatedAt || 0,

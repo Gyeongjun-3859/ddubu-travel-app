@@ -91,12 +91,16 @@ export async function copyStorefrontPhoto(supabaseClient, appUserId, folderId, c
     url = data && data.publicUrl;
   }
   if (!url) throw new Error('storefront-upload');
-  return { url: String(url), mapillaryId: cand.mapillaryId, author: cand.author, capturedAt: cand.capturedAt };
+  return {
+    url: String(url), source: cand.source || 'mapillary', mapillaryId: cand.mapillaryId || '',
+    author: cand.author || '', capturedAt: cand.capturedAt || 0, link: cand.link || '',
+  };
 }
 
 // 사진 아래 출처 표시용 ("Mapillary · 찍은 사람 · 2025.04")
 export function storefrontCredit(sf) {
   if (!sf) return '';
+  if (sf.source === 'wiki') return ['위키백과', sf.author].filter(Boolean).join(' · ');
   const dt = sf.capturedAt ? new Date(sf.capturedAt) : null;
   const when = dt && !isNaN(dt) ? `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, '0')}` : '';
   return ['Mapillary', sf.author, when].filter(Boolean).join(' · ');
@@ -111,5 +115,8 @@ export function setStorefrontCredits(pins) {
   });
 }
 export const getStorefrontByUrl = (url) => creditByUrl.get(String(url || '')) || null;
+
+// 출처 링크 — 위키백과 사진은 그 문서, 거리 사진은 Mapillary 사진 페이지
+export const photoSourceLink = (sf) => (sf && sf.link) ? sf.link : mapillaryPhotoLink(sf && sf.mapillaryId);
 
 export const mapillaryPhotoLink = (id) => `https://www.mapillary.com/app/?pKey=${encodeURIComponent(id)}&focus=photo`;

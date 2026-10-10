@@ -7,6 +7,7 @@ import TransitConnector from './TransitConnector';
 import TransitRouteViewModal from './TransitRouteViewModal';
 import LanguageModal from './LanguageModal';
 import TripImg from './TripImg';
+import { getStorefrontByUrl } from '../utils/mapillary';
 
 const THEME_DEFAULT_PHOTO = {
   '식당': 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=400&q=80',
@@ -158,6 +159,7 @@ const DashboardTab = ({
                       onClick={plan.photo ? (e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); } : undefined}
                     />
                     <span className={`absolute left-2 top-2 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white ${tag.bg}`}>{tag.label}</span>
+                    {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{getStorefrontByUrl(plan.photo).source === 'wiki' ? '📖 위키백과' : '📷 Mapillary'}</span>}
                     {(plan.isAccommodation || plan.time !== '99:99') && (
                       <span className="absolute right-2 top-2 rounded-md bg-white/85 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 backdrop-blur-sm">
                         {plan.isAccommodation ? '숙박' : S(plan.time)}
@@ -237,8 +239,8 @@ const DashboardTab = ({
                         )}
                       </div>
                       <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex gap-1 rounded-md border shadow-sm ${isDarkMode ? 'bg-slate-700/95 border-slate-600' : 'bg-white/95 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto'}`}>
-                        <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="p-1 text-slate-500 hover:text-[#007AFF]"><span className="text-[11px]">✏️</span></button>
-                        <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="p-1 text-slate-500 hover:text-rose-500"><Trash2 className="w-3 h-3 inline" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="p-1 text-slate-500 hover:text-[#007AFF]"><span className="text-[11px]">✏️</span></button>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="p-1 text-slate-500 hover:text-rose-500"><Trash2 className="w-3 h-3 inline" /></button>
                       </div>
                     </div>
                   </React.Fragment>

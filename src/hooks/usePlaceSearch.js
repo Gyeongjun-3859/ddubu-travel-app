@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import { S, themeFromGoogleTypes, themeFromKakaoCategory } from '../utils/helpers';
 import { resolvePlaceArea } from '../utils/placeArea';
-import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation, LOCAL_LANG_BY_COUNTRY, translateToKorean } from '../utils/googlePlaces';
+import { hasGooglePlacesKey, newPlacesSessionToken, googleAutocomplete, googlePlaceLocation, LOCAL_LANG_BY_COUNTRY, translateToKorean, translateText } from '../utils/googlePlaces';
+import { codeFromCountryName } from '../utils/placeArea';
 
 const HANGUL_RE = /[가-힣]/;
 
@@ -68,16 +69,28 @@ export function usePlaceSearch({ isKakaoMap, isKakaoMapLoaded, country, showToas
     };
     // 해외는 구글 Places 우선, 키가 없거나 실패/결과 없음이면 OSM 검색으로 대체
     if (!hasGooglePlacesKey()) { runNominatim(); return; }
-    googleAutocomplete(query.trim(), sessionRef.current, 'ko', centerOf(biasPins))
-      .then(list => {
-        if (reqId !== reqRef.current) return;
-        if (list.length > 0) show(list);
-        else runNominatim();
-      })
-      .catch(e => {
-        console.warn('[구글 장소 검색 실패 → OSM 대체]', e && e.message);
-        if (reqId === reqRef.current) runNominatim();
-      });
+    // ① 여행 나라 안에서 먼저 (상하이 여행에서 '동방명주'를 치면 한국 식당이 같이 나오던 문제)
+    // ② 없으면 전 세계에서 ③ 그래도 없고 한국어로 쳤으면 영어로 번역해서 다시 ('콕토베' → 'Kok Tobe')
+    const regionCode = country && country !== '한국' ? codeFromCountryName(country) : '';
+    const center = centerOf(biasPins);
+    const q0 = query.trim();
+    (async () => {
+      let list = [];
+      if (regionCode) list = await googleAutocomplete(q0, sessionRef.current, 'ko', center, [regionCode]).catch(() => []);
+      if (list.length === 0) list = await googleAutocomplete(q0, sessionRef.current, 'ko', center);
+      if (list.length === 0 && /[가-힣]/.test(q0)) {
+        const en = await translateText(q0, 'en').catch(() => '');
+        if (en && en.toLowerCase() !== q0.toLowerCase()) {
+          if (regionCode) list = await googleAutocomplete(en, sessionRef.current, 'ko', center, [regionCode]).catch(() => []);
+          if (list.length === 0) list = await googleAutocomplete(en, sessionRef.current, 'ko', center);
+        }
+      }
+      if (reqId !== reqRef.current) return;
+      if (list.length > 0) show(list); else runNominatim();
+    })().catch(e => {
+      console.warn('[구글 장소 검색 실패 → OSM 대체]', e && e.message);
+      if (reqId === reqRef.current) runNominatim();
+    });
   };
 
   // 입력이 바뀔 때마다(350ms 쉬면) 검색

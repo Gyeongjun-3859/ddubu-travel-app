@@ -4,6 +4,7 @@ import { S, compressAndStoreImage, isExpenseRecord, findPinForPlan } from '../ut
 import { usePlaceSearch } from '../hooks/usePlaceSearch';
 import TripImg from './TripImg';
 import StorefrontPicker from './StorefrontPicker';
+import { LOCAL_LANG_BY_COUNTRY } from '../utils/googlePlaces';
 
 const THEME_OPTIONS = [
   { value: '식당', emoji: '🍽️', label: '식당 · 맛집' },
@@ -404,10 +405,12 @@ const AddPlaceModal = ({
             />
           </section>
 
-          {/* 5-1. 가게 앞 사진 (근처 거리 사진 중 고르기) — 직접 올린 사진이 없으면 이게 대표 사진 */}
+          {/* 5-1. 대표 사진 (위키백과 대표 사진 → 근처 거리 사진 순으로 자동 선택) — 직접 올린 사진이 없으면 이게 대표 */}
           {typeof setNewManualStorefront === 'function' && (
             <StorefrontPicker
               lat={clickedLocation?.lat} lng={clickedLocation?.lng}
+              name={newManualPlaceName} localName={newManualLocalName}
+              localLang={LOCAL_LANG_BY_COUNTRY[country] || (country && country !== '한국' ? 'en' : '')}
               value={newManualStorefront} onChange={setNewManualStorefront}
               isDarkMode={isDarkMode} textMuted={textMuted}
             />

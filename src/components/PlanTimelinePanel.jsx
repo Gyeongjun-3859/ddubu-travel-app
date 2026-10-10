@@ -3,6 +3,7 @@ import { Trash2, Navigation, Star } from 'lucide-react';
 import { S, getAccommodationTransitFrom, openGoogleMapsNav, openExternalUrl, isExpenseRecord, findPinForPlan, planDayNum } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 import TripImg from './TripImg';
+import { getStorefrontByUrl } from '../utils/mapillary';
 
 const THEME_EMOJI = {
   '식당': '🍽️', '디저트': '🍰', '관광지': '📸', '쇼핑': '🛍️', '숙소': '🏠', '카페': '☕', '기타': '📍',
@@ -49,8 +50,10 @@ const PlanTimelinePanel = ({
   );
   const actionBar = (plan, isActive) => (
     <div className={`absolute right-2 top-2 z-10 flex gap-0.5 rounded-md border shadow-sm transition-opacity duration-200 ${isDarkMode ? 'bg-slate-700/95 border-slate-600' : 'bg-white/95 border-slate-200'} ${isActive ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto'}`}>
-      <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleEditPlanClick(plan); }} className="p-1 text-slate-500 hover:text-[#007AFF]"><span className="text-[11px]">✏️</span></button>
-      <button onClick={(e) => { if (!isActive) return; e.stopPropagation(); handleDeletePlan(plan.id); }} className="p-1 text-slate-500 hover:text-rose-500"><Trash2 className="w-3 h-3 inline" /></button>
+      {/* 버튼이 보일 때(휴대폰: 카드를 눌러 선택 / 넓은 화면: 마우스를 올림) 바로 동작 — 예전엔 넓은 화면에서도 카드를 먼저
+          선택해야 해서 첫 클릭이 무시됐다(5차 P2). 휴대폰에선 선택 전엔 버튼이 안 보이고 눌리지도 않아 실수로 눌릴 일 없음 */}
+      <button onClick={(e) => { e.stopPropagation(); handleEditPlanClick(plan); }} className="p-1 text-slate-500 hover:text-[#007AFF]"><span className="text-[11px]">✏️</span></button>
+      <button onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }} className="p-1 text-slate-500 hover:text-rose-500"><Trash2 className="w-3 h-3 inline" /></button>
     </div>
   );
 
@@ -96,8 +99,9 @@ const PlanTimelinePanel = ({
                   className={`group relative flex cursor-pointer flex-row ${card} ${isActive ? 'border-[#007AFF]' : ''}`}
                 >
                   {plan.photo ? (
-                    <div className="w-1/3 h-24 shrink-0 overflow-hidden bg-slate-100 dark:bg-slate-700" onClick={(e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); }}>
+                    <div className="relative w-1/3 h-24 shrink-0 overflow-hidden bg-slate-100 dark:bg-slate-700" onClick={(e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); }}>
                       <TripImg src={plan.photo} alt="" className="h-full w-full object-cover" />
+                      {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{getStorefrontByUrl(plan.photo).source === 'wiki' ? '📖 위키백과' : '📷 Mapillary'}</span>}
                     </div>
                   ) : (
                     <div className="flex w-1/3 h-24 shrink-0 items-center justify-center bg-[#007AFF]/10 text-2xl">🏠</div>
@@ -173,6 +177,8 @@ const PlanTimelinePanel = ({
                       <div className="relative w-1/3 h-28 shrink-0 overflow-hidden bg-slate-100 dark:bg-slate-700" onClick={(e) => { e.stopPropagation(); openPhotoViewer(plan.photos && plan.photos.length > 0 ? plan.photos : [plan.photo]); }}>
                         <TripImg src={plan.photo} alt="" className="h-full w-full object-cover" />
                         {plan.photos && plan.photos.length > 1 && <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 py-0.5 text-[9px] font-bold text-white">📸 {plan.photos.length}</span>}
+                        {/* 자동으로 넣은 대표 사진이면 출처를 작게 (위키백과·Mapillary 자유 이용 사진 조건) */}
+                        {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{getStorefrontByUrl(plan.photo).source === 'wiki' ? '📖 위키백과' : '📷 Mapillary'}</span>}
                       </div>
                       <div className="flex flex-1 flex-col justify-center gap-0.5 p-2.5">
                         <h3 className={`text-[14px] font-semibold leading-tight ${textMain}`}>{S(plan.place)}</h3>

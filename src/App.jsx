@@ -8,7 +8,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTR
 import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, themeFromGoogleTypes, isExpenseRecord, planDayNum, isArchivedPin, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
-import { hasGooglePlacesKey, googleNearbyPlace } from './utils/googlePlaces';
+import { hasGooglePlacesKey, googleNearbyPlace, googlePlaceNameIn, LOCAL_LANG_BY_COUNTRY } from './utils/googlePlaces';
 import { copyStorefrontPhoto, setStorefrontCredits } from './utils/mapillary';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
@@ -78,6 +78,18 @@ function getSupabaseSingleton() {
 
 // 이 일정이 Day d에 해당하는지 — 숙소는 연박 Day(accommodationDays)까지 포함한다.
 // (예전엔 일정의 첫날(day)만 봐서 D1~D3 숙소가 핀 목록·지도의 Day 2/3 필터에 안 잡혔다)
+// 카카오 지도를 누른 자리 근처(30m) 장소 중 하나 — 분류(카페·식당·관광지…)가 있는 가게를 먼저 고른다.
+// (예전엔 가장 가까운 것을 골라 스타벅스 아이콘을 눌러도 그 건물 이름이 잡혔다 — 5차)
+function pickKakaoNearby(places, lat, lng) {
+  const near = (Array.isArray(places) ? places : []).map(p => {
+    const dy = (parseFloat(p.y) - lat) * 111000;
+    const dx = (parseFloat(p.x) - lng) * 111000 * Math.cos(lat * Math.PI / 180);
+    return { p, d: Math.sqrt(dx * dx + dy * dy) };
+  }).filter(o => o.d <= 30).sort((a, b) => a.d - b.d);
+  const withCategory = near.find(o => o.p.category_group_code);
+  return (withCategory || near[0] || {}).p || null;
+}
+
 function planCoversDay(plan, d) {
   const day = parseInt(d);
   if (!plan || isNaN(day)) return false;
@@ -145,6 +157,16 @@ const MainApp = () => {
   const [supabaseClient, setSupabaseClient] = useState(null);
   const [isDbLoaded, setIsDbLoaded] = useState(false);
   const [appUserId, setAppUserId] = useState(null);
+  // 로그아웃 없이 다른 계정으로 로그인하면(세션이 끝난 뒤 바로 로그인 등) 이전 계정의 여행 캐시가 이 기기에 남았다(5차 P3).
+  // 마지막 로그인 계정을 기억해 두고, 다른 계정이 들어오면 이전 계정 캐시를 지운다. (같은 계정이면 오프라인 대기 변경을 지키려고 그대로)
+  useEffect(() => {
+    if (!appUserId || appUserId === 'Guest') return;
+    try {
+      const last = localStorage.getItem('my_travel_last_user');
+      if (last && last !== appUserId) clearAccountTripCache();
+      localStorage.setItem('my_travel_last_user', appUserId);
+    } catch (e) {}
+  }, [appUserId]);
   
   const [showIdSetup, setShowIdSetup] = useState(true);
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -200,6 +222,8 @@ const MainApp = () => {
   const [maxDay, setMaxDay] = useState(4);
   const [dashboardDay, setDashboardDay] = useState(1);
   const [planViewDay, setPlanViewDay] = useState(1);
+  // 여행을 바꾸거나 새로 만들면 일정 탭은 D1부터 (직전 여행에서 보던 '📦 보관함' 칩이 남아 일정 추가가 보관함으로 열렸다 — 5차 P1)
+  useEffect(() => { setPlanViewDay(1); }, [activeTripId]);
 
 
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
@@ -212,6 +236,8 @@ const MainApp = () => {
   const [globalManualRegion, setGlobalManualRegion] = useState("");
   // 국가별 특화 UI(꿀팁 버튼, 준비물 추천, 국내 전용 기능 숨김 등)에서 쓸 확정 국가명
   const resolvedGlobalCountry = globalPlanCountry === '수동입력' ? globalManualCountry : globalPlanCountry;
+  const resolvedCountryRef = useRef(resolvedGlobalCountry); // 오래 살아 있는 지도 클릭 핸들러에서 지금 여행 국가를 읽기 위한 사본
+  resolvedCountryRef.current = resolvedGlobalCountry;
   // '수동입력'을 고른 경우 실제로 적은 지역명 (교통편 등 저장할 때 '수동입력'이라는 글자가 들어가지 않게)
   const resolvedGlobalRegion = globalPlanRegion === '수동입력' ? globalManualRegion : globalPlanRegion;
   const isDomesticTrip = resolvedGlobalCountry === '한국';
@@ -713,6 +739,7 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
         setGlobalPlanRegion(cityName);
         setGlobalManualCountry("");
         setGlobalManualRegion("");
+        return matchedCountry; // 지역 목록으로 확실히 알아낸 국가 — 부르는 쪽에서 여행 국가로 저장
     } else {
         setGlobalPlanRegion("수동입력");
         setGlobalManualRegion(cityName);
@@ -1597,12 +1624,12 @@ async function confirmDeleteTrip() {
     if (sf && !sf.url && sf.full) {
       if (storefrontSavingRef.current) return; // 두 번 누름 방지
       storefrontSavingRef.current = true;
-      showToast("🏪 가게 앞 사진을 저장하는 중이에요…");
+      showToast("🖼️ 대표 사진을 저장하는 중이에요…");
       try {
         sf = await copyStorefrontPhoto(supabaseClient, appUserId, activeTripId, sf);
       } catch (err) {
         console.warn('[가게 앞 사진 저장 실패]', err && err.message);
-        showToast("가게 앞 사진은 저장하지 못했어요. 장소만 저장할게요.");
+        showToast("대표 사진은 저장하지 못했어요. 장소만 저장할게요.");
         sf = null;
       } finally {
         storefrontSavingRef.current = false;
@@ -1658,7 +1685,10 @@ async function confirmDeleteTrip() {
       signature: newManualFeature ? S(newManualFeature) : (reusedPin?.signature ? S(reusedPin.signature) : "직접 추가한 장소"),
       img: finalImgs[0] || "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
       imgs: finalImgs,
-      ...(storefront ? { storefront: { url: storefront.url, mapillaryId: S(storefront.mapillaryId), author: S(storefront.author), capturedAt: storefront.capturedAt || 0 } } : {}),
+      ...(storefront ? { storefront: {
+        url: storefront.url, mapillaryId: S(storefront.mapillaryId), author: S(storefront.author), capturedAt: storefront.capturedAt || 0,
+        ...(storefront.source ? { source: S(storefront.source) } : {}), ...(storefront.link ? { link: S(storefront.link) } : {}),
+      } } : {}),
       rating: 0, isAccommodation: Boolean(newManualIsAccommodation) || Boolean(reusedPin?.isAccommodation), isLandmark: Boolean(newManualIsLandmark) || Boolean(reusedPin?.isLandmark),
       theme: ((reusedPin && (!newManualTheme || newManualTheme === '기타')) ? S(reusedPin.theme) : S(newManualTheme)) || "기타"
     };
@@ -3104,6 +3134,7 @@ function deletePackingItem(id) {
       // 다시 맞추면, 국가만 고르고 지역은 아직 안 고른 상태에서 일정을 추가할 때 고른 국가가 지워진다.
       const lastSync = lastCitySyncRef.current;
       const tripCountry = view.trip_country ? S(view.trip_country) : "";
+      let backfillCountry = null;
       if (lastSync.tripId !== tripId || lastSync.cName !== cName || S(lastSync.country) !== tripCountry) {
         lastCitySyncRef.current = { tripId, cName, country: tripCountry };
         if (tripCountry) {
@@ -3114,7 +3145,10 @@ function deletePackingItem(id) {
           // 저장되던 문제 대응 — 비워서 사용자가 직접 고르게 한다.
           setGlobalPlanCountry(""); setGlobalPlanRegion(""); setGlobalManualCountry(""); setGlobalManualRegion("");
         } else {
-          syncCountryRegionFromCityName(cName, view.plan_timeline);
+          const derived = syncCountryRegionFromCityName(cName, view.plan_timeline);
+          // 국가를 저장하기 전에 만든 옛 여행: 지역 목록으로 알아낸 국가를 여행 국가로 한 번 저장해 둔다(5차)
+          // (보기 전용인지는 아래에서 판정하므로 거기서 저장)
+          if (derived && !isGuestUser) backfillCountry = derived;
         }
       }
       setTravelStartDate(view.travel_start_date ? S(view.travel_start_date) : new Date().toISOString().split('T')[0]);
@@ -3143,6 +3177,10 @@ function deletePackingItem(id) {
         const ro = !isGuestUser && !ownerOfTrip && viewers.includes(S(appUserId));
         readOnlyRef.current = ro;
         setIsReadOnlyTrip(ro);
+        if (backfillCountry && !ro) {
+          lastCitySyncRef.current = { tripId, cName, country: backfillCountry };
+          engine.patch(tripId, { trip_country: backfillCountry });
+        }
       }
       if (!isGuestUser && Array.isArray(view.shared_users)) {
         setSharedUsers(view.shared_users);
@@ -3241,6 +3279,13 @@ function deletePackingItem(id) {
                 setPinLinkPlanId("");
                 setNewManualTime("");
                 setIsAddPlaceModalOpen(true);
+                // 현지어 이름: 근처 검색은 한국어로 받아서 영어·번역 이름이 들어갔다 → 그 나라 말 이름을 한 번 더 받아 채운다
+                const localLang = LOCAL_LANG_BY_COUNTRY[resolvedCountryRef.current];
+                if (place && place.id && localLang) {
+                  googlePlaceNameIn(place.id, localLang)
+                    .then(local => { if (local && local !== place.name) setNewManualLocalName(local); })
+                    .catch(err => console.warn('[현지어 이름 조회 실패]', err && err.message));
+                }
               };
               box.appendChild(btn);
             }
@@ -3479,11 +3524,7 @@ function deletePackingItem(id) {
                 ? (result[0].road_address?.address_name || result[0].address?.address_name || '') : '';
               ps.keywordSearch(addr || '장소', (places, pStatus) => {
                 const nearby = (pStatus === kakao.maps.services.Status.OK && places)
-                  ? places.find(p => {
-                      const dy = (parseFloat(p.y) - latlng.getLat()) * 111000;
-                      const dx = (parseFloat(p.x) - latlng.getLng()) * 111000 * Math.cos(latlng.getLat() * Math.PI / 180);
-                      return Math.sqrt(dx*dx + dy*dy) <= 30;
-                    }) : null;
+                  ? pickKakaoNearby(places, latlng.getLat(), latlng.getLng()) : null;
                 const pinId = movingPinIdRef.current;
                 const lat = latlng.getLat();
                 const lng = latlng.getLng();
@@ -3516,17 +3557,14 @@ function deletePackingItem(id) {
                 ? (result[0].road_address?.address_name || result[0].address?.address_name || '') : '';
               ps.keywordSearch(addr || '장소', (places, pStatus) => {
                 const nearby = (pStatus === kakao.maps.services.Status.OK && places)
-                  ? places.find(p => {
-                      const dy = (parseFloat(p.y) - latlng.getLat()) * 111000;
-                      const dx = (parseFloat(p.x) - latlng.getLng()) * 111000 * Math.cos(latlng.getLat() * Math.PI / 180);
-                      return Math.sqrt(dx*dx + dy*dy) <= 30;
-                    }) : null;
+                  ? pickKakaoNearby(places, latlng.getLat(), latlng.getLng()) : null;
                 const placeName = nearby ? nearby.place_name : '';
                 const clickLat = latlng.getLat();
                 const clickLng = latlng.getLng();
                 const btnId = `kakao-newpin-btn-${Date.now()}`;
                 const content = `<div style="padding:8px 10px;width:200px;max-width:200px;overflow:hidden;line-height:1.6;box-sizing:border-box;">
-                  <div style="font-size:12px;font-weight:900;color:#1e293b;margin-bottom:4px;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📍 ${escapeHtml(placeName || '선택한 위치')}</div>
+                  <div style="font-size:13px;font-weight:900;color:#1e293b;margin-bottom:2px;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📍 ${escapeHtml(placeName || '선택한 위치')}</div>
+                  ${nearby && nearby.category_name ? `<div style="font-size:10px;color:#6366f1;font-weight:700;margin-bottom:2px;">${escapeHtml(nearby.category_name.split(' > ').pop())}</div>` : ''}
                   ${nearby && nearby.road_address_name ? `<div style="font-size:10px;color:#555;margin-bottom:6px;">${escapeHtml(nearby.road_address_name)}</div>` : (addr ? `<div style="font-size:10px;color:#555;margin-bottom:6px;">${escapeHtml(addr)}</div>` : '')}
                   <button id="${btnId}" style="width:100%;padding:6px 0;background:#4f46e5;color:white;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">이 위치를 핀으로 지정 📌</button>
                 </div>`;
@@ -3558,11 +3596,7 @@ function deletePackingItem(id) {
               ? (result[0].road_address?.address_name || result[0].address?.address_name || '') : '';
             ps.keywordSearch(addr || '장소', (places, pStatus) => {
               if (pStatus !== kakao.maps.services.Status.OK || !places || places.length === 0) { infowindow.close(); return; }
-              const nearby = places.find(p => {
-                const dy = (parseFloat(p.y) - latlng.getLat()) * 111000;
-                const dx = (parseFloat(p.x) - latlng.getLng()) * 111000 * Math.cos(latlng.getLat() * Math.PI / 180);
-                return Math.sqrt(dx*dx + dy*dy) <= 30;
-              });
+              const nearby = pickKakaoNearby(places, latlng.getLat(), latlng.getLng());
               if (!nearby) { infowindow.close(); return; }
               const content = `<div style="padding:8px 10px;width:200px;max-width:200px;overflow:hidden;line-height:1.6;box-sizing:border-box;">
                 <div style="font-size:13px;font-weight:900;color:#1e293b;margin-bottom:2px;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(nearby.place_name)}</div>

@@ -14,6 +14,28 @@ export function countryNameFromCode(code) {
   try { return new Intl.DisplayNames(['ko'], { type: 'region' }).of(c) || ''; } catch (e) { return ''; }
 }
 
+// 앱의 국가 이름(한국어) → 나라 코드(ISO 2글자). 검색을 그 나라 안으로 먼저 좁힐 때 씀.
+let nameToCodeCache = null;
+export function codeFromCountryName(name) {
+  const n = String(name || '').trim();
+  if (!n) return '';
+  if (!nameToCodeCache) {
+    nameToCodeCache = {};
+    Object.entries(CODE_TO_COUNTRY).forEach(([code, nm]) => { nameToCodeCache[nm] = code; });
+    try {
+      const dn = new Intl.DisplayNames(['ko'], { type: 'region' });
+      const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      for (const a of A) for (const b of A) {
+        const code = a + b;
+        let nm = '';
+        try { nm = dn.of(code); } catch (e) { nm = ''; }
+        if (nm && nm !== code && !nameToCodeCache[nm]) nameToCodeCache[nm] = code;
+      }
+    } catch (e) {}
+  }
+  return nameToCodeCache[n] || '';
+}
+
 const baseName = (n) => String(n || '').trim().replace(SUFFIX_RE, '');
 
 // 이름 후보들(작은 단위 → 큰 단위) 중 그 나라 지역 목록과 맞는 첫 이름

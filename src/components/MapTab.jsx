@@ -30,6 +30,8 @@ const MapTab = ({
   mapContainerRef, kakaoMapContainerRef, mapInstanceRef,
 }) => {
   const [layersOpen, setLayersOpen] = useState(false);
+  // 테마·카카오 분류 칩 줄 펼침 — 화면이 낮으면(휴대폰) 접어서 지도를 넓게 (필터가 3줄이라 지도가 좁았다 — 5차 디자인)
+  const [filtersOpen, setFiltersOpen] = useState(() => { try { return window.innerHeight >= 820; } catch (e) { return true; } });
 
   // 해외(구글) 지도 장소 검색: 구글 Places 자동완성 후보 → 선택 시 지도 이동 + 임시 마커
   const [placeResults, setPlaceResults] = useState([]);
@@ -129,9 +131,15 @@ const MapTab = ({
             onClick={() => toggleMapDay('unlinked')}
             className={`px-3.5 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap shrink-0 border transition-all ${mapActiveDays.includes('unlinked') ? 'bg-slate-500 text-white border-slate-500' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-300')}`}
           >📦 보관함</button>
+          <button
+            onClick={() => setFiltersOpen(v => !v)}
+            className={`ml-auto px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap shrink-0 border transition-all ${(!isAllCats || (isKakaoMap && kakaoCategory.length > 0)) ? 'border-[#007AFF] text-[#007AFF]' : (isDarkMode ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-300')}`}
+            title={filtersOpen ? '분류 필터 접기' : '분류 필터 펼치기'}
+          >{filtersOpen ? '필터 ▴' : `필터 ▾${(!isAllCats || (isKakaoMap && kakaoCategory.length > 0)) ? ' •' : ''}`}</button>
         </div>
 
         {/* 카테고리 칩 (단일 선택) */}
+        {filtersOpen && (
         <div className="flex items-start gap-3 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
           <button onClick={() => setMyPinsThemeFilter(['all'])} className="flex flex-col items-center gap-1 shrink-0">
             <span
@@ -157,9 +165,10 @@ const MapTab = ({
             );
           })}
         </div>
+        )}
 
         {/* 카카오 장소 카테고리 (카카오맵일 때만) */}
-        {isKakaoMap && (
+        {isKakaoMap && filtersOpen && (
           <div className="flex gap-1.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
             <button
               onClick={() => setKakaoCategory([])}

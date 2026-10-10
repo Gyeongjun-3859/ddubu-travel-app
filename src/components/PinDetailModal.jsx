@@ -1,7 +1,7 @@
 import React from 'react';
 import { S, openGoogleMapsNav } from '../utils/helpers';
 import TripImg from './TripImg';
-import { hasMapillaryToken, storefrontCredit, mapillaryPhotoLink } from '../utils/mapillary';
+import { storefrontCredit, photoSourceLink } from '../utils/mapillary';
 
 const PinDetailModal = ({
   selectedPinInfo, setSelectedPinInfo, cardBg, setViewPhoto, handleCopyLocalName, openEditPinModal,
@@ -21,9 +21,9 @@ const PinDetailModal = ({
             <TripImg src={selectedPinInfo.img} className="w-full h-full object-cover" alt="" />
             {selectedPinInfo.isAccommodation && <div className="absolute top-3 left-3 bg-yellow-400 text-white text-xs font-bold px-2 py-1 rounded shadow-md">숙소</div>}
             {showCredit && (
-              <a href={mapillaryPhotoLink(sf.mapillaryId)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+              <a href={photoSourceLink(sf)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                 className="absolute bottom-0 inset-x-0 z-10 bg-gradient-to-t from-black/70 to-transparent text-white text-[10px] px-3 pt-5 pb-1.5 truncate">
-                🏪 가게 앞 · 📷 {storefrontCredit(sf)}
+                {sf.source === 'wiki' ? '📖' : '🏪 가게 앞 ·'} 📷 {storefrontCredit(sf)}
               </a>
             )}
             <div className="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors flex items-center justify-center">
@@ -48,10 +48,10 @@ const PinDetailModal = ({
           )}
 
           {/* 사진이 하나도 없는 핀: 근처 거리 사진에서 가게 앞 사진을 고를 수 있게 수정 창으로 */}
-          {!hasPhoto && hasMapillaryToken() && selectedPinInfo.lat && selectedPinInfo.lng && (
+          {!hasPhoto && selectedPinInfo.lat && selectedPinInfo.lng && (
             <button onClick={() => { openEditPinModal(selectedPinInfo); setSelectedPinInfo(null); }}
               className="w-full mt-4 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 py-2.5 rounded-xl font-bold text-xs transition-colors">
-              🏪 가게 앞 사진 고르기
+              🖼️ 대표 사진 넣기
             </button>
           )}
 

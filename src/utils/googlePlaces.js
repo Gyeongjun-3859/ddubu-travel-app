@@ -14,9 +14,11 @@ export const newPlacesSessionToken = () => {
 // 검색어(한국어·영어·러시아어·카자흐어 모두 가능) → 후보 최대 5개. 좌표는 후보를 고른 뒤 googlePlaceLocation으로 조회
 // biasCenter({lat,lng})를 주면 그 근처(반경 50km) 결과를 먼저 보여 준다 — 다른 나라 결과를 막지는 않음.
 // (예전엔 오사카 여행에서 '유니버설 스튜디오'를 치면 할리우드 지점이 1순위로 나왔다)
-export async function googleAutocomplete(input, sessionToken, languageCode = 'ko', biasCenter = null) {
+// regionCodes(['cn'] 등)를 주면 그 나라 결과만 — 여행 나라 안에서 먼저 찾을 때(없으면 부르는 쪽에서 전체로 다시)
+export async function googleAutocomplete(input, sessionToken, languageCode = 'ko', biasCenter = null, regionCodes = null) {
   if (!KEY) throw new Error('no-key');
   const body = { input, languageCode, sessionToken };
+  if (Array.isArray(regionCodes) && regionCodes.length > 0) body.includedRegionCodes = regionCodes.map(c => String(c).toLowerCase());
   if (biasCenter && isFinite(biasCenter.lat) && isFinite(biasCenter.lng)) {
     body.locationBias = { circle: { center: { latitude: biasCenter.lat, longitude: biasCenter.lng }, radius: 50000 } };
   }
@@ -84,7 +86,7 @@ async function googleNearbyPlaceRaw(lat, lng, radius, languageCode = 'ko') {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json', 'X-Goog-Api-Key': KEY,
-      'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.location,places.primaryType,places.primaryTypeDisplayName,places.types',
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.primaryTypeDisplayName,places.types',
     },
     body: JSON.stringify({
       maxResultCount: 1, rankPreference: 'DISTANCE', languageCode,
@@ -96,6 +98,7 @@ async function googleNearbyPlaceRaw(lat, lng, radius, languageCode = 'ko') {
   const p = Array.isArray(data.places) && data.places[0];
   if (!p || !p.displayName || !p.displayName.text) return null;
   return {
+    id: p.id || '',
     name: p.displayName.text,
     address: p.formattedAddress || '',
     lat: p.location ? p.location.latitude : NaN,
@@ -106,7 +109,32 @@ async function googleNearbyPlaceRaw(lat, lng, radius, languageCode = 'ko') {
   };
 }
 
-// 현지어 이름 → 한국어 번역 (Cloud Translation API v2, Places와 같은 키 사용)
+// 장소 id → 그 언어의 장소 이름 (지도를 눌러 만든 핀의 현지어 이름 채우기 — 근처 검색은 한국어로만 받아서)
+export async function googlePlaceNameIn(placeId, languageCode) {
+  if (!KEY || !placeId) throw new Error('no-key');
+  const res = await fetch(`${BASE}/places/${encodeURIComponent(placeId)}?languageCode=${languageCode}`, {
+    headers: { 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': 'displayName' },
+  });
+  if (!res.ok) throw new Error(`places-name-${res.status}`);
+  const data = await res.json();
+  return (data.displayName && data.displayName.text) || '';
+}
+
+// 글 → target 언어 번역 (Cloud Translation API v2, Places와 같은 키 사용)
+export async function translateText(text, target) {
+  if (!KEY) throw new Error('no-key');
+  const res = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(KEY)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ q: text, target, format: 'text' }),
+  });
+  if (!res.ok) throw new Error(`translate-${res.status}`);
+  const data = await res.json();
+  const t = data && data.data && Array.isArray(data.data.translations) && data.data.translations[0];
+  return t && t.translatedText ? String(t.translatedText).trim() : '';
+}
+
+// 현지어 이름 → 한국어 번역
 const HANGUL_RE = /[가-힣]/;
 export async function translateToKorean(text) {
   if (!KEY) throw new Error('no-key');

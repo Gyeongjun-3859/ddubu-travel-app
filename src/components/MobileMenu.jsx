@@ -30,7 +30,10 @@ const MobileMenu = ({
 
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
           <div>
-<h3 className={`text-xs font-black mb-3 px-1 flex items-center gap-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>지금 여행중 <Plane className="w-3 h-3" /> <span className="ml-2 inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span></h3>
+<h3 className={`text-xs font-black mb-3 px-1 flex items-center gap-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>지금 여행중 <Plane className="w-3 h-3" /> <span className="ml-2 inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+  {/* 화면이 낮거나 여행이 많으면 맨 아래 '+ 새 여행' 버튼이 안 보여서, 제목 줄에도 둔다 (5차 디자인) */}
+  <button onClick={openAddTripModal} className={`ml-auto px-2 py-0.5 rounded-md text-[10px] font-bold border transition-colors ${isDarkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>+ 새 여행</button>
+</h3>
               <div className="space-y-1.5">
                 {trips.filter(t => !t.archived).map(t => {
                   // [고도화된 여행 완료 자동 감지 로직]
