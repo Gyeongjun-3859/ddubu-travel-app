@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Languages as LanguagesIcon, Volume2 } from 'lucide-react';
-import { PHRASEBOOK } from '../utils/phrasebook';
+import { PHRASEBOOK, NO_AUDIO_LANGS, phraseAudioFile } from '../utils/phrasebook';
 
 const PHRASES = [
   { ko: '안녕하세요', label: '인사' },
@@ -19,20 +19,25 @@ const PHRASES = [
 let activeUtterance = null;
 let activeAudio = null;
 
-// 기기에 설치된 음성이 없을 때 쓰는 대체 재생: 구글 번역 TTS(무료, 비공식 엔드포인트)로 mp3를 받아 재생.
-// 일부 언어(카자흐어 등)는 이 엔드포인트도 지원하지 않아 실패할 수 있음.
-function playGoogleTts(text, code) {
+// mp3 주소를 재생 — 재생이 시작되면 성공 (끝날 때까지 기다리지 않는다)
+function playAudioUrl(url) {
   return new Promise((resolve, reject) => {
     try {
       if (activeAudio) { activeAudio.pause(); activeAudio = null; }
-      const audio = new Audio(`https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${code}&client=tw-ob`);
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      const audio = new Audio(url);
       activeAudio = audio;
-      audio.onended = resolve;
-      audio.onerror = () => reject(new Error('google-tts-failed'));
-      audio.play().catch(reject);
+      audio.onerror = () => reject(new Error('audio-failed'));
+      audio.play().then(resolve, reject);
     } catch (e) { reject(e); }
   });
 }
+
+// 구글 번역 음성은 우리 사이트에서 바로 부르면 거절(404)해서, 서버 함수(/api/tts)가 대신 받아 준다.
+// 서버 함수는 배포 사이트에만 있어서 안드로이드 앱·로컬 개발 화면에서는 배포 사이트 주소로 부른다.
+const SITE = 'https://ddubu-travel-app.vercel.app';
+const apiBase = () => { try { return window.location.origin === SITE ? '' : SITE; } catch (e) { return SITE; } };
+const ttsUrl = (text, code) => `${apiBase()}/api/tts?tl=${encodeURIComponent(code)}&q=${encodeURIComponent(text)}`;
 
 // languageList: [{ code, english, native }, ...] — 한 국가에 실제로 통용되는 언어가 여러 개면
 // (예: 카자흐스탄=카자흐어+러시아어) 전부 넘어옴. 첫 번째가 기본 선택.
@@ -57,6 +62,8 @@ const LanguageModal = ({ isOpen, onClose, isDarkMode, textMain, countryName, lan
 
   // 직접 정리한 회화집이 있는 언어(러시아어·카자흐어)는 기계 번역 없이 그걸 보여 준다
   const book = languageInfo ? PHRASEBOOK[languageInfo.code] : null;
+  // 카자흐어처럼 소리가 안 나오는 언어는 🔊를 숨기고 읽는 법을 보게 한다
+  const noAudio = Boolean(languageInfo && NO_AUDIO_LANGS.includes(languageInfo.code));
 
   useEffect(() => {
     if (!isOpen || !languageInfo || PHRASEBOOK[languageInfo.code]) return;
@@ -90,9 +97,14 @@ const LanguageModal = ({ isOpen, onClose, isDarkMode, textMain, countryName, lan
     window.speechSynthesis.speak(utter);
   };
 
-  const speak = async (text) => {
+  const speak = async (text, fromBook = false) => {
     setSpeakError('');
     if (!text || !languageInfo) return;
+
+    // 0순위: 회화집 문장은 앱에 넣어 둔 소리 파일 (인터넷 없어도 재생, 어느 기기에서나 같은 발음)
+    if (fromBook) {
+      try { await playAudioUrl(`/tts/${phraseAudioFile(languageInfo.code, text)}`); return; } catch (e) { /* 파일이 없으면 아래 방법으로 */ }
+    }
 
     const hasSpeechSynthesis = 'speechSynthesis' in window;
     const voices = hasSpeechSynthesis ? (voicesRef.current.length ? voicesRef.current : window.speechSynthesis.getVoices()) : [];
@@ -106,10 +118,10 @@ const LanguageModal = ({ isOpen, onClose, isDarkMode, textMain, countryName, lan
       return;
     }
 
-    // 2순위: 기기에 맞는 음성이 없으면 구글 번역 TTS로 대체 재생 시도
+    // 2순위: 기기에 맞는 음성이 없으면(안드로이드 앱은 기기 음성 기능이 아예 없음) 서버를 거쳐 구글 번역 음성으로
     try {
       setSpeakError('음성을 불러오는 중...');
-      await playGoogleTts(text, languageInfo.code);
+      await playAudioUrl(ttsUrl(text, languageInfo.code));
       setSpeakError('');
       return;
     } catch (e) {
@@ -155,6 +167,12 @@ const LanguageModal = ({ isOpen, onClose, isDarkMode, textMain, countryName, lan
         )}
 
         <div className="p-4 space-y-2.5 max-h-[60vh] overflow-y-auto custom-scrollbar">
+          {noAudio && (
+            <div className={`rounded-lg border px-3 py-2.5 text-[11px] font-semibold leading-relaxed ${isDarkMode ? 'bg-amber-900/20 border-amber-800/50 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+              🗣️ 이 언어({languageInfo.native})는 소리 재생이 안 돼요. 문장 아래 <span className="text-[#007AFF]">파란 글씨(읽는 법)</span>를 보고 그대로 읽어 주세요.
+              {Array.isArray(languageList) && languageList.some(l => l.code === 'ru') && ' 카자흐스탄에서는 러시아어가 더 잘 통해요 — 위의 Russian을 눌러 보세요.'}
+            </div>
+          )}
           {book && book.map((p, i) => (
             <React.Fragment key={p.ko}>
               {(i === 0 || book[i - 1].group !== p.group) && <div className={`pt-1 text-[11px] font-black ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{p.group}</div>}
@@ -164,10 +182,12 @@ const LanguageModal = ({ isOpen, onClose, isDarkMode, textMain, countryName, lan
                   <div className={`text-[15px] font-bold ${textMain}`}>{p.text}</div>
                   <div className="text-[11px] font-semibold text-[#007AFF]">{p.say}</div>
                 </div>
-                <button onClick={() => speak(p.text)} aria-label="발음 듣기"
-                  className={`shrink-0 p-2 rounded-full transition-colors ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}>
-                  <Volume2 className="w-4 h-4" />
-                </button>
+                {!noAudio && (
+                  <button onClick={() => speak(p.text, true)} aria-label="발음 듣기"
+                    className={`shrink-0 p-2 rounded-full transition-colors ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300 hover:bg-indigo-900/70' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}>
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </React.Fragment>
           ))}
@@ -193,9 +213,11 @@ const LanguageModal = ({ isOpen, onClose, isDarkMode, textMain, countryName, lan
               </div>
             );
           })}
-          <p className={`text-[10px] pt-1 ${speakError ? 'text-amber-500' : (isDarkMode ? 'text-slate-500' : 'text-slate-400')}`}>
-            {speakError || '🔊 발음은 기기에 해당 언어 음성이 설치돼 있어야 정확히 들려요. 언어에 따라 소리가 안 나올 수 있어요.'}
-          </p>
+          {!noAudio && (
+            <p className={`text-[10px] pt-1 ${speakError ? 'text-amber-500' : (isDarkMode ? 'text-slate-500' : 'text-slate-400')}`}>
+              {speakError || (book ? '🔊 회화집 발음은 앱에 들어 있어서 인터넷이 없어도 들려요.' : '🔊 발음은 인터넷이 있어야 들려요. 언어에 따라 소리가 안 나올 수 있어요.')}
+            </p>
+          )}
         </div>
       </div>
     </div>,

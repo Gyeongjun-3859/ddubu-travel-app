@@ -98,6 +98,13 @@ function planCoversDay(plan, d) {
   return Boolean(plan.isAccommodation) && Array.isArray(plan.accommodationDays) && plan.accommodationDays.map(Number).includes(day);
 }
 
+// 지도 '🏨 숙소' 칩용: 숙소로 설정된 핀이거나, 숙소 일정·숙소 테마에 연결된 핀
+function isAccommodationPin(pin, linkedPlans) {
+  if (!pin) return false;
+  if (pin.isAccommodation || S(pin.theme).includes('숙소')) return true;
+  return (Array.isArray(linkedPlans) ? linkedPlans : []).some(p => p && (p.isAccommodation || S(p.theme).includes('숙소')));
+}
+
 // 게스트("건너뛰기")로 쓰는 중인지 기억하는 키 — 새로고침해도 게스트 모드로 복원하기 위함
 const GUEST_MODE_KEY = 'my_travel_guest_mode';
 
@@ -3508,8 +3515,9 @@ function deletePackingItem(id) {
 
 // [지도 마커 필터링 수정] Day와 테마 필터링이 모두 적용된 filteredMyPins 변수를 참조하도록 변경
     // [버그 수정] 내 핀 목록 창의 Day 필터(myPinsFilter)가 지도까지 몰래 걸러서, 지도 칩은 "전체"인데
-    // 미지정 핀만 보이는 일이 있었다. 지도는 검색어만 반영한 목록에서 지도 칩(mapActiveDays)·테마로만 거른다.
-    const filteredRestaurants = filteredMarkers;
+    // 미지정 핀만 보이는 일이 있었다. 지도는 지도 칩(mapActiveDays)·테마로만 거른다.
+    // 검색어로는 거르지 않는다 — 장소를 검색하는 동안 저장한 핀이 지도에서 전부 사라졌다 (검색창 목록에서만 거름)
+    const filteredRestaurants = safeCurrentRestaurants;
 
     filteredRestaurants.forEach((rest) => {
       if (!rest || !rest.lat || !rest.lng) return;
@@ -3520,6 +3528,8 @@ function deletePackingItem(id) {
          primaryPlan = linkedPlans[0];
       } else {
          primaryPlan = linkedPlans.find(p => mapActiveDays.some(d => d !== 'unlinked' && planCoversDay(p, d)));
+         // 🏨 숙소 칩만 골랐을 때도 숙소 일정의 Day 색으로 (회색 핀 방지)
+         if (!primaryPlan && mapActiveDays.includes('acc')) primaryPlan = linkedPlans.find(p => p.isAccommodation) || linkedPlans[0] || null;
       }
 
       let routeNumberStr = '';
@@ -3544,7 +3554,8 @@ function deletePackingItem(id) {
          // 'unlinked' 칩 = 📦 보관함: 연결된 일정이 없거나 보관함(Day 0) 일정에만 연결된 핀
          const hasUnlinked = mapActiveDays.includes('unlinked') && isArchivedPin(rest, mapSafeTimeline);
          const hasDay = mapLinkedPlans.some(p => mapActiveDays.some(d => d !== 'unlinked' && planCoversDay(p, d)));
-         mapPassDay = hasUnlinked || hasDay;
+         const hasAcc = mapActiveDays.includes('acc') && isAccommodationPin(rest, mapLinkedPlans); // 🏨 숙소 칩
+         mapPassDay = hasUnlinked || hasDay || hasAcc;
       }
       
       let mapPassTheme = true;
@@ -3587,7 +3598,7 @@ function deletePackingItem(id) {
         markersRef.current.push(marker);
       } catch (err) {}
     });
-  }, [photoUrlTick, isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, showMapRoute, isPinMode, movingPinId, mapActiveDays, getDayColor, myPinsThemeFilter, markerSearchQuery]);
+  }, [photoUrlTick, isLeafletLoaded, activeTab, currentRestaurants, planTimeline, showMapLabels, showMapPhotos, showMapRoute, isPinMode, movingPinId, mapActiveDays, getDayColor, myPinsThemeFilter]);
 
   // 수동 override: 'kakao' | 'leaflet' | null(자동)
   const [mapTypeOverride, setMapTypeOverride] = useState(null);
@@ -3776,7 +3787,7 @@ function deletePackingItem(id) {
     const safeRests = Array.isArray(currentRestaurants) ? currentRestaurants.filter(Boolean) : [];
     const activeDayNums = mapActiveDays.includes('all')
       ? null // null이면 전체
-      : mapActiveDays.filter(d => d !== 'unlinked');
+      : mapActiveDays.filter(d => d !== 'unlinked' && d !== 'acc');
 
     safeRests.forEach(rest => {
       if (!rest.lat || !rest.lng) return;
@@ -3791,7 +3802,8 @@ function deletePackingItem(id) {
         if (activeDayNums) {
           const hasUnlinked = mapActiveDays.includes('unlinked') && isArchivedPin(rest, planTimeline); // 📦 보관함
           const hasDay = linkedPlans.some(p => activeDayNums.some(d => planCoversDay(p, d)));
-          if (!hasUnlinked && !hasDay) return;
+          const hasAcc = mapActiveDays.includes('acc') && isAccommodationPin(rest, linkedPlans); // 🏨 숙소 칩
+          if (!hasUnlinked && !hasDay && !hasAcc) return;
         }
         const primaryPlan = (activeDayNums
           ? linkedPlans.find(p => activeDayNums.some(d => planCoversDay(p, d)))

@@ -3,11 +3,12 @@
  * - 화면(HTML): 인터넷 먼저 → 안 되면 저장해 둔 것 (새 배포가 바로 반영되게)
  * - 앱 파일(/assets/… 이름에 해시가 붙어 바뀌지 않음): 저장해 둔 것 먼저
  * - 아이콘·글꼴·지도 스타일: 저장해 둔 것을 먼저 보여 주고 뒤에서 새로 받아 둠
+ * - 회화집 발음 소리(/tts/…mp3): 설치 때 미리 저장 → 산에서도 🔊 재생
  * - 우리 저장소 사진(서명 주소)·위키 사진: 한 번 본 사진은 저장 → 오프라인에서도 보임
  *   (구글 사진은 약관상 저장하지 않는다)
  * 일정·핀 데이터는 앱이 원래 휴대폰(localStorage)에 저장하고 있어서 여기서 다루지 않는다.
  */
-const VERSION = 'v2'; // 아이콘·이름을 바꾸면 올려서 휴대폰에 저장된 옛 파일을 새로 받게 한다
+const VERSION = 'v3'; // 아이콘·이름을 바꾸면 올려서 휴대폰에 저장된 옛 파일을 새로 받게 한다
 const STATIC = `ddubu-static-${VERSION}`;
 const PHOTOS = `ddubu-photos-${VERSION}`;
 const MAX_PHOTOS = 250;
@@ -31,6 +32,11 @@ self.addEventListener('install', (event) => {
         }
       }
     } catch (e) { /* 설치 중 인터넷이 끊겨도 다음에 다시 시도 */ }
+    // 회화집 발음 소리 (모두 합쳐 약 0.8MB) — 오프라인에서 🔊가 되게 미리 저장
+    try {
+      const list = await (await fetch('/tts/list.json', { cache: 'no-store' })).json();
+      if (Array.isArray(list)) await cache.addAll(list.map(f => `/tts/${f}`));
+    } catch (e) { /* 실패하면 한 번 들은 소리만 저장됨 (아래 fetch) */ }
     self.skipWaiting();
   })());
 });
@@ -75,6 +81,19 @@ self.addEventListener('fetch', (event) => {
       if (hit) return hit;
       const res = await fetch(req);
       if (res.ok) (await caches.open(STATIC)).put(req, res.clone());
+      return res;
+    })());
+    return;
+  }
+
+  // 2-1) 회화집 발음 소리: 저장된 것 먼저. <audio>는 일부만(Range) 요청하기도 해서, 주소로만 찾고 저장은 전체 파일로 받는다
+  if (url.origin === self.location.origin && url.pathname.startsWith('/tts/') && url.pathname.endsWith('.mp3')) {
+    event.respondWith((async () => {
+      const cache = await caches.open(STATIC);
+      const hit = await cache.match(url.pathname);
+      if (hit) return hit;
+      const res = await fetch(url.pathname);
+      if (res.ok) cache.put(url.pathname, res.clone());
       return res;
     })());
     return;

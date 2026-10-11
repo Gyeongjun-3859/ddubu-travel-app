@@ -72,6 +72,19 @@ export const PHRASEBOOK = {
   ],
 };
 
+// 소리 재생이 안 되는 언어 — 구글 번역 음성이 지원하지 않고(카자흐어 400) 기기 음성도 거의 없다.
+// 🔊 버튼을 숨기고 '읽는 법'을 보고 읽도록 안내한다.
+export const NO_AUDIO_LANGS = ['kk'];
+
+// 회화집 문장의 미리 만들어 둔 소리 파일 (public/tts — scripts/make-phrase-audio.mjs로 생성).
+// 앱 안에 들어 있어서 인터넷이 없어도 재생된다. 파일 이름은 문장으로 정해져서, 문장을 고치면 스크립트를 다시 돌린다.
+export function phraseAudioFile(lang, text) {
+  let h = 5381;
+  const s = `${lang}|${text}`;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return `${lang}-${h.toString(36)}.mp3`;
+}
+
 // 키릴 문자 → 로마자 (러시아어·카자흐어 이름을 읽을 수 있게: 'Кок-Тобе' → 'Kok-Tobe')
 const CYR = {
   а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm',

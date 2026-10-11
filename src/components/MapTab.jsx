@@ -115,6 +115,11 @@ const MapTab = ({
             onClick={() => toggleMapDay('all')}
             className={`px-4 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap shrink-0 border transition-all ${mapActiveDays.includes('all') ? 'bg-slate-700 text-white border-slate-700' : (isDarkMode ? 'bg-slate-800 text-slate-300 border-slate-600' : 'bg-white text-slate-500 border-slate-300')}`}
           >전체</button>
+          {/* 🏨 숙소: 모든 날짜의 숙소 핀 (Day·보관함 칩과 함께 고를 수 있음) */}
+          <button
+            onClick={() => toggleMapDay('acc')}
+            className={`px-3.5 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap shrink-0 border transition-all ${mapActiveDays.includes('acc') ? 'bg-[#f43f7e] text-white border-[#f43f7e] shadow-sm' : (isDarkMode ? 'bg-slate-800 text-[#f43f7e] border-[#f43f7e]/60' : 'bg-white text-[#f43f7e] border-[#f43f7e]/60')}`}
+          >🏨 숙소</button>
           {tripDays.map(d => {
             const color = getDayColor(d);
             const isActive = mapActiveDays.includes(d);
@@ -276,6 +281,7 @@ const MapTab = ({
           </div>
           {markerSearchQuery && filteredMarkers.length > 0 && (
             <div className={`mt-1 border rounded-xl shadow-xl overflow-hidden max-h-48 overflow-y-auto ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+              <div className={`px-3 pt-2 pb-1 text-[10px] font-bold ${textMuted}`}>📌 내 핀</div>
               {filteredMarkers.map(marker => (
                 <button
                   key={marker.id}
