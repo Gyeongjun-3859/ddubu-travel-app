@@ -1,7 +1,7 @@
 import React from 'react';
 import { S } from '../utils/helpers';
 import DriverCardModal from './DriverCardModal';
-import { hasLocalApps, twoGisPlaceUrl, yandexGoUrl } from '../utils/localApps';
+import { hasLocalApps, twoGisPlaceUrl, yandexGoUrl, openYandexGo } from '../utils/localApps';
 
 // 해외 장소의 '🚕 기사님께 보여주기' + (중앙아시아면) 2GIS·Yandex Go 버튼 묶음.
 // 핀 상세 창과 일정 상세 창에서 같이 쓴다 (여행 중엔 일정 탭을 주로 보니까).
@@ -21,7 +21,7 @@ const TaxiHelpButtons = ({ pin, country, showToast, onSaveLocalAddress }) => {
         <div className="flex gap-2 mb-3">
           <a href={twoGisPlaceUrl(pin.lat, pin.lng, S(pin.localName) || S(pin.name))} target="_blank" rel="noopener noreferrer"
             className="flex-1 text-center bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 py-2 rounded-xl font-bold text-xs">🗺️ 2GIS에서 보기</a>
-          <a href={yandexGoUrl(pin.lat, pin.lng)} target="_blank" rel="noopener noreferrer"
+          <a href={yandexGoUrl(pin.lat, pin.lng)} onClick={(e) => openYandexGo(e, pin.lat, pin.lng)} target="_blank" rel="noopener noreferrer"
             className="flex-1 text-center bg-yellow-50 hover:bg-yellow-100 border border-yellow-300 text-yellow-800 py-2 rounded-xl font-bold text-xs">🚕 Yandex Go 택시</a>
         </div>
       )}

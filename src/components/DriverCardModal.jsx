@@ -3,7 +3,7 @@ import { X, Copy } from 'lucide-react';
 import { S } from '../utils/helpers';
 import { LOCAL_LANG_BY_COUNTRY, hasGooglePlacesKey, googlePlaceAddressIn, googleFindPlaceId } from '../utils/googlePlaces';
 import { DRIVER_PHRASE, hasCyrillic, cyrillicToLatin } from '../utils/phrasebook';
-import { hasLocalApps, twoGisPlaceUrl, yandexGoUrl } from '../utils/localApps';
+import { hasLocalApps, twoGisPlaceUrl, yandexGoUrl, openYandexGo } from '../utils/localApps';
 
 // 🚕 기사님께 보여주기 — 현지어 이름·주소·"여기로 가 주세요"를 화면 가득 큰 글씨로.
 // (알마티 택시 기사는 영어가 거의 안 통하고, 한국어 이름으로는 못 알아본다)
@@ -70,7 +70,7 @@ const DriverCardModal = ({ pin, country, onClose, showToast, onSaveLocalAddress 
         <button onClick={copy} className="col-span-2 flex items-center justify-center gap-1.5 rounded-xl bg-slate-100 py-3 text-sm font-bold text-slate-700"><Copy className="w-4 h-4" /> 이름·주소 복사</button>
         {hasPos && hasLocalApps(country) && (
           <>
-            <a href={yandexGoUrl(pin.lat, pin.lng)} target="_blank" rel="noopener noreferrer" className="rounded-xl bg-yellow-400 py-3 text-center text-sm font-black text-slate-900">🚕 Yandex Go로 부르기</a>
+            <a href={yandexGoUrl(pin.lat, pin.lng)} onClick={(e) => openYandexGo(e, pin.lat, pin.lng)} target="_blank" rel="noopener noreferrer" className="rounded-xl bg-yellow-400 py-3 text-center text-sm font-black text-slate-900">🚕 Yandex Go로 부르기</a>
             <a href={twoGisPlaceUrl(pin.lat, pin.lng, name)} target="_blank" rel="noopener noreferrer" className="rounded-xl bg-emerald-500 py-3 text-center text-sm font-black text-white">🗺️ 2GIS에서 열기</a>
           </>
         )}
