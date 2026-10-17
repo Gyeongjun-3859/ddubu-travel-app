@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { X, Copy } from 'lucide-react';
 import { S } from '../utils/helpers';
 import { LOCAL_LANG_BY_COUNTRY, hasGooglePlacesKey, googlePlaceAddressIn, googleFindPlaceId } from '../utils/googlePlaces';
@@ -50,7 +51,9 @@ const DriverCardModal = ({ pin, country, onClose, showToast, onSaveLocalAddress 
     catch (e) { if (showToast) showToast('복사하지 못했어요'); }
   };
 
-  return (
+  // 화면 맨 바깥(body)에 띄운다 — 일정 목록 안에 두면 안드로이드에서 Yandex Go 갔다 돌아왔을 때
+  // 창이 목록에 섞여 스크롤되고 위쪽 닫기 버튼이 헤더 뒤로 숨어 닫을 수 없었다
+  return createPortal(
     <div className="fixed inset-0 z-[8600] bg-white flex flex-col" onClick={e => e.stopPropagation()}>
       <div className="flex items-center justify-between px-4 pt-4">
         <span className="text-xs font-bold text-slate-400">🚕 기사님께 보여주세요 · {S(pin.name)}</span>
@@ -74,8 +77,10 @@ const DriverCardModal = ({ pin, country, onClose, showToast, onSaveLocalAddress 
             <a href={twoGisPlaceUrl(pin.lat, pin.lng, name)} target="_blank" rel="noopener noreferrer" className="rounded-xl bg-emerald-500 py-3 text-center text-sm font-black text-white">🗺️ 2GIS에서 열기</a>
           </>
         )}
+        <button onClick={onClose} className="col-span-2 rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-500">닫기</button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
