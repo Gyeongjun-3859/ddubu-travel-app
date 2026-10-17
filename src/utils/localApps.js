@@ -3,6 +3,7 @@
 // 휴대폰에 앱이 깔려 있으면 앱이 열리고, 없으면 웹사이트(또는 앱 설치 화면)로 간다.
 
 import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 
 export const LOCAL_APP_COUNTRIES = ['카자흐스탄', '키르기스스탄', '우즈베키스탄', '러시아'];
 export const hasLocalApps = (country) => LOCAL_APP_COUNTRIES.includes(country);
@@ -28,8 +29,14 @@ export const openYandexGo = (e, lat, lng) => {
   const query = yandexGoQuery(lat, lng);
   if (Capacitor.isNativePlatform()) {
     // 우리 앱(APK): 앱 주소로 직접 열고, 1.5초 안에 앱으로 안 넘어가면(앱 없음) 플레이 스토어
-    const fallback = setTimeout(() => { window.location.href = `market://details?id=${YANDEX_GO_PACKAGE}`; }, 1500);
-    const cancel = () => clearTimeout(fallback);
+    // (앱이 뒤로 가는 순간 취소 — 안 그러면 돌아왔을 때 멈춰 있던 타이머가 뒤늦게 플레이 스토어를 띄운다)
+    let pauseListener = null;
+    const fallback = setTimeout(() => {
+      pauseListener?.then((h) => h.remove());
+      window.location.href = `market://details?id=${YANDEX_GO_PACKAGE}`;
+    }, 1500);
+    const cancel = () => { clearTimeout(fallback); pauseListener?.then((h) => h.remove()); };
+    pauseListener = CapacitorApp.addListener('pause', cancel);
     window.addEventListener('blur', cancel, { once: true });
     document.addEventListener('visibilitychange', cancel, { once: true });
     window.location.href = `yandextaxi://route?${query}`;
