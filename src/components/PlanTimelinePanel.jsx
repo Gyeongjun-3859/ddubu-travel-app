@@ -17,7 +17,7 @@ const isTransportPlan = (plan) => plan.isTransport || ['교통', '항공', '비�
 const PlanTimelinePanel = ({
   isDarkMode, textMuted, textMain, currentDay, getDayDateString, planTimeline,
   activeMobileCard, setActiveMobileCard,
-  handleEditPlanClick, handleDeletePlan, handleCopyLocalName, openPhotoViewer,
+  handleEditPlanClick, handleDeletePlan, onCopyPlanText, openPhotoViewer,
   currentRestaurants, onAddPlace,
   isDomesticTrip, tripCountry, showToast, onSaveLocalAddress,
   dateForDay, cityForecast,
@@ -90,6 +90,15 @@ const PlanTimelinePanel = ({
     else openExternalUrl(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(S(plan.localName) || S(plan.place))}`);
   };
 
+  // 카드를 한 번 눌러 선택(✏️·🗑 표시)한 뒤 장소 이름·현지어 글자를 한 번 더 누르면 복사 (현지어 없으면 찾아서).
+  // 선택 전 첫 탭은 그대로 카드 선택으로 넘긴다 — 실수로 복사되지 않게
+  const copyTap = (e, plan) => {
+    if (activeMobileCard !== plan.id) return;
+    e.stopPropagation();
+    if (typeof onCopyPlanText === 'function') onCopyPlanText(e, plan);
+  };
+  const copyHint = (plan) => activeMobileCard === plan.id ? 'underline decoration-dotted underline-offset-2' : '';
+
   const handleCardClick = (e, plan) => {
     e.stopPropagation();
     if (activeMobileCard === plan.id) { handleEditPlanClick(plan); setActiveMobileCard(null); }
@@ -135,12 +144,12 @@ const PlanTimelinePanel = ({
                     <span className="w-fit rounded bg-[#007AFF]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#007AFF]">
                       🏠 숙소{Array.isArray(plan.accommodationDays) && plan.accommodationDays.length > 0 ? ` (D${plan.accommodationDays.join(',D')})` : ''}
                     </span>
-                    <h3 className={`text-[14px] font-semibold leading-tight ${textMain}`}>{S(plan.place)}</h3>
+                    <h3 className={`text-[14px] font-semibold leading-tight ${textMain} ${copyHint(plan)}`} onClick={(e) => copyTap(e, plan)}>{S(plan.place)}</h3>
                     {plan.time && plan.time !== '99:99' && (
                       <p className={`text-[11px] font-semibold ${textMuted}`}>🕒 체크인 {S(plan.time)}</p>
                     )}
                     {plan.localName && (
-                      <p className="truncate text-[11px] font-semibold text-[#007AFF]" onClick={(e) => handleCopyLocalName(e, plan.localName)}>📋 {S(plan.localName)}</p>
+                      <p className={`truncate text-[11px] font-semibold text-[#007AFF] ${copyHint(plan)}`} onClick={(e) => copyTap(e, plan)}>📋 {S(plan.localName)}</p>
                     )}
                     {plan.features && <p className={`line-clamp-1 text-[11px] leading-tight ${textMuted}`}>{S(plan.features)}</p>}
                     {weatherChip(plan)}
@@ -177,9 +186,13 @@ const PlanTimelinePanel = ({
                       className={`group relative flex cursor-pointer items-center gap-2 rounded-xl border p-3 shadow-[0_4px_20px_rgba(0,0,0,0.05)] transition-all ${isDarkMode ? 'bg-[#007AFF]/10 border-[#007AFF]/30' : 'bg-[#007AFF]/5 border-[#007AFF]/20'} ${isActive ? 'border-[#007AFF]' : ''}`}
                     >
                       <div className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] font-bold text-[#007AFF]">{S(plan.place)}</span>
+                        <span className={`block truncate text-[13px] font-bold text-[#007AFF] ${copyHint(plan)}`} onClick={(e) => copyTap(e, plan)}>{S(plan.place)}</span>
                         {(plan.localName || plan.features) && (
-                          <span className={`block truncate text-[11px] ${textMuted}`}>{[S(plan.localName), S(plan.features)].filter(Boolean).join(' · ')}</span>
+                          <span className={`block truncate text-[11px] ${textMuted}`}>
+                            {plan.localName && <span className={`font-semibold text-[#007AFF] ${copyHint(plan)}`} onClick={(e) => copyTap(e, plan)}>📋 {S(plan.localName)}</span>}
+                            {plan.localName && plan.features && ' · '}
+                            {S(plan.features)}
+                          </span>
                         )}
                       </div>
                       {actionBar(plan, isActive)}
@@ -208,12 +221,12 @@ const PlanTimelinePanel = ({
                         {getStorefrontByUrl(plan.photo) && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 py-0.5 text-[8px] font-semibold text-white/90">{storefrontBadge(getStorefrontByUrl(plan.photo))}</span>}
                       </div>
                       <div className="flex flex-1 flex-col justify-center gap-0.5 p-2.5">
-                        <h3 className={`text-[14px] font-semibold leading-tight ${textMain}`}>{S(plan.place)}</h3>
+                        <h3 className={`text-[14px] font-semibold leading-tight ${textMain} ${copyHint(plan)}`} onClick={(e) => copyTap(e, plan)}>{S(plan.place)}</h3>
                         <div className={`flex items-center gap-1.5 text-[11px] ${textMuted}`}>
                           {ratingBadge(plan)}
                           {plan.rating > 0 && <span className="opacity-40">•</span>}
                           <span>{getThemeEmoji(plan.theme)} {S(plan.theme) || '기타'}</span>
-                          {plan.localName && (<><span className="opacity-40">•</span><span className="truncate text-[#007AFF] font-semibold" onClick={(e) => handleCopyLocalName(e, plan.localName)}>{S(plan.localName)}</span></>)}
+                          {plan.localName && (<><span className="opacity-40">•</span><span className={`truncate text-[#007AFF] font-semibold ${copyHint(plan)}`} onClick={(e) => copyTap(e, plan)}>📋 {S(plan.localName)}</span></>)}
                         </div>
                         {weatherChip(plan)}
                         {!isDomesticTrip && (
@@ -237,13 +250,13 @@ const PlanTimelinePanel = ({
                     >
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#007AFF]/10 text-lg">{getThemeEmoji(plan.theme)}</div>
                       <div className="min-w-0 flex-1">
-                        <h3 className={`truncate text-[13px] font-semibold ${textMain}`}>{S(plan.place)}</h3>
+                        <h3 className={`truncate text-[13px] font-semibold ${textMain} ${copyHint(plan)}`} onClick={(e) => copyTap(e, plan)}>{S(plan.place)}</h3>
                         <p className={`flex items-center gap-1 truncate text-[11px] ${textMuted}`}>
                           {ratingBadge(plan)}
                           {plan.rating > 0 && <span className="opacity-40">•</span>}
                           <span className="truncate">
                             {S(plan.theme) || '기타'}
-                            {plan.localName && ` · ${S(plan.localName)}`}
+                            {plan.localName && <> · <span className={`font-semibold text-[#007AFF] ${copyHint(plan)}`} onClick={(e) => copyTap(e, plan)}>📋 {S(plan.localName)}</span></>}
                             {plan.features && ` · ${S(plan.features)}`}
                           </span>
                         </p>

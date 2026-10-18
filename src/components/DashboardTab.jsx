@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, Calendar, Backpack, ShoppingBag, Plane, Trash2, MapPin, Languages, Map as MapIcon, Wallet, ListChecks, Sparkles, X, MessageCircle, Siren } from 'lucide-react';
+import { RefreshCw, Calendar, Backpack, ShoppingBag, Plane, Trash2, MapPin, Languages, Map as MapIcon, Wallet, ListChecks, Sparkles, X, MessageCircle, Siren, BookOpen } from 'lucide-react';
 import { COUNTRY_LANGUAGE, COUNTRY_CURRENCY, COUNTRY_TIMEZONE } from '../utils/constants';
 import { S, getAccommodationTransitFrom } from '../utils/helpers';
 import TransitConnector from './TransitConnector';
 import TransitRouteViewModal from './TransitRouteViewModal';
 import LanguageModal from './LanguageModal';
 import EmergencyModal from './EmergencyModal';
+import GuidebookModal from './GuidebookModal';
 import TripImg from './TripImg';
 import { getStorefrontByUrl, storefrontBadge } from '../utils/mapillary';
 
@@ -56,8 +57,10 @@ const DashboardTab = ({
   currentRestaurants, setIsSettingsOpen,
   isDomesticTrip, countryTips = [], resolvedGlobalCountry,
   archivedPins = [], onOpenArchive, showToast, onSaveLocalAddress,
+  guidebook = {},
 }) => {
   const [isEmergencyOpen, setIsEmergencyOpen] = useState(false);
+  const [isGuidebookOpen, setIsGuidebookOpen] = useState(false);
   // 여행(나라·도시)을 바꾸면 열려 있던 회화·긴급·꿀팁 창을 닫는다 — 예전엔 다른 나라 내용으로 바뀐 채 열려 있었다(6차 B6-5)
   useEffect(() => { setIsLanguageOpen(false); setIsEmergencyOpen(false); setIsTipsOpen(false); }, [resolvedGlobalCountry, displayCityName]);
   // 내 숙소 핀 (긴급 정보 화면에서 현지어 주소·기사님 화면)
@@ -119,6 +122,7 @@ const DashboardTab = ({
     ...(!isDomesticTrip ? [{ key: 'emergency', label: '긴급 정보', Icon: Siren, onClick: () => setIsEmergencyOpen(true) }] : []),
     ...(COUNTRY_LANGUAGE[resolvedGlobalCountry] && !isDomesticTrip ? [{ key: 'phrases', label: '현지 회화', Icon: MessageCircle, onClick: () => setIsLanguageOpen(true) }] : []),
     ...(countryTips.length > 0 ? [{ key: 'tips', label: `${resolvedGlobalCountry} 꿀팁`, Icon: Sparkles, onClick: () => setIsTipsOpen(true) }] : []),
+    { key: 'guidebook', label: '가이드북', Icon: BookOpen, onClick: () => setIsGuidebookOpen(true) },
     { key: 'map', label: '지도 열기', Icon: MapIcon, onClick: () => changeTab('map'), full: true },
   ];
 
@@ -453,6 +457,12 @@ const DashboardTab = ({
         </div>,
         document.body
       )}
+
+      <GuidebookModal
+        isOpen={isGuidebookOpen} onClose={() => setIsGuidebookOpen(false)}
+        client={guidebook.client} tripId={guidebook.tripId} canEdit={Boolean(guidebook.canEdit)} isGuest={Boolean(guidebook.isGuest)}
+        isDarkMode={isDarkMode} showToast={showToast}
+      />
 
       <EmergencyModal
         isOpen={isEmergencyOpen} onClose={() => setIsEmergencyOpen(false)}

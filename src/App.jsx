@@ -8,7 +8,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, CURRENCIES, REGIONS_BY_COUNTRY, COUNTR
 import { toAuthEmail, toAuthPassword, S, escapeHtml, themeFromKakaoCategory, themeFromGoogleTypes, isExpenseRecord, planDayNum, isArchivedPin, findPinForPlan, findPlansForPin, getWeatherInfo, getFlagForCity, openExternalUrl, openGoogleMapsNav, compressImage, compressAndStoreImage, getTransitRoutes } from './utils/helpers';
 import { tombstone, splitTombstones, cleanPlanArray, cleanRestaurantArray, isArrayField } from './sync/tripDataModel';
 import { createTripSyncEngine } from './sync/tripSyncEngine';
-import { hasGooglePlacesKey, googleNearbyPlace, googlePlaceAddressIn, LOCAL_LANG_BY_COUNTRY } from './utils/googlePlaces';
+import { hasGooglePlacesKey, googleNearbyPlace, googlePlaceAddressIn, googleFindPlaceId, LOCAL_LANG_BY_COUNTRY } from './utils/googlePlaces';
 import { copyStorefrontPhoto, setStorefrontCredits, storefrontNeedsCopy } from './utils/mapillary';
 import SelectOrInput from './components/SelectOrInput';
 import WeatherModal from './components/WeatherModal';
@@ -905,27 +905,84 @@ const [activeMobileCard, setActiveMobileCard] = useState(null);
     return `${date.getMonth() + 1}/${date.getDate()}(${dayNames[date.getDay()]})`;
   }
 
-  function handleCopyLocalName(e, text) {
+  // 글 복사 — 누른 순간엔 execCommand, 그게 안 되면(구글에서 현지어를 받아 온 뒤처럼 시간이 지나 막힘) 클립보드 API
+  async function copyTextToClipboard(text) {
+    let ok = false;
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-999999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    textArea.remove();
+    if (!ok && navigator.clipboard && navigator.clipboard.writeText) {
+      try { await navigator.clipboard.writeText(text); ok = true; } catch (err) { ok = false; }
+    }
+    return ok;
+  }
+
+  async function handleCopyLocalName(e, text, label = '현지어') {
     if (e) e.stopPropagation();
     if (!text) {
       showToast("복사할 현지어가 없습니다.");
       return;
     }
     const safeText = S(text);
-    const textArea = document.createElement("textarea");
-    textArea.value = safeText;
-    textArea.style.position = "fixed";
-    textArea.style.left = "-999999px";
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
+    if (await copyTextToClipboard(safeText)) showToast(`'${safeText}' ${label}${label === '현지어' ? '가' : '이'} 복사되었습니다! 📋`);
+    else showToast("복사에 실패했습니다.");
+  }
+
+  // 일정 카드의 글자를 눌러 복사 — 현지어가 있으면 현지어, 없으면 구글에서 그 장소의 현지어 이름을 찾아
+  // 일정(과 현지어가 빈 연결 핀)에 채운 뒤 복사한다. 못 찾으면(국내·키 없음·오프라인·검색 실패) 장소 이름을 복사.
+  // (검색으로 넣을 때 맞는 장소가 안 떠 이름만 쳐서 저장한 일정은 현지어가 비어 있었다 — 예: 젠코브 성당)
+  const copyPlanLocalPending = useRef(new Set());
+  async function copyPlanLocalName(e, plan) {
+    if (e) e.stopPropagation();
+    if (!plan) return;
+    if (S(plan.localName)) { handleCopyLocalName(null, plan.localName); return; }
+    const place = S(plan.place);
+    const country = S(plan.country) || S(resolvedGlobalCountry);
+    const lang = LOCAL_LANG_BY_COUNTRY[country];
+    const canLookup = place && country && country !== '한국' && lang && hasGooglePlacesKey() && navigator.onLine !== false;
+    if (!canLookup) { handleCopyLocalName(null, place, '장소 이름'); return; }
+    if (copyPlanLocalPending.current.has(plan.id)) return;
+    copyPlanLocalPending.current.add(plan.id);
+    showToast("현지어 이름을 찾는 중이에요… 🔎");
+    let localName = '';
+    let foundPlaceId = '';
+    const pins = Array.isArray(currentRestaurantsRef.current) ? currentRestaurantsRef.current.filter(Boolean) : [];
+    const pin = findPinForPlan(plan, pins, planTimelineRef.current || []);
     try {
-      document.execCommand('copy');
-      showToast(`'${safeText}' 현지어가 복사되었습니다! 📋`);
+      const lat = pin ? parseFloat(pin.lat) : NaN;
+      const lng = pin ? parseFloat(pin.lng) : NaN;
+      foundPlaceId = S(pin?.googlePlaceId) || await googleFindPlaceId(place, lat, lng);
+      if (foundPlaceId) localName = S((await googlePlaceAddressIn(foundPlaceId, lang)).name);
     } catch (err) {
-      showToast("복사에 실패했습니다.");
+      console.warn('[현지어 이름 찾기 실패]', err && err.message);
+    } finally {
+      copyPlanLocalPending.current.delete(plan.id);
     }
-    textArea.remove();
+    if (!localName || localName === place) {
+      if (await copyTextToClipboard(place)) showToast(`현지어를 못 찾아 '${place}' 장소 이름을 복사했어요 📋`);
+      else showToast("복사에 실패했습니다.");
+      return;
+    }
+    if (await copyTextToClipboard(localName)) showToast(`'${localName}' 현지어를 찾아 복사했어요! 📋 (일정에도 저장)`);
+    else showToast(`현지어를 찾았어요: ${localName} (복사는 실패 — 다시 눌러 주세요)`);
+    // 찾은 현지어 저장 (보기 전용 여행은 저장하지 않음) — 다음부턴 바로·오프라인으로 복사
+    if (readOnlyRef.current) return;
+    const latestPlans = Array.isArray(planTimelineRef.current) ? planTimelineRef.current : [];
+    const updatedPlans = latestPlans.map(p => (p && p.id === plan.id && !S(p.localName)) ? { ...p, localName } : p);
+    setPlanTimeline(updatedPlans);
+    const patch = { plan_timeline: updatedPlans };
+    if (pin && !S(pin.localName)) {
+      const updatedPins = pins.map(r => S(r.id) === S(pin.id) ? { ...r, localName, ...(foundPlaceId && !r.googlePlaceId ? { googlePlaceId: foundPlaceId } : {}) } : r);
+      setCurrentRestaurants(updatedPins);
+      patch.current_restaurants = updatedPins;
+    }
+    saveToDb(patch);
   }
 
   function openEditPinModal(pin) {
@@ -4887,6 +4944,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
             handleEditPlanClick={handleEditPlanClick} handleDeletePlan={handleDeletePlan} changeTab={changeTab} displayCityName={displayCityName} openPhotoViewer={openPhotoViewer}
             currentRestaurants={currentRestaurants}
             isDomesticTrip={isDomesticTrip} countryTips={COUNTRY_TIPS[resolvedGlobalCountry] || []} resolvedGlobalCountry={resolvedGlobalCountry}
+            guidebook={{ client: supabaseClient, tripId: activeTripId, isGuest: !appUserId || appUserId === 'Guest', canEdit: !isReadOnlyTrip && Boolean(appUserId) && appUserId !== 'Guest' }}
             archivedPins={archivedPins} onOpenArchive={() => { setPlanViewDay(0); changeTab('plan'); }}
             showToast={showToast} onSaveLocalAddress={saveLocalAddressToPin}
           />
@@ -5047,7 +5105,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
                 currentDay={planViewDay} getDayDateString={getDayDateString} planTimeline={planTimeline}
                 activeMobileCard={activeMobileCard} setActiveMobileCard={setActiveMobileCard}
                 handleEditPlanClick={handleEditPlanClick} handleDeletePlan={handleDeletePlan}
-                handleCopyLocalName={handleCopyLocalName} openPhotoViewer={openPhotoViewer}
+                onCopyPlanText={copyPlanLocalName} openPhotoViewer={openPhotoViewer}
                 currentRestaurants={currentRestaurants}
                 onAddPlace={openQuickAddPlace}
                 isDomesticTrip={isDomesticTrip} tripCountry={resolvedGlobalCountry} showToast={showToast} onSaveLocalAddress={saveLocalAddressToPin}
@@ -5079,6 +5137,7 @@ if (currentRestaurants && currentRestaurants.length > 0) {
             setNavOrigin={setNavOrigin} setNavDest={setNavDest} setIsNavModalOpen={setIsNavModalOpen}
             cardBg={cardBg} isKakaoMapLoaded={isKakaoMapLoaded} isLeafletLoaded={isLeafletLoaded} setMapTypeOverride={setMapTypeOverride} mapInstanceRef={mapInstanceRef}
             mapContainerRef={mapContainerRef} kakaoMapContainerRef={kakaoMapContainerRef}
+            currentRestaurants={currentRestaurants} getDayDateString={getDayDateString} onCopyPlanText={copyPlanLocalName}
           />
         </div>
       </main>
